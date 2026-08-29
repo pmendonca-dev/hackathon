@@ -89,4 +89,3 @@ O primeiro QA no browser revelou um ciclo de renderização: o valor default de
 efeito de carga. A instância default agora tem identidade estável em escopo de módulo,
 protegida por teste de regressão. Uma aba limpa confirmou zero erros ou warnings no
 console após a correção.
-

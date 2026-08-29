@@ -95,4 +95,3 @@ export function useAval(): AvalContextValue {
   if (!context) throw new Error('useAval must be used inside AvalProvider');
   return context;
 }
-

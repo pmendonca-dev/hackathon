@@ -67,4 +67,3 @@ export function AuditorView({ data }: { data: AuditorViewProjection }) {
     </div>
   );
 }
-

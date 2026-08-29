@@ -20,4 +20,3 @@ export function shortHash(value: string): string {
   if (value.length <= 26) return value;
   return `${value.slice(0, 14)}…${value.slice(-8)}`;
 }
-

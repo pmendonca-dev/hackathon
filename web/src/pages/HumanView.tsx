@@ -77,4 +77,3 @@ export function HumanView({ data }: { data: HumanViewProjection }) {
     </div>
   );
 }
-
