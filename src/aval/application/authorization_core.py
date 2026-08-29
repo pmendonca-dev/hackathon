@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 import base64
+import hashlib
 import json
 from uuid import uuid4
 
@@ -17,7 +18,10 @@ from aval.domain.money import Money
 from aval.security.jws import verify_compact_jws
 from aval.security.key_custody import public_key_from_jwk
 from aval.infrastructure.sqlite.mandate_repository import SqliteMandateRepository
-from aval.infrastructure.sqlite.models import metadata
+from aval.infrastructure.sqlite.models import authorization_proofs, metadata
+from aval.infrastructure.sqlite.ledger_repository import SqliteLedgerRepository
+from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
+from aval.infrastructure.sqlite.capture_repository import SqliteCaptureRepository
 from aval.infrastructure.sqlite.policy_repository import SqlitePolicyRepository
 from aval.infrastructure.sqlite.revocation_repository import SqliteRevocationRepository
 from aval.infrastructure.sqlite.transaction import run_in_write_transaction
@@ -75,8 +79,6 @@ class AuthorizationCore:
         metadata.create_all(self._engine)
         self._settlement_adapter = settlement_adapter
         self._authorization_proof_issuer = authorization_proof_issuer
-        self._reservations: dict[str, Reservation] = {}
-        self._idempotency: dict[str, CaptureResult] = {}
 
     def register_mandate(self, mandate: Mandate) -> None:
         run_in_write_transaction(self._engine, lambda connection: SqliteMandateRepository(connection).put(mandate))
@@ -129,88 +131,109 @@ class AuthorizationCore:
 
     def evaluate(self, command: AuthorizationCommand) -> AuthorizationResult:
         with self._engine.connect() as connection:
-            mandate = SqliteMandateRepository(connection).get(command.mandate_id)
-            revoked = mandate is not None and SqliteRevocationRepository(connection).is_revoked(command.mandate_id)
-            limit, _ = SqlitePolicyRepository(connection).active_limit_for(command.mandate_id, mandate.limit) if mandate else (None, 0)
+            return self._evaluate_with(connection, command)[0]
+
+    def _evaluate_with(self, connection, command: AuthorizationCommand) -> tuple[AuthorizationResult, Mandate | None]:
+        mandate = SqliteMandateRepository(connection).get(command.mandate_id)
+        revoked = mandate is not None and SqliteRevocationRepository(connection).is_revoked(command.mandate_id)
+        limit, _ = SqlitePolicyRepository(connection).active_limit_for(command.mandate_id, mandate.limit) if mandate else (None, 0)
         if mandate is None:
-            return self._reject("mandate_not_found", "Mandato não encontrado.")
+            return self._reject("mandate_not_found", "Mandato não encontrado."), None
         if revoked or mandate.status is MandateStatus.REVOKED:
-            return self._reject("mandate_revoked", "Mandato revogado.")
+            return self._reject("mandate_revoked", "Mandato revogado."), mandate
         if mandate.status is MandateStatus.EXPIRED or self._clock() >= mandate.expires_at:
-            return self._reject("mandate_expired", "Mandato expirado.")
+            return self._reject("mandate_expired", "Mandato expirado."), mandate
         if command.merchant_id not in mandate.allowed_merchant_ids:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
                 "merchant_out_of_scope",
                 "Merchant fora do escopo do mandato; aprovação humana necessária.",
-            )
+            ), mandate
         assert limit is not None
         if (command.total.currency, command.total.scale) != (limit.currency, limit.scale):
-            return self._reject("money_unit_mismatch", "Moeda ou escala incompatível com o mandato.")
+            return self._reject("money_unit_mismatch", "Moeda ou escala incompatível com o mandato."), mandate
         if command.total.minor_units <= 0:
-            return self._reject("invalid_amount", "Valor de captura inválido.")
-        if self._spent(mandate.id).add(command.total).minor_units > limit.minor_units:
+            return self._reject("invalid_amount", "Valor de captura inválido."), mandate
+        if SqliteLedgerRepository(connection).spent_for(mandate.id, limit).add(command.total).minor_units > limit.minor_units:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
                 "budget_exceeded",
                 "Compra excede o orçamento vivo do mandato.",
-            )
-        return AuthorizationResult(AuthorizationDecision.AUTHORIZED, "authorized", "Compra autorizada.")
+            ), mandate
+        return AuthorizationResult(AuthorizationDecision.AUTHORIZED, "authorized", "Compra autorizada."), mandate
 
     def capture(self, command: CaptureCommand) -> CaptureResult:
-        if cached := self._idempotency.get(command.idempotency_key):
-            return cached
-        decision = self.evaluate(command)
-        if decision.decision is not AuthorizationDecision.AUTHORIZED:
-            result = CaptureResult(False, decision.reason_code)
-            self._idempotency[command.idempotency_key] = result
-            return result
-        with self._engine.connect() as connection:
-            mandate = SqliteMandateRepository(connection).get(command.mandate_id)
-        assert mandate is not None
-        reservation = Reservation(
-            id=f"rsv_{uuid4().hex}",
-            mandate_id=command.mandate_id,
-            checkout_intent_id=command.checkout_id,
-            amount=command.total,
-        ).commit(transaction_hash=uuid4().hex)
-        self._reservations[reservation.id] = reservation
+        request_hash = hashlib.sha256(json.dumps({"mandate": command.mandate_id, "checkout": command.checkout_id, "merchant": command.merchant_id, "amount": command.total.minor_units, "currency": command.total.currency, "scale": command.total.scale}, sort_keys=True).encode()).hexdigest()
+        def prepare(connection):
+            idem = SqliteIdempotencyRepository(connection)
+            claim = idem.get_or_claim("capture", command.idempotency_key, request_hash)
+            if claim.state == "REPLAY":
+                return ("replay", claim.response_body)
+            if claim.state == "MISMATCH":
+                return ("result", CaptureResult(False, "idempotency_key_reused"))
+            if claim.state == "IN_FLIGHT":
+                return ("result", CaptureResult(False, "idempotency_in_flight"))
+            decision, mandate = self._evaluate_with(connection, command)
+            if decision.decision is not AuthorizationDecision.AUTHORIZED:
+                result = CaptureResult(False, decision.reason_code)
+                idem.complete("capture", command.idempotency_key, self._serialize_result(result))
+                return ("result", result)
+            assert mandate is not None
+            ledger = SqliteLedgerRepository(connection)
+            if ledger.find_by_transaction(command.mandate_id, request_hash, command.total) is not None:
+                result = CaptureResult(False, "transaction_already_captured")
+                idem.complete("capture", command.idempotency_key, self._serialize_result(result))
+                return ("result", result)
+            pending = Reservation(f"rsv_{uuid4().hex}", command.mandate_id, command.checkout_id, command.total)
+            ledger.save(pending, merchant_id=command.merchant_id)
+            reservation = pending.commit(request_hash)
+            ledger.update(reservation)
+            attempt_id = f"cap_{uuid4().hex}"
+            SqliteCaptureRepository(connection).create(attempt_id=attempt_id, reservation_id=reservation.id, idempotency_key=command.idempotency_key)
+            if self._authorization_proof_issuer:
+                issued_proof = self._authorization_proof_issuer.issue(
+                    reservation, policy_version=mandate.policy_version,
+                    revocation_epoch=int(mandate.revocation_metadata.get("epoch", 0)),
+                )
+                connection.execute(authorization_proofs.insert().values(
+                    id=issued_proof.id, reservation_id=reservation.id, jti=issued_proof.jti,
+                    expires_at=issued_proof.expires_at, signed_proof=issued_proof.signed_proof,
+                ))
+                proof = issued_proof.signed_proof
+            else:
+                proof = f"proof_{reservation.id}"
+            return ("prepared", reservation, attempt_id, proof)
+        prepared = run_in_write_transaction(self._engine, prepare)
+        if prepared[0] == "replay":
+            return self._deserialize_result(prepared[1])
+        if prepared[0] == "result":
+            return prepared[1]
+        _, reservation, attempt_id, proof = prepared
         if self._settlement_adapter is None:
             result = CaptureResult(True, "committed", reservation)
         else:
-            proof = (
-                self._authorization_proof_issuer.issue(
-                    reservation,
-                    policy_version=mandate.policy_version,
-                    revocation_epoch=int(mandate.revocation_metadata.get("epoch", 0)),
-                ).signed_proof
-                if self._authorization_proof_issuer is not None
-                else f"proof_{reservation.id}"
-            )
             settlement = self._settlement_adapter.authorize(reservation, proof)
-            final_reservation = reservation.settle() if settlement.approved else reservation.release()
-            self._reservations[reservation.id] = final_reservation
-            result = CaptureResult(
-                settlement.approved,
-                "settled" if settlement.approved else "settlement_declined",
-                final_reservation,
-                settlement.reference,
-            )
-        self._idempotency[command.idempotency_key] = result
+            final = reservation.settle() if settlement.approved else reservation.release()
+            result = CaptureResult(settlement.approved, "settled" if settlement.approved else "settlement_declined", final, settlement.reference)
+        def finish(connection):
+            SqliteLedgerRepository(connection).update(result.reservation)
+            SqliteCaptureRepository(connection).complete(attempt_id, approved=result.approved, reference=result.settlement_reference)
+            SqliteIdempotencyRepository(connection).complete("capture", command.idempotency_key, self._serialize_result(result))
+        run_in_write_transaction(self._engine, finish)
         return result
 
-    def _spent(self, mandate_id: str) -> Money:
-        with self._engine.connect() as connection:
-            mandate = SqliteMandateRepository(connection).get(mandate_id)
-        assert mandate is not None
-        spent = Money(0, mandate.limit.currency, mandate.limit.scale)
-        for reservation in self._reservations.values():
-            if reservation.mandate_id == mandate_id and reservation.status in {
-                ReservationStatus.COMMITTED,
-                ReservationStatus.SETTLED,
-            }:
-                spent = spent.add(reservation.amount)
-        return spent
+    @staticmethod
+    def _serialize_result(result: CaptureResult) -> str:
+        reservation = result.reservation
+        return json.dumps({"approved": result.approved, "reason_code": result.reason_code, "reference": result.settlement_reference, "reservation": None if reservation is None else {"id": reservation.id, "mandate_id": reservation.mandate_id, "checkout_id": reservation.checkout_intent_id, "amount": reservation.amount.minor_units, "currency": reservation.amount.currency, "scale": reservation.amount.scale, "status": reservation.status.value, "transaction_hash": reservation.transaction_hash}})
+
+    @staticmethod
+    def _deserialize_result(body: str | None) -> CaptureResult:
+        assert body is not None
+        value = json.loads(body)
+        item = value["reservation"]
+        reservation = None if item is None else Reservation(item["id"], item["mandate_id"], item["checkout_id"], Money(item["amount"], item["currency"], item["scale"]), ReservationStatus(item["status"]), item["transaction_hash"])
+        return CaptureResult(value["approved"], value["reason_code"], reservation, value["reference"])
 
     @staticmethod
     def _reject(reason_code: str, human_summary: str) -> AuthorizationResult:

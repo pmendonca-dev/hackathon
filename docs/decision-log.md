@@ -53,3 +53,17 @@ Persist core state through SQLite repositories owned and orchestrated exclusivel
 **What we chose:** Persist mandates, live policy, and signed revocations in isolated SQLite repositories that are invoked only by AuthorizationCore.
 
 **Why:** A process-local store loses live authority after restart, while adapter-owned state would create competing policy and revocation sources. The repository boundary keeps SQLite replaceable without allowing an adapter to become an alternate writer.
+
+## Capture commit and retry boundary
+
+**Decision:** Transaction boundary for capture, revocation, and retries
+
+**Options considered (one per line):**
+
+Commit a mandate when a capture starts
+Call settlement before recording a committed reservation
+Atomically commit a reservation in the core before settlement, with durable idempotency
+
+**What we chose:** Under the SQLite immediate-write transaction, the core checks fresh revocation, claims idempotency, commits a reservation, and persists its capture attempt before calling settlement outside the lock.
+
+**Why:** This gives revocation and capture one serial decision boundary, prevents an adapter from receiving an uncommitted reservation, retains a recoverable pending attempt during external I/O, and makes retries deterministic across process restarts.

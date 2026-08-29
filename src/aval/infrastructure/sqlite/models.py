@@ -94,6 +94,7 @@ reservations = Table(
         "status IN ('PENDING', 'COMMITTED', 'SETTLED', 'RELEASED')",
         name="reservation_status",
     ),
+    UniqueConstraint("mandate_id", "transaction_hash", name="reservation_mandate_transaction"),
 )
 
 authorization_proofs = Table(
