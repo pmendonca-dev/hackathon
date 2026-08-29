@@ -25,8 +25,9 @@ Os quatro protocolos **não competem entre si dentro do AVAL**; eles ocupam plan
 | Instrumento de pagamento | *Como pagar sem expor o cartão ao agente?* | **ACP Delegate Payment** (`Allowance`) | Cofre de credenciais + emissão de token escopado |
 | Liquidação | *O dinheiro se moveu?* | **PSP mock** (cartão) / **x402** (máquina-a-máquina) | Serviço de captura único com adaptadores plugáveis |
 | **Autoridade viva** | *Isto ainda é permitido, agora?* | **Nenhum protocolo** | **Exclusivo do AVAL**: revogação, orçamento, locks, idempotência, ledger |
+| **Commit point** | *Esta transação específica ainda pode ser retirada?* | **Nenhum protocolo** | **Exclusivo do AVAL**: transição atômica da reserva e prova de autorização (Seção 11) |
 
-A última linha é a mais importante do documento. **Nenhum dos quatro protocolos implementa revogação em tempo real, orçamento vivo, prevenção de double-spend ou decisão de captura.** Todos os quatro são protocolos de *atestação estática*: provam que algo foi autorizado em um instante passado. O desafio 01 exige explicitamente revogação ao vivo e recusa de compra fora do mandato — portanto **a parte do sistema que os jurados vão testar no *trial by fire* é justamente a parte que nenhum protocolo entrega**. Esse é o núcleo do produto, e é onde o esforço de engenharia deve ir.
+A última linha é a mais importante do documento. **Nenhum dos quatro protocolos implementa revogação em tempo real, orçamento vivo, prevenção de double-spend ou decisão de captura.** Todos os quatro são protocolos de *atestação estática*: provam que algo foi autorizado em um instante passado. O desafio 01 exige explicitamente revogação ao vivo e recusa de compra fora do mandato — portanto **a parte do sistema que os jurados vão testar no *trial by fire* é justamente a parte que nenhum protocolo entrega**. Esse é o núcleo do produto, e é onde o esforço de engenharia deve ir. A **Seção 11** especifica essa camada em detalhe: máquina de estados, commit point, autenticação da revogação, cache, falha fechada e threat model.
 
 ### 0.3 Nota terminológica sobre "RFX402"
 
@@ -40,6 +41,12 @@ A sigla **RFX402 não corresponde a nenhum protocolo de pagamento**. A busca por
 | **UCP** | Alta — REST simples, discovery é um JSON estático | **Implementar como espinha dorsal.** É o único que hospeda AP2 nativamente e define `requires_escalation`. |
 | **ACP** | Média-alta — apenas o `delegate_payment` é necessário | **Implementar parcialmente** (só o cofre/token). Checkout completo em ACP é redundante com UCP. |
 | **x402** | Média — o risco é chain/facilitator, não o protocolo | **Implementar com facilitator mock**, em trilho isolado. Nunca no caminho do cartão. |
+
+E uma quinta linha que não é protocolo nenhum:
+
+| Componente | Viabilidade no prazo | Recomendação |
+|---|---|---|
+| **Camada de revogação AVAL** | Alta se local; média se registry externo | **Implementar primeiro e nunca cortar.** É o que o *trial by fire* testa e o que nenhum dos quatro protocolos entrega. Especificação na Seção 11. |
 
 ---
 
@@ -91,7 +98,7 @@ O sistema deve tratar explicitamente: **(1)** compra fora do mandato, **(2)** ma
 | Transportes | REST, MCP, A2A, Embedded | REST, MCP | Agnóstico (integra a UCP) | HTTP, MCP, A2A |
 | Criptografia | RFC 9421 (HTTP Message Signatures), ES256 | HMAC (`Signature` + `Timestamp`), Bearer | SD-JWT / KB-SD-JWT, JWS destacado, JCS | EIP-712 / EIP-3009, Permit2 |
 | Liquidação | Delegada a *payment handlers* | Delegada ao PSP do merchant | Fora de escopo (é evidência) | On-chain, stablecoin |
-| Tem revogação? | **Não** | **Não** | **Não** | **Não** |
+| Tem revogação? | **Não** | **Não** | **Não** | **Não** (o `nonce` impede reuso, não retira autoridade) |
 | Tem orçamento vivo? | Não | `Allowance.max_amount` (estático, one-time) | Constraints estáticas no mandato | `upto` (máximo por autorização) |
 
 ### 2.2 UCP — a espinha dorsal
@@ -157,6 +164,10 @@ Tratado integralmente na **Seção 8**.
 
 > **Protocolo é representação. O núcleo é autoridade. Nenhum protocolo mantém estado.**
 
+E o corolário que governa a Seção 11:
+
+> **Nenhum componente fora do `AuthorizationCore` decide revogação, e nenhum trilho de liquidação é acionado sem passar pelo commit point.**
+
 Toda vez que um protocolo parece "querer" guardar estado — a sessão de checkout do UCP, o `Allowance` do ACP, as constraints do AP2, o nonce do x402 — esse estado é **projeção** de uma entidade do núcleo, gerada sob demanda e descartável. Se o dado só existe dentro do protocolo, é bug.
 
 ### 3.2 O teste de conflito
@@ -191,22 +202,41 @@ Se a resposta não for **"o núcleo, sempre"**, o desenho está errado. Se a res
                                      v
  +===============================================================+
  |             AVAL AUTHORIZATION CORE   (autoridade)            |
- |  MandateStore · PolicyEngine · RevocationList · BudgetLedger  |
- |  ReservationLock · IdempotencyStore · CaptureService          |
+ |  MandateStore · PolicyEngine · RevocationRegistry · Budget-   |
+ |  Ledger · ReservationLock · IdempotencyStore · CaptureService |
  +===============================================================+
-     |            |               |                |
-     v            v               v                v
- +---------+ +---------+ +----------------+ +----------------+
- | UCP     | | AP2     | | ACP Delegate   | | Settlement     |
- | Adapter | | Adapter | | Payment (cofre)| | Adapters       |
- |         | |         | |                | |  +-- PSP mock  |
- | REST +  | | SD-JWT  | | Allowance ->   | |  +-- x402      |
- | RFC9421 | | +KB,JWS | | token vt_...   | |      (isolado) |
- +---------+ +---------+ +----------------+ +----------------+
-     |            |               |                |
-     v            v               v                v
-        Merchant mock  ·  PSP mock  ·  x402 facilitator mock
+     |            |               |                     |
+     v            v               v                     |
+ +---------+ +---------+ +----------------+             |
+ | UCP     | | AP2     | | ACP Delegate   |             |
+ | Adapter | | Adapter | | Payment (cofre)|             |
+ | REST +  | | SD-JWT  | | Allowance ->   |             |
+ | RFC9421 | | +KB,JWS | | token vt_...   |             |
+ +---------+ +---------+ +----------------+             |
+     |            |               |                     |
+     v            v               v                     v
+   Merchant mock  ·  cofre  ·  agente         +=====================+
+                                              |    COMMIT POINT     |
+   Revogação do usuário ---------------------->  Reservation:       |
+   (chega a qualquer instante)                |  PENDING -> COMMIT  |
+                                              |  transacional, único|
+                                              +==========+==========+
+                                                         |
+                                        depois daqui a revogação NÃO
+                                        afeta esta transação
+                                                         |
+                                                         v
+                                              +---------------------+
+                                              | Settlement Adapters |
+                                              |  +-- PSP mock       |
+                                              |  +-- x402 (isolado) |
+                                              +----------+----------+
+                                                         |
+                                                         v
+                                          PSP mock  ·  x402 facilitator mock
 ```
+
+O commit point é **um só** e fica na fronteira do `SettlementAdapter`, não "imediatamente antes da Mastercard". A distinção importa: se o commit point fosse definido pela rede de cartões, o trilho x402 da Seção 8 sairia de baixo da revogação e um mandato revogado ainda pagaria micropagamentos. Detalhamento em 11.1.
 
 ### 3.4 O que cada adaptador pode e não pode fazer
 
@@ -216,6 +246,7 @@ Se a resposta não for **"o núcleo, sempre"**, o desenho está errado. Se a res
 | AP2 | Emitir/verificar SD-JWT, computar `checkout_hash`, montar recibos | Ser a única checagem de limite; expirar mandato por conta própria |
 | ACP | Tokenizar credencial, emitir `Allowance` derivada, replicar idempotência | Definir `max_amount` a partir de qualquer coisa que não seja o mandato vivo |
 | x402 | Formar/verificar `PaymentPayload`, chamar facilitator | Aparecer no caminho do cartão; criar reserva de orçamento própria |
+| **Todos** | Ler o status de revogação para exibição | **Consultar revogação por fora do commit point; ser acionado sem uma `Reservation` já em `COMMITTED`** |
 
 ---
 
@@ -302,7 +333,9 @@ Somar `3500` (centavos) com `"10000"` (6 casas do USDC) é um bug de produção 
 
 **Conflito.** Nenhum dos quatro protocolos define revogação. O desafio exige revogação ao vivo, e é o teste mais provável do *trial by fire*.
 
-**Resolução.** `RevocationList` no AVAL é consultada **em toda decisão**, inclusive na revalidação no momento da captura. O mandato AP2 continua criptograficamente válido depois de revogado — isso é esperado e correto; a assinatura atesta o passado. O AVAL responde com um erro de política, não de criptografia. Para o UCP, o código de erro mais próximo é `mandate_scope_mismatch`; recomendo emitir um erro `aval.mandate_revoked` no corpo e mapear para HTTP 403, documentando a extensão.
+**Resolução.** `RevocationRegistry` no AVAL é consultado **em toda decisão**, inclusive na revalidação dentro da transação de captura. O mandato AP2 continua criptograficamente válido depois de revogado — isso é esperado e correto; a assinatura atesta o passado. O AVAL responde com um erro de política, não de criptografia. Para o UCP, o código de erro mais próximo é `mandate_scope_mismatch`; emitimos `aval.mandate_revoked` no corpo e mapeamos para HTTP 403, documentando a extensão.
+
+Como a revogação é o produto e não um detalhe, ela tem **seção própria**: a Seção 11 especifica posição no fluxo, máquina de estados, onde a referência de revogação vive no mandato, quem pode revogar, cache, falha fechada, prova de autorização e threat model. As linhas C11 a C14 abaixo registram apenas os *conflitos* que a camada de revogação cria com os quatro protocolos; a resolução completa está na Seção 11.
 
 > **Ponto de defesa técnica:** quando um jurado perguntar "por que a revogação não está no protocolo?", a resposta é que os quatro protocolos são de **atestação**, não de **autorização contínua**. Um mandato assinado é como um cheque assinado: continua autêntico depois de sustado. O sustamento vive no banco, não no cheque. O AVAL é o banco.
 
@@ -318,6 +351,47 @@ Somar `3500` (centavos) com `"10000"` (6 casas do USDC) é um bug de produção 
 
 **Resolução.** Registry local pré-carregado no AVAL, com fetch remoto **desabilitado** na demo. UCP prevê exatamente esse modo com o erro `profile_not_trusted` (403) para perfis fora do registro de plataformas pré-aprovadas. Isso é conformidade *e* é como se demonstra "agente impostor": um agente com perfil desconhecido leva 403 antes mesmo da verificação de assinatura.
 
+### C11 — Onde fica o commit point
+
+**Conflito.** É tentador posicionar o gate de autorização "imediatamente antes da rede de pagamento" — é o desenho mais intuitivo e o que um processador faria. Mas nesse ponto a sessão de checkout UCP já passou por `complete_in_progress`, e o único desfecho possível é aceitar ou rejeitar. O comportamento obrigatório nº 1 do desafio exige **recusar *ou escalar para aprovação humana***, e o escalonamento (`requires_escalation` + `continue_url` no UCP, `unresolved_constraint` no AP2) só existe enquanto a sessão está viva. Um gate posicionado no fim do fluxo perde metade do requisito.
+
+**Resolução.** **Dois pontos de decisão, um commit point.**
+
+| | Ponto de autorização | Commit point |
+|---|---|---|
+| Quando | Passo 8, com a sessão de checkout aberta | Passo 11, dentro da transação de captura |
+| Desfechos | `AUTHORIZED` · `AWAITING_HUMAN` · `REJECTED` | `COMMITTED` · `REJECTED` |
+| Pode escalar? | **Sim** | Não |
+| Efeito da revogação | Bloqueia e pode escalar | Bloqueia |
+| Onde fica | `AuthorizationCore.evaluate()` | Fronteira do `SettlementAdapter` |
+
+O commit point **não** é definido pela rede de cartões; é definido pela fronteira do `SettlementAdapter`. Assim o trilho x402 recebe exatamente a mesma disciplina que o cartão.
+
+### C12 — Duas máquinas de estado para "consumido"
+
+**Conflito.** Uma leitura natural da revogação modela o mandato como `ACTIVE → COMMITTED | REVOKED`. Isso é incompatível com o `BudgetLedger`: um mandato aberto com teto de R$ 800 pode originar várias compras, e não "se consome" na primeira. Se o código ganhar uma transição `COMMITTED` no mandato *e* um ciclo de vida na reserva, haverá duas máquinas de estado para a mesma pergunta e elas vão divergir sob concorrência.
+
+**Resolução.** A transição atômica pertence à **`Reservation`**, nunca ao `Mandate`.
+
+| Entidade | Estados | Propriedade |
+|---|---|---|
+| `Mandate` | `ACTIVE → REVOKED` · `ACTIVE → EXPIRED` | Monótono, irreversível, **não** tem `COMMITTED` |
+| `Reservation` | `PENDING → COMMITTED → SETTLED` · `PENDING/COMMITTED → RELEASED` | Uma por transação; é aqui que a corrida é decidida |
+
+A corrida "revogação versus compra" é resolvida porque **as duas escritas disputam o mesmo lock de `mandate_id`**, não porque o mandato tenha um estado de commit. Ver 11.2.
+
+### C13 — Onde a referência de revogação vive no mandato
+
+**Conflito.** Colocar `revocation_id`, `revocation_authority` ou `revocation_commitment` dentro do payload tipado do AP2 colide com três decisões já tomadas: extensões AVAL vivem no namespace `aval.*` **fora** dos schemas AP2 (Passo 1); a canonicalização JCS cobre o JSON **completo** e a verificação proíbe remover membros não reconhecidos (Passo 7); e os parsers tipados do AP2 são estritos quanto ao formato da cadeia (Passo 9).
+
+**Resolução.** A referência vai como claim de namespace `aval.revocation` no mandato **aberto**, coberta pela assinatura e nunca removida antes de verificar, com cópia autoritativa no `Mandate` do AVAL e binding por hash. Esquema em 11.3.
+
+### C14 — Fail-closed versus a válvula de escape de assinatura
+
+**Conflito.** A Seção 9.3 prevê um flag `SIGNATURE_ENFORCEMENT=warn` para desbloquear desenvolvimento. Por simetria, alguém vai propor `REVOCATION_ENFORCEMENT=warn` às quatro da manhã.
+
+**Resolução.** **A revogação não tem modo warn, em nenhum ambiente.** Indisponibilidade do armazenamento de revogação resulta em `503 revocation_unavailable`, igual à invariante 5 da Seção 10.1 para idempotência. Detalhamento em 11.7.
+
 
 ---
 
@@ -331,11 +405,13 @@ Somar `3500` (centavos) com `"10000"` (6 casas do USDC) é um bug de produção 
 | `Principal` | Humano ou empresa que delega | Assinar (quem assina é o KeyCustody) |
 | `AgentIdentity` | Identidade do agente, **separada** da humana; chave pública, perfil, status | Ser inferida do conteúdo da requisição |
 | `Mandate` | Autoridade delegada: escopo, limites, validade, instrumento, versão de política | Ser mutável (mudanças criam nova versão) |
-| `Revocation` | Fato de revogação com timestamp e autor | Ser reversível |
+| `Revocation` | Fato de revogação assinado: `mandate_id`, escopo, autor, motivo, `revoked_at`, `epoch` | Ser reversível; ser aceita sem assinatura verificada |
+| `RevocationAuthority` | Quem pode revogar um mandato: chave pública, papel, escopo permitido | Ser inferida da requisição |
 | `CheckoutIntent` | Carrinho canônico + total + status + merchant + mandato de referência | Existir sem mandato associado |
-| `Reservation` | Consumo *atômico* de orçamento com lock | Ser criada fora de transação |
+| `Reservation` | Consumo *atômico* de orçamento com lock; é ela que transita `PENDING → COMMITTED` | Ser criada fora de transação; ser criada sem releitura de revogação |
 | `CaptureAttempt` | Tentativa idempotente de liquidação | Executar duas vezes com a mesma chave |
 | `Evidence` | Blob criptográfico (mandato, JWS, recibo) + hash + origem | Ser interpretado como política |
+| `AuthorizationProof` | Prova curta, de uso único, emitida **após** a reserva entrar em `COMMITTED` | Ser emitida antes do commit; ser reutilizada |
 | `AuditEvent` | Registro append-only, legível, com referência ao `Evidence` | Ser editado ou deletado |
 
 ### 5.2 Tabela de projeção — um campo, quatro nomes
@@ -354,6 +430,8 @@ Esta tabela vira código (o arquivo de mapeamento) e vira slide (é a prova visu
 | `mandate.expiry` | `expires_at` do checkout | `Allowance.expires_at` | `exp` / `payment.execution_date` | `validBefore` / `deadline` |
 | `mandate.merchant_scope` | perfil do negócio | `Allowance.merchant_id` | `payment.allowed_payees` | `payTo` (binding de destinatário) |
 | `idempotency` | `Idempotency-Key` (assinado) | `Idempotency-Key` (obrigatório) | — | `nonce` (32 bytes) |
+| `mandate.revocation_ref` | `aval.revocation` (extensão documentada) | — | claim `aval.revocation` no mandato aberto | — (herda do mandato) |
+| `mandate.revocation_status` | `aval.mandate_revoked` (403) | erro de tokenização | — (fora do escopo do protocolo) | recusa antes de `PAYMENT-SIGNATURE` |
 | `merchant_proof` | `ap2.merchant_authorization` | — | `checkout_jwt` + `checkout_hash` | — |
 | `settlement_proof` | — | resposta do PSP | Payment Receipt | `transaction` (hash on-chain) |
 
@@ -370,14 +448,16 @@ Cada passo traz: **quem faz**, **artefato**, **validações**, **o que pode dar 
 ### Passo 1 — Criação do mandato pelo humano
 
 **Quem:** UI AVAL → `MandateService`. Sem participação do LLM.
-**Artefato:** `Mandate` no banco + **AP2 open Checkout Mandate** e **open Payment Mandate** (SD-JWT), assinados pelo `KeyCustodyService` com a chave da plataforma.
-**Validações:** escopo não-vazio; teto > 0; validade futura; instrumento existente no cofre.
+**Artefato:** `Mandate` no banco + **AP2 open Checkout Mandate** e **open Payment Mandate** (SD-JWT), assinados pelo `KeyCustodyService` com a chave da plataforma, contendo o claim `aval.revocation` (ver 11.3) e uma `RevocationAuthority` registrada.
+**Validações:** escopo não-vazio; teto > 0; validade futura; instrumento existente no cofre; **pelo menos uma autoridade de revogação registrada e verificável** — mandato sem caminho de revogação não é emitido.
 
 | Risco | Prob. | Detecção | Mitigação / Plano B |
 |---|---|---|---|
 | API privada do `sd-jwt` 0.10.4 quebra | **Alta** | Teste de emissão no primeiro commit | Envolver atrás de `MandateSigner`; fallback: JWS simples com claims equivalentes |
 | `mandate.py` do AP2 escreve em `.logs/mandate_operations.log` | Alta | `strace`/inspeção | Já mapeado no doc do time: isolar esse efeito colateral no vendor |
 | Constraints AP2 não expressam "categoria" ou "recorrência" | Média | Modelagem | Usar namespace `aval.*` **fora** dos schemas AP2, como já decidido |
+| Claim `aval.revocation` quebra parser tipado do AP2 | Média | Teste de round-trip do mandato aberto | Claim em namespace, coberto pela assinatura, nunca removido antes de verificar (C13) |
+| Mandato emitido sem autoridade de revogação → não é revogável no *trial by fire* | **Alta** | Validação de emissão | Bloquear emissão; teste que espera erro |
 
 > **Decisão:** emitir mandatos **abertos** com constraints e deixar o AVAL assinar os fechados por delegação. É o modo *Human Not Present* do AP2 e é exatamente o desafio.
 
@@ -472,6 +552,8 @@ Cada passo traz: **quem faz**, **artefato**, **validações**, **o que pode dar 
 **Quem:** `AuthorizationCore`. **Sem LLM, sem protocolo.**
 **Ordem obrigatória:** revogação → validade do mandato → política viva → constraints AP2 → saldo.
 
+Este é o **ponto de autorização**, não o commit point (C11). Aqui a revogação pode produzir `REJECTED` **ou** `AWAITING_HUMAN`; no Passo 11 ela só pode produzir `REJECTED`.
+
 **Saídas possíveis:** `AUTHORIZED` · `AWAITING_HUMAN` (→ UCP `requires_escalation` + `continue_url`; AP2 `unresolved_constraint`) · `REJECTED`.
 
 | Risco | Prob. | Detecção | Mitigação / Plano B |
@@ -516,11 +598,14 @@ Cada passo traz: **quem faz**, **artefato**, **validações**, **o que pode dar 
 
 1. Adquire lock por `(mandate_id, transaction_id)`.
 2. Consulta idempotência; se replay, devolve resposta cacheada.
-3. **Revalida tudo** — revogação, expiração, política, constraints. *Sim, de novo.*
-4. Cria `Reservation` consumindo orçamento atomicamente.
-5. Chama o `SettlementAdapter`.
-6. Concilia: sucesso → `SETTLED`; falha → libera a reserva.
-7. Grava `AuditEvent` e emite recibos.
+3. **Revalida tudo** — revogação, expiração, política, constraints. *Sim, de novo.* A leitura de revogação é **autoritativa e sem cache**, dentro desta transação (11.6).
+4. Cria `Reservation` consumindo orçamento atomicamente e a transita para `COMMITTED`. **Este é o commit point.**
+5. Emite o `AuthorizationProof` de uso único, ligado a `(reservation_id, transaction_hash)` (11.9).
+6. Chama o `SettlementAdapter` — **fora do lock**, com a tentativa já persistida como `PENDING`.
+7. Concilia: sucesso → `SETTLED`; falha → libera a reserva (`RELEASED`).
+8. Grava `AuditEvent` e emite recibos.
+
+**Regra do commit point:** uma revogação que chega **antes** do passo 4 impede a captura; uma que chega **depois** vale para utilizações futuras do mandato e não desfaz esta transação — o desfazimento é tratado por reversal/refund/dispute, não por revogação (11.8).
 
 | Risco | Prob. | Detecção | Mitigação / Plano B |
 |---|---|---|---|
@@ -528,6 +613,8 @@ Cada passo traz: **quem faz**, **artefato**, **validações**, **o que pode dar 
 | Limite muda entre autorização e captura | Alta (é cenário de teste) | Teste dedicado | Passo 3 acima existe exatamente para isso |
 | Adaptador de liquidação lento trava o lock | Média | Timeout | Timeout curto + liberação de reserva; nunca segurar lock em I/O de rede longa |
 | Falha parcial: PSP aprovou, ledger não gravou | Média | Reconciliação | Gravar `CaptureAttempt` em `PENDING` **antes** de chamar; conciliar no retorno |
+| Revogação chega durante a chamada externa e o time tenta "cancelar" a transação | **Alta** | Teste 17 | Depois de `COMMITTED` a revogação não desfaz; documentar o commit point na UI do auditor |
+| Retry vira nova compra por perder o `transaction_hash` | Média | Teste 19 | Chave de idempotência amarrada a `(mandate_id, transaction_hash)`; retry reusa a mesma `Reservation` |
 
 ---
 
@@ -567,7 +654,7 @@ O jurado vai fazer algo como: mudar o limite, revogar o mandato, trocar o mercha
 |---|---|---|---|
 | **Compra fora do mandato** | AP2 constraint não satisfeita; UCP `requires_escalation` + `continue_url`; AP2 `unresolved_constraint` | `PolicyEngine` | Escala para aprovação humana. **Nunca aprova em silêncio.** |
 | **Mandato expirado** | `exp` do SD-JWT; `payment.execution_date.not_after`; `Allowance.expires_at` | `MandateStore` + `ClockService` | `mandate_expired` |
-| **Revogação ao vivo** | **Nenhum protocolo cobre** | `RevocationList` (AVAL), consultada na autorização *e* na captura | Erro de política; mandato segue criptograficamente válido, mas sem autoridade |
+| **Revogação ao vivo** | **Nenhum protocolo cobre** — camada própria, Seção 11 | `RevocationRegistry` (AVAL), lido na autorização *e* dentro da transação de commit, sem cache | `aval.mandate_revoked` (403); mandato segue criptograficamente válido, mas sem autoridade |
 | **Agente impostor** | UCP RFC 9421 + `signing_keys[]` + registry de perfis confiáveis | Verificação na borda | `signature_invalid`, `key_not_found` ou `profile_not_trusted` |
 | **Disputa posterior** | Cadeia AP2 + recibos + `AuditEvent` | `AuditLedger` | Veredito reconstruído da evidência |
 | **Trilha de auditoria** | UCP `Order` + recibos AP2 como renderização do log | `AuditLedger` | Três visões da mesma verdade |
@@ -663,6 +750,7 @@ CaptureService
 3. **O `nonce` não substitui a idempotência do AVAL** — ele é registrado *nela*.
 4. **Conversão de escala explícita na borda.** `"10000"` em USDC de 6 casas é 0,01 USD, não 10.000. Escreva o teste.
 5. **Facilitator é mock.** Sem RPC, sem gas, sem chave privada real, sem rede de teste.
+6. **O trilho x402 passa pelo mesmo commit point.** Nenhum `PAYMENT-SIGNATURE` é formado sem uma `Reservation` em `COMMITTED`. Definir o commit point como "antes da rede de cartões" deixaria o micropagamento fora da revogação — mandato revogado continuaria pagando a API de decisão. Esse é um bug demonstrável, e é o teste 18.
 
 ### 8.5 Caso de uso concreto para a demo
 
@@ -713,6 +801,11 @@ Ordenados por *probabilidade × impacto*.
 | 13 | Trilha verificável mas ilegível | AVAL | Alta | Médio | Perde critério 5 | `human_summary` em cada evento |
 | 14 | Cadeia AP2 limitada a dois payloads | AP2 | Média | Médio | Erro em cadeia longa | MVP com uma delegação |
 | 15 | Prompt injection via catálogo | LLM | Média | Médio | Agente desvia do mandato | Gateway; item malicioso plantado como demo |
+| 16 | Cache de revogação no caminho de commit | Revogação | Alta | **Crítico** | Jurado revoga e a próxima compra passa | TTL zero no commit; cache só em pré-voo marcado como não autoritativo |
+| 17 | Endpoint de revogação sem autenticação | Revogação | Alta | Alto | Qualquer um revoga qualquer mandato | Revogação assinada por `RevocationAuthority`; admin do *trial by fire* com token |
+| 18 | Commit point definido pela rede de cartões | Revogação | Média | Alto | x402 escapa da revogação | Commit point na fronteira do `SettlementAdapter` |
+| 19 | Duas máquinas de estado (`Mandate.COMMITTED` + `Reservation`) | Revogação | Média | Alto | Divergência sob concorrência | Só `Reservation` transita; `Mandate` é monótono (C12) |
+| 20 | `AuthorizationProof` emitido antes do commit | Revogação | Média | Alto | Reintroduz a corrida que a prova deveria eliminar | Emissão pós-`COMMITTED`, uso único (11.9) |
 
 ### 9.2 As três armadilhas criptográficas, em detalhe
 
@@ -727,6 +820,7 @@ Ordenados por *probabilidade × impacto*.
 | Falha | Degradação aceitável |
 |---|---|
 | Verificação de assinatura instável | Flag `SIGNATURE_ENFORCEMENT=warn` que loga e segue — **mas nunca ligada durante a demo**; existe só para desbloquear desenvolvimento |
+| Armazenamento de revogação indisponível | **Nenhuma degradação.** `503 revocation_unavailable`. Não existe `REVOCATION_ENFORCEMENT=warn` em ambiente nenhum (C14) |
 | x402 não sobe | Trilho oculto na UI; o resto é independente por construção |
 | LLM lento ou fora do ar | Agente scriptado com as mesmas chamadas de ferramenta |
 | Banco corrompido | Seed determinístico e reset em um comando |
@@ -744,6 +838,10 @@ Este é o núcleo que nenhum protocolo entrega e que o desafio testa diretamente
 3. Uma requisição repetida com a mesma `Idempotency-Key` devolve a resposta original, sem novo efeito.
 4. Uma revogação que chega entre autorização e captura **impede** a captura.
 5. Uma falha de escrita no armazenamento de idempotência resulta em rejeição (`503`), nunca em execução.
+6. Uma revogação e um commit da mesma reserva nunca vencem os dois: as duas escritas disputam o mesmo lock de `mandate_id`.
+7. Depois de `Reservation = COMMITTED`, nenhuma revogação altera aquela transação; ela permanece válida para utilizações futuras do mandato.
+8. Nenhum `SettlementAdapter` — inclusive x402 — é acionado sem uma `Reservation` em `COMMITTED`.
+9. Uma leitura de revogação usada para decidir nunca vem de cache.
 
 ### 10.2 Implementação mínima defensável
 
@@ -756,7 +854,8 @@ def capture(mandate_id, transaction_id, idem_key, amount):
         if cached := idem.get(("ucp", idem_key)):
             return cached                       # 3. replay
 
-        if revocations.is_revoked(mandate_id):  # 4. REVOGAÇÃO PRIMEIRO
+        if revocations.is_revoked(mandate_id,   # 4. REVOGAÇÃO PRIMEIRO
+                                  fresh=True):  #    leitura sem cache
             return reject("mandate_revoked")
 
         m = mandates.get(mandate_id)
@@ -770,13 +869,15 @@ def capture(mandate_id, transaction_id, idem_key, amount):
             return reject("mandate_invalid_signature")
 
         res = ledger.reserve(m, amount)         # 7. consumo ATÔMICO
-        attempt = attempts.create(PENDING, ...)  # 8. antes da rede
+        res.to_committed(transaction_hash)      # 8. COMMIT POINT
+        proof = proofs.issue(res, ttl=60)       # 9. prova pós-commit
+        attempt = attempts.create(PENDING, ...) # 10. antes da rede
 
-    result = settlement.authorize(res)          # 9. FORA do lock
+    result = settlement.authorize(res, proof)   # 11. FORA do lock
 
-    with db.transaction():                      # 10. concilia
+    with db.transaction():                      # 12. concilia
         if result.approved:
-            ledger.commit(res); attempts.settle(attempt)
+            ledger.settle(res); attempts.settle(attempt)
         else:
             ledger.release(res); attempts.fail(attempt)
         idem.put(("ucp", idem_key), response)
@@ -784,15 +885,323 @@ def capture(mandate_id, transaction_id, idem_key, amount):
     return response
 ```
 
-Três detalhes que importam: a revogação é checada **antes** de tudo; a reserva acontece **antes** da chamada de rede; e a chamada de rede acontece **fora** do lock, com a tentativa já persistida como `PENDING` para permitir conciliação em caso de queda.
+Quatro detalhes que importam: a revogação é checada **antes** de tudo, com leitura fresca; a reserva acontece **antes** da chamada de rede; o commit da reserva é a linha 8 e nada além dela é o commit point; e a chamada de rede acontece **fora** do lock, com a tentativa já persistida como `PENDING` para permitir conciliação em caso de queda.
+
+Note o que **não** está no pseudocódigo: não há transição de estado no `Mandate`. Ele permanece `ACTIVE`; quem transita é a `Reservation` (C12).
 
 ### 10.3 Escolha de banco
 
-SQLite em modo WAL é suficiente para uma demo e reduz risco operacional, **desde que** haja um único processo escritor e as transações usem `BEGIN IMMEDIATE`. Postgres é mais seguro para concorrência real mas adiciona uma dependência de infra na madrugada. Recomendação: **SQLite + WAL + escritor serializado**, com a camada de repositório isolada para permitir troca se sobrar tempo.
+SQLite em modo WAL é suficiente para uma demo e reduz risco operacional, **desde que** haja um único processo escritor e as transações usem `BEGIN IMMEDIATE`. Essa escolha tem uma consequência que a Seção 11.10 explora: com escritor único, não existe suporte a múltiplos verificadores concorrentes consumindo o mesmo mandato a partir de processos distintos. Postgres é mais seguro para concorrência real mas adiciona uma dependência de infra na madrugada. Recomendação: **SQLite + WAL + escritor serializado**, com a camada de repositório isolada para permitir troca se sobrar tempo.
 
 ---
 
-## 11. Plano de implementação com linha de corte
+## 11. Camada de revogação — a autoridade viva
+
+Esta seção é a especificação do único componente que nenhum dos quatro protocolos entrega e que o *trial by fire* testa diretamente. Tudo aqui é código determinístico do AVAL. Nada aqui depende do LLM.
+
+**Propriedade de segurança que a camada garante:**
+
+> Um usuário pode retirar a autoridade de um agente até o instante em que uma transação específica é irrevogavelmente aceita para submissão ao trilho de liquidação, e nenhum agente pode utilizar uma autorização revogada nem reutilizar uma autorização já consumida.
+
+### 11.1 Posição no fluxo e definição do commit point
+
+O modelo mental "gate imediatamente antes da rede de pagamento" está **quase** certo e erra em duas coisas: perde o caminho de escalonamento humano (C11) e deixa trilhos não-cartão fora da revogação (8.4, regra 6). A correção é definir o commit point pela **fronteira do `SettlementAdapter`**, e reconhecer que existem dois momentos de decisão, não um.
+
+```
+Humano ──emite──► Mandate (aberto, com aval.revocation)
+                        │
+                        ▼
+  Agente ──► UCP checkout ──► [PONTO DE AUTORIZAÇÃO]  Passo 8
+                                    │  AUTHORIZED / AWAITING_HUMAN / REJECTED
+                                    │  ← revogação aqui pode ESCALAR
+                                    ▼
+                            complete_checkout (AP2 lock)
+                                    │
+                                    ▼
+                        ┌───────────────────────────┐
+   revogação ──────────►│      COMMIT POINT         │  Passo 11, dentro
+   (a qualquer instante)│  Reservation: → COMMITTED │  de UMA transação
+                        └─────────────┬─────────────┘
+                                      │  AuthorizationProof (uso único, TTL 60s)
+             ─────────────────────────┼─────────────────────────
+              antes: revogável        │        depois: NÃO revogável
+                                      ▼
+                            SettlementAdapter
+                          (PSP mock  |  x402)
+                                      │
+                                      ▼
+                            reversal / refund / dispute
+```
+
+**Regras da fronteira:**
+
+1. Antes do commit point, a autorização é revogável.
+2. Depois do commit point, a revogação do mandato **não afeta aquela tentativa**; continua valendo para todas as futuras.
+3. Depois do commit point, o desfazimento é problema dos mecanismos normais de pagamento — reversal, cancelamento, refund, disputa — e a UI do auditor precisa dizer isso com essas palavras.
+4. Nenhum adaptador de liquidação é acionado sem uma `Reservation` em `COMMITTED`.
+
+### 11.2 Máquina de estados
+
+Duas máquinas separadas, e nunca uma terceira (C12).
+
+```
+Mandate            ACTIVE ──► REVOKED        (monótono, irreversível)
+                      └────► EXPIRED
+
+Reservation        PENDING ──► COMMITTED ──► SETTLED
+                      │             └──────► RELEASED   (liquidação falhou)
+                      └────────────────────► RELEASED   (rejeitado no commit)
+```
+
+O `Mandate` **não tem** estado `COMMITTED`: um mandato aberto com teto financia N compras. Quem é consumido é a `Reservation`.
+
+A corrida entre revogação e compra é resolvida por serialização, não por state machine:
+
+| Ordem real | Efeito |
+|---|---|
+| Revogação escreve primeiro | Commit lê `REVOKED` dentro da mesma transação → `REJECTED` |
+| Commit escreve primeiro | Revogação encontra a reserva já `COMMITTED` → aquela transação segue; mandato passa a `REVOKED` para as próximas |
+
+As duas escritas adquirem o **mesmo lock de `mandate_id`** (`SELECT … FOR UPDATE`, ou `BEGIN IMMEDIATE` no SQLite). Não existe janela entre "ler status" e "gravar commit", porque as duas coisas acontecem na mesma transação. Essa é a resposta ao `authorize_and_commit()` conceitual: ele não é uma primitiva nova, é a transação da Seção 10.2.
+
+### 11.3 Onde a referência de revogação vive
+
+No mandato **aberto**, como claim de namespace, fora dos schemas tipados do AP2 (C13):
+
+```json
+"aval": {
+  "revocation": {
+    "v": 1,
+    "revocation_id": "rev_01JAV…",
+    "registry": "https://aval.local/.well-known/aval-revocation",
+    "authorities": [
+      { "role": "holder",   "kid": "usr_01JAV…", "alg": "ES256" },
+      { "role": "guardian", "kid": "gdn_01JAV…", "alg": "ES256" }
+    ],
+    "commitment": "b64u(SHA-256(R))",
+    "epoch": 0
+  }
+}
+```
+
+**Regras:**
+
+- O bloco é coberto pela assinatura do mandato e **nunca** é removido antes de verificar — a verificação opera sobre o JSON completo (Passo 7).
+- `revocation_id` é opaco e não deriva de dados do usuário (11.11).
+- A cópia autoritativa vive na tabela `mandates` do AVAL; o claim é a *projeção* verificável, coerente com 3.1.
+- `commitment` é **opcional** e não é o mecanismo primário — ver 11.4.
+- `epoch` incrementa a cada mudança de política e entra no `AuthorizationProof`, permitindo invalidar provas em voo.
+
+### 11.4 Commit-reveal versus revocation key assinada
+
+A proposta de `C = SHA256(R)`, com revogação por publicação de `R`, foi avaliada contra a alternativa de uma **revocation key** que assina uma chamada de revogação.
+
+| Propriedade | Commit-reveal | Revocation key assinada |
+|---|---|---|
+| Não-forjabilidade da revogação | Sim | Sim |
+| Autoria identificável | Não | **Sim** |
+| Múltiplos revogadores (titular, guardião, emissor) | Não sem múltiplos segredos | **Sim, por papel** |
+| Revogação de escopo parcial | Não | **Sim** |
+| Delegação / rotação | Não | **Sim** |
+| Revogação sem o usuário presente | **Não** | Sim (guardião/operador) |
+| Perda do segredo | **Mandato torna-se irrevogável** | Rotação de chave |
+| Vazamento do segredo | **DoS: revogação forçada** | Mesmo risco, mas mitigável por rotação |
+| Privacidade antes do reveal | **Sim** (entrada opaca) | Depende do identificador usado |
+| Impede o registry de censurar/equivocar | Não | Não |
+
+**Decisão: a revocation key assinada é o mecanismo primário; o commitment é acessório de privacidade em produção.**
+
+Três razões:
+
+1. **O commitment não resolve a falha real do registry.** O risco de um registry não é forjar uma revogação — é *ocultá-la* ou responder coisas diferentes para partes diferentes. SHA-256 não trata censura nem equivocação; log append-only e auditoria externa tratam (11.13).
+2. **Commit-reveal quebra o *trial by fire*.** O jurado revoga por um endpoint de operador. Se revogar exige posse de `R`, ou o jurado não consegue revogar, ou o AVAL guarda `R` pelo usuário — e nesse caso o commitment não oferece nada sobre uma linha de banco, porque quem verifica e quem revoga estão no mesmo domínio de confiança.
+3. **Commit-reveal é binário.** Não expressa "revogue só este merchant" nem "zere o teto e mantenha o resto", que são casos que o desafio provavelmente vai testar.
+
+O que o commitment **de fato** entrega e vale manter no roadmap: uma entrada de registry que não identifica o mandato até o reveal, útil quando o registry é operado por terceiro. Para isso, porém, uma *status list* agregada é melhor (11.11 e 11.13).
+
+### 11.5 Quem pode revogar
+
+Revogação é uma escrita privilegiada e **assinada**. Nunca um `POST` aberto.
+
+| Papel | Autenticação | Escopo permitido |
+|---|---|---|
+| `holder` (usuário) | JWS ES256 com a chave em `aval.revocation.authorities` | Qualquer escopo do próprio mandato |
+| `guardian` | JWS ES256, chave co-registrada na emissão | Mandato inteiro |
+| `issuer` (AVAL, por risco) | Chave de plataforma via `KeyCustodyService` | Mandato inteiro, com motivo obrigatório |
+| `operator` (*trial by fire*) | Token de operador + registro de auditoria | Qualquer escopo, sempre logado como `operator` |
+
+O papel `operator` existe porque o jurado precisa revogar sem a chave da Marta. Ele é uma autoridade de primeira classe, autenticada e auditada — **não** um bypass. O endpoint de admin da Seção 12 é o mesmo endpoint, com o mesmo registro no `AuditLedger`.
+
+**Escopos de revogação:**
+
+| Escopo | Efeito |
+|---|---|
+| `mandate` | Mandato inteiro para `REVOKED` |
+| `merchant:<id>` | Remove um merchant do escopo permitido |
+| `instrument:<vt_…>` | Invalida um token do cofre |
+| `budget:zero` | Zera o saldo vivo mantendo o mandato ativo |
+
+Toda revogação grava `Revocation` + `Evidence` (o JWS) + `AuditEvent` com `human_summary` em português. É irreversível: "desfazer" é emitir um mandato novo.
+
+### 11.6 Consulta, cache e latência
+
+| Caminho | Fonte | Cache | Autoritativo? |
+|---|---|---|---|
+| Pré-voo / UI / rascunho do agente | Réplica de leitura | Permitido, ≤ 5 s | **Não** — marcado como `advisory` na resposta |
+| Ponto de autorização (Passo 8) | Tabela primária | Não | Sim |
+| **Commit point (Passo 11)** | Tabela primária, dentro da transação | **Proibido** | Sim |
+
+Latência aceitável de revogação = **zero decisões**, não zero milissegundos. O requisito da Seção 12 é "efeito na próxima decisão, sem restart". Qualquer TTL no caminho de commit é uma janela em que o jurado revoga e a compra seguinte passa — é o risco 16 e provavelmente a forma mais provável de perder o critério nº 1.
+
+Alvo operacional: revogação visível para a próxima decisão em < 100 ms local; p99 do commit point < 300 ms incluindo a leitura fresca.
+
+### 11.7 Indisponibilidade: fail-closed, sem exceção
+
+| Situação | Resposta |
+|---|---|
+| Tabela/serviço de revogação indisponível | `503 revocation_unavailable`, `Retry-After` |
+| Leitura de revogação com timeout | `503`, nunca "assume ativo" |
+| Réplica de pré-voo indisponível | Degrada só a UI; o commit point não usa réplica |
+
+**Não existe `REVOCATION_ENFORCEMENT=warn`** em nenhum ambiente, ao contrário do flag de assinatura da Seção 9.3 (C14). O motivo é assimetria de dano: uma verificação de assinatura frouxa deixa passar um impostor num ambiente de desenvolvimento sem dinheiro; uma revogação frouxa é exatamente o cenário que o desafio manda tratar.
+
+### 11.8 Revogação em voo
+
+O caso difícil é a revogação que chega **depois** do commit e **antes** da resposta do adaptador de liquidação.
+
+| Estado no momento da revogação | Ação |
+|---|---|
+| `Reservation = PENDING` (ainda dentro da transação) | Commit falha; `RELEASED`; `aval.mandate_revoked` |
+| `Reservation = COMMITTED`, liquidação em voo | **Nada muda nesta transação.** Mandato vira `REVOKED`; próxima tentativa é rejeitada |
+| `Reservation = COMMITTED`, liquidação falhou | `RELEASED`; o mandato já revogado impede nova tentativa |
+| `Reservation = SETTLED` | Fora do escopo da revogação: reversal/refund/dispute |
+
+A tentação de "cancelar a transação em voo" é o erro a evitar: a chamada externa não participa da transação ACID local, então cancelar viraria uma segunda operação distribuída com seus próprios modos de falha. O commit point existe justamente para tornar essa fronteira explícita e defensável.
+
+### 11.9 `AuthorizationProof` — prova curta de uso único
+
+Depois do commit, o AVAL emite um artefato assinado que substitui novas consultas ao registry no restante do fluxo. É o mesmo padrão do *OCSP stapling*: em vez de cada verificador consultar o status, o status viaja com a requisição, assinado e com validade curta.
+
+```json
+{
+  "v": 1,
+  "reservation_id": "rsv_01JAV…",
+  "mandate_ref": "b64u(SHA-256(mandate_id || salt_epoch))",
+  "transaction_hash": "b64u(…)",
+  "amount": { "amount": 80000, "currency": "BRL", "scale": 2 },
+  "decision": "COMMITTED",
+  "policy_version": 7,
+  "revocation_epoch": 0,
+  "iat": 1756487000,
+  "exp": 1756487060,
+  "jti": "prf_01JAV…"
+}
+```
+
+**Invariantes:**
+
+1. **Emitida depois** de `Reservation = COMMITTED`, nunca antes. Uma prova pré-commit com qualquer TTL reintroduz exatamente a corrida que ela deveria eliminar (risco 20).
+2. TTL ≤ 60 s e ≤ `maxTimeoutSeconds` do trilho.
+3. Uso único: `jti` é consumido na mesma tabela de idempotência da C4.
+4. Não é pré-autorização e não pode ser reapresentada para uma segunda transação.
+5. Carrega `policy_version` e `revocation_epoch`, então uma mudança de política invalida provas em voo por comparação, não por consulta.
+
+### 11.10 Múltiplos verificadores concorrentes
+
+A Seção 10.3 escolheu SQLite + WAL com **escritor único serializado**. A consequência precisa estar escrita: nessa configuração **não há suporte a múltiplos processadores concorrentes** consumindo o mesmo mandato a partir de processos distintos. Para a demo isso é adequado e é uma escolha, não uma omissão.
+
+Se o cenário de N verificadores for exigido:
+
+| Opção | Serialização | Custo |
+|---|---|---|
+| SQLite + escritor único (demo) | Processo | Nenhum; não escala |
+| Postgres + `SELECT … FOR UPDATE` | Linha do mandato | Dependência de infra |
+| Registry como ponto único de commit | Serviço | Vira SPOF e observa toda transação (11.11) |
+
+Em qualquer opção, o `AuthorizationProof` é o que evita N consultas: só o commit é serializado; a verificação a jusante é offline.
+
+### 11.11 Privacidade
+
+Há uma tensão real e ela precisa ficar registrada, porque um jurado pode perguntar: **um registry que é o commit point atômico de toda transação observa, por construção, todas as compras do usuário.** Não dá para ter simultaneamente (a) commit atômico em serviço externo e (b) registry que não rastreia.
+
+A resolução no AVAL é topológica: **o commit point fica dentro do núcleo**, que já é dono do ledger e não aprende nada novo. Se um registry externo existir, ele carrega **apenas status**, nunca commits.
+
+Controles:
+
+| Controle | Efeito |
+|---|---|
+| `revocation_id` opaco, sem derivação de PII | Registry não liga mandato a pessoa |
+| `mandate_ref` = hash salgado por época no `AuthorizationProof` | Verificador a jusante não correlaciona mandatos entre transações |
+| Status list agregada (bitstring) em vez de consulta por mandato | Consulta não revela *qual* mandato interessa |
+| Registry não recebe valor, merchant nem itens | Nem com log completo reconstrói a cesta |
+| Retenção separada: `AuditLedger` completo, registry mínimo | Trilha de auditoria não vaza pelo canal de status |
+
+### 11.12 Replay
+
+| Vetor | Controle | Onde |
+|---|---|---|
+| Reapresentar o mesmo mandato fechado | Key binding `{aud, nonce, transaction_id}` | Passo 9 |
+| Repetir o `complete_checkout` | `Idempotency-Key`, tabela única | C4 |
+| Reapresentar o `AuthorizationProof` | `jti` de uso único na mesma tabela | 11.9 |
+| Retry virando compra nova | Chave amarrada a `(mandate_id, transaction_hash)`; retry reusa a mesma `Reservation` | Passo 11 |
+| Replay no trilho x402 | `nonce` de 32 bytes registrado como `(x402, nonce)` | C4, 8.4 |
+
+Regra única: **um retry nunca cria uma segunda `Reservation`.** Se a chave de idempotência chega com corpo diferente, é `422`, não uma compra nova.
+
+### 11.13 O que reutilizar em vez de inventar
+
+O objetivo não é criar criptografia nova. Quase tudo já existe:
+
+| Necessidade | Componente existente | Uso no AVAL |
+|---|---|---|
+| Status de credencial revogável | **W3C Bitstring Status List** | Formato do registry em produção; consulta agregada preserva privacidade |
+| Status em tempo real assinado | **OCSP** e, sobretudo, **OCSP stapling** (RFC 6960) | Precedente direto do `AuthorizationProof` (11.9) |
+| Revogação de autorização delegada | **RFC 7009** (OAuth Token Revocation) | Forma do endpoint de revogação |
+| Consulta de status de autorização | **RFC 7662** (Token Introspection) | Forma do endpoint de status |
+| Autorização contínua, sinais de mudança | **OpenID Shared Signals Framework / CAEP** | Modelo conceitual de "autorização contínua" — é o que separa o AVAL dos quatro protocolos de atestação |
+| Prova de posse ligada à requisição | **RFC 9449 (DPoP)** | Binding do proof ao verificador |
+| Log append-only à prova de equivocação | **RFC 9162 (Certificate Transparency)** | Caminho de produção contra registry que censura |
+| Anti-replay em liquidação | **EIP-3009 `nonce`** | Já usado no trilho x402 |
+| Separação autorização/captura | **ISO 8583** (authorization vs. clearing) | Precedente do commit point em pagamentos tradicionais |
+
+O único componente genuinamente novo é a **composição**: uma camada de autorização contínua posicionada na fronteira de liquidação, agnóstica de trilho, com o mandato AP2 como evidência. É isso que se defende no pitch — não uma criptografia inédita.
+
+### 11.14 Threat model
+
+| # | Ameaça | Vetor | Controle | Teste |
+|---|---|---|---|---|
+| T1 | Agente usa mandato revogado | Reapresenta mandato válido | Leitura fresca no commit point | 3 |
+| T2 | Corrida revogação × compra | Revoga entre autorização e captura | Mesmo lock de `mandate_id`, mesma transação | 16 |
+| T3 | Retry vira compra nova | Reenvia sem a mesma chave | Idempotência por `(mandate_id, transaction_hash)` | 19 |
+| T4 | Replay do `AuthorizationProof` | Reusa prova em segunda transação | `jti` de uso único, TTL 60 s | 20 |
+| T5 | Bypass do gate | Aciona adaptador direto | Nenhum adaptador sem `Reservation = COMMITTED` | 18 |
+| T6 | Revogação forjada / DoS | `POST` aberto; `R` vazado | Revogação assinada por `RevocationAuthority` | 21 |
+| T7 | Registry censura ou equivoca | Responde `ACTIVE` para um, `REVOKED` para outro | Fora do MVP; CT-like em produção (11.13) | — |
+| T8 | Rastreamento pelo registry | Correlaciona compras do usuário | Commit dentro do núcleo; `mandate_ref` salgado | — |
+| T9 | Relógio adulterado | Estende validade | `ClockService` único, skew 5 s (C9) | 2 |
+| T10 | Fail-open por indisponibilidade | Serviço cai e o sistema "assume ativo" | `503`, sem modo warn | 22 |
+| T11 | Mandato irrevogável | Emitido sem autoridade de revogação | Bloqueio na emissão (Passo 1) | 23 |
+| T12 | Revogação tardia sem status protocolar | Recusa depois de `complete_in_progress` | `CAPTURING → REJECTED → canceled` + `aval.mandate_revoked` (403) | 17 |
+
+### 11.15 MVP versus produção
+
+| Dimensão | MVP (hackathon) | Produção |
+|---|---|---|
+| Armazenamento | Tabela `revocations` no mesmo banco | Serviço replicado + status list publicada |
+| Mecanismo | JWS ES256 por `RevocationAuthority` | Idem + commitment opcional para privacidade |
+| Registry | Interno ao núcleo | Externo, append-only, auditável (CT-like) |
+| Consulta | Leitura direta, sem cache | Status list + `AuthorizationProof` stapled |
+| Serialização | SQLite WAL, escritor único | Postgres `FOR UPDATE` ou registry como ponto de commit |
+| Indisponibilidade | `503` | `503` + réplica quente + orçamento de erro |
+| Privacidade | `revocation_id` opaco | Status list agregada, `mandate_ref` salgado por época |
+| Escopos | `mandate`, `budget:zero` | Todos os quatro de 11.5 |
+| Prova | `AuthorizationProof` com TTL 60 s | Idem + DPoP binding ao verificador |
+
+**Linha de corte:** o MVP inteiro desta seção cabe no bloco T+5 → T+8 do plano, porque é majoritariamente a transação que a Seção 10.2 já descreve mais uma tabela e um verificador de JWS. O que **não** entra no prazo: registry externo, status list, CT, DPoP. Esses ficam documentados como caminho de produção e são material de defesa técnica, não de implementação.
+
+---
+
+## 12. Plano de implementação com linha de corte
 
 Referência temporal: T-ZERO = sáb. 29/08, 12:30. Code freeze = dom. 30/08, 12:30.
 
@@ -800,22 +1209,22 @@ Referência temporal: T-ZERO = sáb. 29/08, 12:30. Code freeze = dom. 30/08, 12:
 |---|---|---|
 | **T+0 → T+2** | Esqueleto: domínio, banco, `Money`, `ClockService`, seed determinístico | Teste de `Money` passa; migração roda em ambiente limpo |
 | **T+2 → T+5** | **Criptografia primeiro.** `KeyCustody`, RFC 9421 (`r\|\|s`, bytes crus), JCS, SD-JWT atrás de `MandateSigner`/`MandateVerifier` | Vetor de teste de assinatura e round-trip JCS passam |
-| **T+5 → T+8** | `AuthorizationCore`: mandatos, revogação, política viva, ledger, locks, idempotência | Cenários 1-3 (fora do mandato, expirado, revogado) passam em teste |
+| **T+5 → T+8** | `AuthorizationCore`: mandatos, **camada de revogação da Seção 11** (tabela, JWS por autoridade, commit point, `AuthorizationProof`), política viva, ledger, locks, idempotência | Cenários 1-3 passam; testes 16, 19 e 22 passam |
 | **T+8 → T+11** | UCP: discovery, checkout REST, extensão AP2, `merchant_authorization`, merchant mock | Fluxo autorizado ponta a ponta funciona |
 | **T+11 → T+13** | ACP `delegate_payment` + cofre + `Allowance` derivada | Agente nunca vê PAN; token escopado |
 | **T+13 → T+15** | Captura, PSP mock, recibos, `AuditLedger` | Teste de concorrência passa |
 | **T+15 → T+17** | **UI: três visões** (humano, merchant, auditor) | Demonstrável sem terminal |
 | ⛔ **LINHA DE CORTE T+17** | *Tudo acima precisa estar verde. Nada abaixo começa antes.* | |
 | **T+17 → T+19** | x402: facilitator mock, trilho de micropagamento | Duas linhas no mesmo ledger |
-| **T+19 → T+20** | Endpoint de admin para o *trial by fire* | Mudança de limite tem efeito imediato |
+| **T+19 → T+20** | Endpoint de operador para o *trial by fire* (limite, escopo, validade, **revogação**), autenticado por token e auditado como `operator` | Mudança de limite e revogação têm efeito na decisão seguinte, sem restart |
 | **T+20 → T+22** | Ensaio: pitch 7 min, demo, trial by fire com entradas desconhecidas | Time consegue explicar alternativas rejeitadas |
 | **T+22 → T+24** | Diagrama PDF, README, decision log exportado, checklist do repo | Checklist de pronto completo |
 
-**Se o time atrasar:** cortar nesta ordem — (1) x402, (2) fluxo completo de disputa, (3) ACP `delegate_payment` (substituir por cofre simples com a mesma semântica de `Allowance`), (4) UI de merchant (fundir com a de auditor). **Nunca cortar:** revogação, concorrência, verificação de assinatura, escalonamento humano.
+**Se o time atrasar:** cortar nesta ordem — (1) x402, (2) fluxo completo de disputa, (3) ACP `delegate_payment` (substituir por cofre simples com a mesma semântica de `Allowance`), (4) UI de merchant (fundir com a de auditor). **Nunca cortar:** revogação (Seção 11, coluna MVP de 11.15), concorrência, verificação de assinatura, escalonamento humano. **Do MVP de revogação, nada é cortável** — é o item que o *trial by fire* testa primeiro.
 
 ---
 
-## 12. Suíte de testes obrigatória
+## 13. Suíte de testes obrigatória
 
 | # | Teste | Cenário do desafio | Protocolo exercitado |
 |---|---|---|---|
@@ -834,12 +1243,20 @@ Referência temporal: T-ZERO = sáb. 29/08, 12:30. Code freeze = dom. 30/08, 12:
 | 13 | Round-trip JCS com acentuação e emoji | Correção criptográfica | UCP AP2 ext |
 | 14 | Conversão de escala x402 ↔ `Money` | Correção monetária | x402 |
 | 15 | Item de catálogo com prompt injection | Bônus adversarial | LLM gateway |
+| 16 | Revogação e captura concorrentes no mesmo mandato → exatamente um vence | Corrida (T2) | AVAL |
+| 17 | Revogação chegando **durante** a chamada de liquidação → transação já `COMMITTED` prossegue; próxima tentativa é rejeitada | Commit point (T12) | AVAL |
+| 18 | Mandato revogado → micropagamento x402 também é bloqueado | Trilho agnóstico (T5) | x402 + AVAL |
+| 19 | Retry com a mesma `Idempotency-Key` não cria segunda `Reservation`; corpo diferente → `422` | Idempotência (T3) | UCP + ACP |
+| 20 | `AuthorizationProof` reapresentado em segunda transação → recusado; prova expirada → recusada | Replay (T4) | AVAL |
+| 21 | Revogação sem assinatura de `RevocationAuthority` → recusada | Autenticação (T6) | AVAL |
+| 22 | Armazenamento de revogação indisponível → `503`, nunca aprovação | Fail-closed (T10) | AVAL |
+| 23 | Emissão de mandato sem autoridade de revogação → recusada | Revogabilidade (T11) | AVAL |
 
-Os testes 1-8 são os que o próprio documento de AP2 do time já listou como mínimo obrigatório. Os 9-15 vêm da adição de UCP, ACP e x402.
+Os testes 1-8 são os que o próprio documento de AP2 do time já listou como mínimo obrigatório. Os 9-15 vêm da adição de UCP, ACP e x402. Os **16-23 vêm da camada de revogação da Seção 11** e são os que respondem ao *trial by fire*; se o tempo apertar, eles têm precedência sobre 9-15.
 
 ---
 
-## 13. Entradas propostas para o Flight Log
+## 14. Entradas propostas para o Flight Log
 
 Prontas para colar no portal quando o time ratificar.
 
@@ -868,9 +1285,29 @@ Prontas para colar no portal quando o time ratificar.
 *What we chose:* Revocation, durable counters, locks, and capture-time revalidation in AVAL.
 *Why:* None of UCP, ACP, AP2 or x402 defines revocation, live budget, or concurrent-spend protection. All four are attestation protocols; continuous authorization is the product.
 
+**Commit point placement**
+*Options considered:* Gate immediately before the card network · Gate at the settlement adapter boundary · Revalidate only at authorization time
+*What we chose:* One commit point at the `SettlementAdapter` boundary, with a separate earlier authorization point that can escalate to a human.
+*Why:* A gate placed at the card network cannot escalate — by then the UCP session has passed `complete_in_progress` — and it leaves non-card rails such as x402 outside revocation. Two decision points with one commit point satisfy both the "refuse or escalate" requirement and rail agnosticism.
+
+**Revocation state machine**
+*Options considered:* Mandate transitions `ACTIVE → COMMITTED | REVOKED` · Reservation holds the commit transition · Both
+*What we chose:* The mandate status is monotonic (`ACTIVE → REVOKED`); only the `Reservation` transitions to `COMMITTED`.
+*Why:* An open mandate funds many purchases, so a mandate-level commit state is wrong by construction. Keeping both would give us two state machines answering the same question, which diverge under concurrency. The revocation-versus-purchase race is settled by a shared row lock, not by a state machine.
+
+**Revocation proof mechanism**
+*Options considered:* Commit-reveal `SHA256(secret)` · Signed revocation by a registered revocation key · Both
+*What we chose:* Signed revocation (JWS ES256) by a registered `RevocationAuthority` as the primary mechanism; the hash commitment kept as an optional privacy feature on the production path.
+*Why:* A hash commitment does not address the real registry failure modes — censorship and equivocation — and it cannot express partial scope, multiple revokers, or delegation. It also breaks the trial-by-fire path: a judge revoking without the user's secret would force us to hold the secret ourselves, at which point the commitment buys nothing over a database row.
+
+**Revocation availability policy**
+*Options considered:* Fail-open with a warning flag · Fail-closed with 503 · Cached last-known status
+*What we chose:* Fail-closed. No `REVOCATION_ENFORCEMENT=warn` in any environment, and no cache on the commit path.
+*Why:* The damage is asymmetric. A loose signature check in development risks an impostor with no money at stake; a loose revocation check is precisely the scenario the challenge asks us to handle. Any cache TTL on the commit path is a window where a live revocation is ignored.
+
 ---
 
-## 14. Conclusão
+## 15. Conclusão
 
 A resposta curta à pergunta "como colocá-los no projeto com alta integração e sem conflito" é: **invertendo a pergunta**. Não se integram quatro protocolos entre si — isso produziria seis pares de acoplamento e um sistema frágil. Integra-se cada protocolo, uma vez, contra um núcleo único que é a autoridade sobre estado, política e dinheiro.
 
@@ -881,12 +1318,13 @@ Feito assim, os conflitos aparentes desaparecem por construção:
 - **Não há quatro custódias de chave** porque há um `KeyCustodyService` e quatro codificações.
 - **Não há disputa entre trilhos de liquidação** porque a reserva acontece no ledger antes de qualquer adaptador.
 - **Não há módulos isolados** porque nenhum adaptador tem estado que justifique isolamento.
+- **Não há dois lugares onde uma transação é comprometida** porque existe um único commit point, na fronteira do `SettlementAdapter`, e ele vale igualmente para cartão e para x402.
 
-E o ponto que vale o pitch: os quatro protocolos, juntos, ainda **não resolvem o desafio 01**. Eles provam consentimento passado. Nenhum revoga, nenhum conta orçamento, nenhum impede double-spend, nenhum decide captura. O que os jurados vão testar no *trial by fire* é precisamente a lacuna comum aos quatro — e essa lacuna é o produto AVAL.
+E o ponto que vale o pitch: os quatro protocolos, juntos, ainda **não resolvem o desafio 01**. Eles provam consentimento passado. Nenhum revoga, nenhum conta orçamento, nenhum impede double-spend, nenhum decide captura. O que os jurados vão testar no *trial by fire* é precisamente a lacuna comum aos quatro — e essa lacuna é o produto AVAL. A **Seção 11** é a especificação dela: uma camada de autorização e revogação em tempo real, posicionada imediatamente antes da execução do pagamento, agnóstica de trilho, com o mandato AP2 como evidência e o commit point como fronteira formal entre o que ainda pode ser retirado e o que já não pode.
 
 ---
 
-## 15. Referências
+## 16. Referências
 
 **UCP**
 - Especificação: `ucp.dev/latest/specification/overview/` (versão `2026-08-25`)
@@ -913,6 +1351,16 @@ E o ponto que vale o pitch: os quatro protocolos, juntos, ainda **não resolvem 
 - Transporte HTTP: `specs/transports-v2/http.md`
 - Scheme `exact`: `specs/schemes/exact/` · Scheme `upto`: `specs/schemes/upto/scheme_upto.md`
 - x402 Foundation sob Linux Foundation desde 02/04/2026
+
+**Revogação e autorização contínua** (Seção 11)
+- W3C Bitstring Status List v1.0 — status revogável de credenciais verificáveis
+- RFC 6960 — OCSP, e o padrão de *stapling* que inspira o `AuthorizationProof`
+- RFC 7009 — OAuth 2.0 Token Revocation
+- RFC 7662 — OAuth 2.0 Token Introspection
+- RFC 9449 — DPoP (prova de posse ligada à requisição)
+- RFC 9162 — Certificate Transparency (log append-only à prova de equivocação)
+- OpenID Shared Signals Framework / CAEP — autorização contínua e sinais de mudança
+- ISO 8583 — separação entre autorização e clearing, precedente do commit point
 
 **RFCs relevantes**
 - RFC 9421 — HTTP Message Signatures
