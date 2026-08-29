@@ -95,3 +95,17 @@ Consume proof JTIs atomically in the shared durable idempotency store
 **What we chose:** Store and atomically consume each AuthorizationProof JTI in the existing durable idempotency store under its own scope.
 
 **Why:** Replay must remain blocked across new AuthorizationCore instances and process restarts. Reusing the transactionally protected idempotency store keeps one anti-replay authority instead of introducing a second, independently failing state source.
+
+## Parallel implementation ownership
+
+**Decision:** Work partition across two independent implementation laptops
+
+**Options considered (one per line):**
+
+Split work by arbitrary features across both laptops
+Give both laptops access to all files and resolve conflicts later
+Assign disjoint protocol/core and payments/UI ownership boundaries with a committed handoff contract
+
+**What we chose:** Laptop A owns UCP/AP2 protocol and checkout work, while Laptop B owns ACP, settlement/receipts/audit and web work; shared files change only through an explicit handoff commit.
+
+**Why:** The partition minimizes simultaneous edits to the same persistence and application files while allowing ACP, PSP, audit, and UI work to proceed independently of UCP checkout implementation. A committed API contract gives the UI a stable integration target without creating a second business authority.
