@@ -69,14 +69,18 @@ def _seed_runtime(*, core: AuthorizationCore, custody: KeyCustodyService, engine
 
 
 def create_app(
-    *, database_path: Path | None = None, clock: Callable[[], datetime] = _now
+    *,
+    database_path: Path | None = None,
+    clock: Callable[[], datetime] = _now,
+    custody: KeyCustodyService | None = None,
 ) -> FastAPI:
     database_path = database_path or Path(".aval") / "runtime.sqlite3"
     engine = create_sqlite_engine(database_path)
     metadata.create_all(engine)
-    custody = KeyCustodyService()
-    for key_id in ("merchant-key", "agent-key", "issuer-key", "holder-key"):
-        custody.generate_es256(key_id)
+    if custody is None:
+        custody = KeyCustodyService()
+        for key_id in ("merchant-key", "agent-key", "issuer-key", "holder-key"):
+            custody.generate_es256(key_id)
     core = AuthorizationCore(clock=clock, engine=engine)
     _seed_runtime(core=core, custody=custody, engine=engine, clock=clock)
     checkout_service = CheckoutService(
