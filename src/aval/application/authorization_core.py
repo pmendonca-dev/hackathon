@@ -25,6 +25,7 @@ from aval.infrastructure.sqlite.capture_repository import SqliteCaptureRepositor
 from aval.infrastructure.sqlite.policy_repository import SqlitePolicyRepository
 from aval.infrastructure.sqlite.revocation_repository import SqliteRevocationRepository
 from aval.infrastructure.sqlite.audit_repository import SqliteAuditRepository
+from aval.infrastructure.sqlite.lock_repository import SqliteMandateLockRepository
 from aval.infrastructure.sqlite.transaction import run_in_write_transaction
 
 
@@ -118,6 +119,9 @@ class AuthorizationCore:
                         raise ValueError("revocation scope is not allowed")
                     if not payload.get("reason") or not isinstance(payload.get("epoch"), int):
                         raise ValueError("revocation payload is incomplete")
+                    SqliteMandateLockRepository(connection).acquire(
+                        mandate.id, touched_at=self._clock()
+                    )
                     revocation = Revocation(
                         id=f"rev_{uuid4().hex}", mandate_id=mandate.id, authority_id=authority.id,
                         scope=str(payload["scope"]), reason=str(payload["reason"]), epoch=int(payload["epoch"]),
@@ -191,6 +195,9 @@ class AuthorizationCore:
     def capture(self, command: CaptureCommand) -> CaptureResult:
         request_hash = hashlib.sha256(json.dumps({"mandate": command.mandate_id, "checkout": command.checkout_id, "merchant": command.merchant_id, "amount": command.total.minor_units, "currency": command.total.currency, "scale": command.total.scale, "instrument": command.instrument_id}, sort_keys=True).encode()).hexdigest()
         def prepare(connection):
+            SqliteMandateLockRepository(connection).acquire(
+                command.mandate_id, touched_at=self._clock()
+            )
             idem = SqliteIdempotencyRepository(connection)
             try:
                 claim = idem.get_or_claim("capture", command.idempotency_key, request_hash)
