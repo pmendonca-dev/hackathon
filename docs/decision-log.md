@@ -39,3 +39,17 @@ Allow protocol adapters to decide the outcome independently
 **What we chose:** Escalate merchant-scope and budget violations to human approval, and reject missing, expired, or revoked mandates deterministically.
 
 **Why:** This preserves the UCP `requires_escalation` path for consent that can be renewed while never silently authorizing a mandate that has lost validity or been revoked.
+
+## Authorization state persistence boundary
+
+**Decision:** Persistence ownership for live authorization state
+
+**Options considered (one per line):**
+
+Keep authorization state in process memory
+Let protocol adapters maintain separate persistent state
+Persist core state through SQLite repositories owned and orchestrated exclusively by AuthorizationCore
+
+**What we chose:** Persist mandates, live policy, and signed revocations in isolated SQLite repositories that are invoked only by AuthorizationCore.
+
+**Why:** A process-local store loses live authority after restart, while adapter-owned state would create competing policy and revocation sources. The repository boundary keeps SQLite replaceable without allowing an adapter to become an alternate writer.

@@ -10,6 +10,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
 )
 
 
@@ -20,6 +21,8 @@ mandates = Table(
     metadata,
     Column("id", String, primary_key=True),
     Column("principal_id", String, nullable=False),
+    Column("principal_display_name", String, nullable=False),
+    Column("allowed_merchant_ids", Text, nullable=False),
     Column("status", String, nullable=False),
     Column("currency", String(3), nullable=False),
     Column("scale", Integer, nullable=False),
@@ -123,6 +126,7 @@ idempotency_records = Table(
     Column("state", String, nullable=False),
     Column("response_body", Text),
     CheckConstraint("state IN ('IN_FLIGHT', 'COMPLETED')", name="idempotency_state"),
+    UniqueConstraint("scope", "idempotency_key", name="idempotency_scope_key"),
 )
 
 evidence = Table(

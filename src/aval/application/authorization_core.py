@@ -5,15 +5,22 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 import base64
 import json
-from typing import Protocol
 from uuid import uuid4
 
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.pool import StaticPool
+
 from aval.application.ports import AuthorizationProofIssuer, SettlementAdapter
-from aval.domain.entities import Mandate, Reservation
+from aval.domain.entities import Mandate, Reservation, Revocation
 from aval.domain.enums import AuthorizationDecision, MandateStatus, ReservationStatus
 from aval.domain.money import Money
 from aval.security.jws import verify_compact_jws
 from aval.security.key_custody import public_key_from_jwk
+from aval.infrastructure.sqlite.mandate_repository import SqliteMandateRepository
+from aval.infrastructure.sqlite.models import metadata
+from aval.infrastructure.sqlite.policy_repository import SqlitePolicyRepository
+from aval.infrastructure.sqlite.revocation_repository import SqliteRevocationRepository
+from aval.infrastructure.sqlite.transaction import run_in_write_transaction
 
 
 @dataclass(frozen=True)
@@ -57,18 +64,35 @@ class AuthorizationCore:
         self,
         *,
         clock: Callable[[], datetime],
+        engine: Engine | None = None,
         settlement_adapter: SettlementAdapter | None = None,
         authorization_proof_issuer: AuthorizationProofIssuer | None = None,
     ) -> None:
         self._clock = clock
+        self._engine = engine or create_engine(
+            "sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        metadata.create_all(self._engine)
         self._settlement_adapter = settlement_adapter
         self._authorization_proof_issuer = authorization_proof_issuer
-        self._mandates: dict[str, Mandate] = {}
         self._reservations: dict[str, Reservation] = {}
         self._idempotency: dict[str, CaptureResult] = {}
 
     def register_mandate(self, mandate: Mandate) -> None:
-        self._mandates[mandate.id] = mandate
+        run_in_write_transaction(self._engine, lambda connection: SqliteMandateRepository(connection).put(mandate))
+
+    def replace_live_limit(self, mandate_id: str, limit: Money) -> None:
+        def operation(connection) -> None:
+            mandate = SqliteMandateRepository(connection).get(mandate_id)
+            if mandate is None:
+                raise ValueError("mandate not found")
+            version = SqlitePolicyRepository(connection).replace_limit(mandate_id, limit)
+            metadata = dict(mandate.revocation_metadata)
+            metadata["epoch"] = int(metadata.get("epoch", 0)) + 1
+            SqliteMandateRepository(connection).put(
+                replace(mandate, policy_version=version, revocation_metadata=metadata)
+            )
+        run_in_write_transaction(self._engine, operation)
 
     def submit_signed_revocation(self, token: str) -> None:
         try:
@@ -77,26 +101,40 @@ class AuthorizationCore:
             kid = header["kid"]
         except (IndexError, KeyError, ValueError, json.JSONDecodeError) as error:
             raise ValueError("malformed revocation JWS") from error
-        for mandate in self._mandates.values():
-            for authority in mandate.authorities:
-                if authority.kid != kid:
-                    continue
-                payload = verify_compact_jws(token, public_key_from_jwk(dict(authority.public_jwk)))
-                if payload.get("mandate_id") != mandate.id:
-                    raise ValueError("revocation mandate does not match authority")
-                if payload.get("scope") not in authority.allowed_scopes:
-                    raise ValueError("revocation scope is not allowed")
-                if not payload.get("reason") or not isinstance(payload.get("epoch"), int):
-                    raise ValueError("revocation payload is incomplete")
-                self._mandates[mandate.id] = mandate.revoke()
-                return
-        raise ValueError("unknown revocation authority")
+        def operation(connection) -> None:
+            mandates = SqliteMandateRepository(connection).for_authority_kid(kid)
+            for mandate in mandates:
+                for authority in mandate.authorities:
+                    if authority.kid != kid:
+                        continue
+                    payload = verify_compact_jws(token, public_key_from_jwk(dict(authority.public_jwk)))
+                    if payload.get("mandate_id") != mandate.id:
+                        raise ValueError("revocation mandate does not match authority")
+                    if payload.get("scope") not in authority.allowed_scopes:
+                        raise ValueError("revocation scope is not allowed")
+                    if not payload.get("reason") or not isinstance(payload.get("epoch"), int):
+                        raise ValueError("revocation payload is incomplete")
+                    revocation = Revocation(
+                        id=f"rev_{uuid4().hex}", mandate_id=mandate.id, authority_id=authority.id,
+                        scope=str(payload["scope"]), reason=str(payload["reason"]), epoch=int(payload["epoch"]),
+                        signed_jws=token, revoked_at=self._clock(),
+                    )
+                    SqliteRevocationRepository(connection).append(revocation)
+                    metadata = dict(mandate.revocation_metadata)
+                    metadata["epoch"] = revocation.epoch
+                    SqliteMandateRepository(connection).put(replace(mandate, status=MandateStatus.REVOKED, revocation_metadata=metadata))
+                    return
+            raise ValueError("unknown revocation authority")
+        run_in_write_transaction(self._engine, operation)
 
     def evaluate(self, command: AuthorizationCommand) -> AuthorizationResult:
-        mandate = self._mandates.get(command.mandate_id)
+        with self._engine.connect() as connection:
+            mandate = SqliteMandateRepository(connection).get(command.mandate_id)
+            revoked = mandate is not None and SqliteRevocationRepository(connection).is_revoked(command.mandate_id)
+            limit, _ = SqlitePolicyRepository(connection).active_limit_for(command.mandate_id, mandate.limit) if mandate else (None, 0)
         if mandate is None:
             return self._reject("mandate_not_found", "Mandato não encontrado.")
-        if mandate.status is MandateStatus.REVOKED:
+        if revoked or mandate.status is MandateStatus.REVOKED:
             return self._reject("mandate_revoked", "Mandato revogado.")
         if mandate.status is MandateStatus.EXPIRED or self._clock() >= mandate.expires_at:
             return self._reject("mandate_expired", "Mandato expirado.")
@@ -106,11 +144,12 @@ class AuthorizationCore:
                 "merchant_out_of_scope",
                 "Merchant fora do escopo do mandato; aprovação humana necessária.",
             )
-        if (command.total.currency, command.total.scale) != (mandate.limit.currency, mandate.limit.scale):
+        assert limit is not None
+        if (command.total.currency, command.total.scale) != (limit.currency, limit.scale):
             return self._reject("money_unit_mismatch", "Moeda ou escala incompatível com o mandato.")
         if command.total.minor_units <= 0:
             return self._reject("invalid_amount", "Valor de captura inválido.")
-        if self._spent(mandate.id).add(command.total).minor_units > mandate.limit.minor_units:
+        if self._spent(mandate.id).add(command.total).minor_units > limit.minor_units:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
                 "budget_exceeded",
@@ -126,7 +165,9 @@ class AuthorizationCore:
             result = CaptureResult(False, decision.reason_code)
             self._idempotency[command.idempotency_key] = result
             return result
-        mandate = self._mandates[command.mandate_id]
+        with self._engine.connect() as connection:
+            mandate = SqliteMandateRepository(connection).get(command.mandate_id)
+        assert mandate is not None
         reservation = Reservation(
             id=f"rsv_{uuid4().hex}",
             mandate_id=command.mandate_id,
@@ -159,7 +200,9 @@ class AuthorizationCore:
         return result
 
     def _spent(self, mandate_id: str) -> Money:
-        mandate = self._mandates[mandate_id]
+        with self._engine.connect() as connection:
+            mandate = SqliteMandateRepository(connection).get(mandate_id)
+        assert mandate is not None
         spent = Money(0, mandate.limit.currency, mandate.limit.scale)
         for reservation in self._reservations.values():
             if reservation.mandate_id == mandate_id and reservation.status in {
