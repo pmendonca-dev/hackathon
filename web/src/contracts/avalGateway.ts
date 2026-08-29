@@ -162,4 +162,3 @@ export interface AvalGateway {
   loadWorkspace(): Promise<AvalSnapshot>;
   submitTrialCommand(command: TrialCommand): Promise<TrialCommandReceipt>;
 }
-
