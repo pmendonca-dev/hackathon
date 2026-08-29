@@ -12,6 +12,10 @@ Projeto da equipe para o desafio 01, **The Buyer Who Isn't Human**.
 
 🚧 Em desenvolvimento
 
+## Decisões
+
+- [Decision Log](docs/decision-log.md)
+
 ## Como começar
 
 ```bash
