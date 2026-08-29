@@ -39,6 +39,7 @@ class AuthorizationCommand:
 @dataclass(frozen=True)
 class CaptureCommand(AuthorizationCommand):
     idempotency_key: str
+    instrument_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -152,8 +153,14 @@ class AuthorizationCore:
         limit, _ = SqlitePolicyRepository(connection).active_limit_for(command.mandate_id, mandate.limit)
         if revoked or mandate.status is MandateStatus.REVOKED:
             return self._reject("mandate_revoked", "Mandato revogado."), mandate
+        instrument_id = getattr(command, "instrument_id", None)
+        instrument_revoked = instrument_id is not None and revocations.has_scope(
+            command.mandate_id, f"instrument:{instrument_id}"
+        )
         if merchant_revoked:
             return self._reject("merchant_revoked", "Merchant revogado para este mandato."), mandate
+        if instrument_revoked:
+            return self._reject("instrument_revoked", "Instrumento revogado para este mandato."), mandate
         if budget_zero:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
@@ -182,7 +189,7 @@ class AuthorizationCore:
         return AuthorizationResult(AuthorizationDecision.AUTHORIZED, "authorized", "Compra autorizada."), mandate
 
     def capture(self, command: CaptureCommand) -> CaptureResult:
-        request_hash = hashlib.sha256(json.dumps({"mandate": command.mandate_id, "checkout": command.checkout_id, "merchant": command.merchant_id, "amount": command.total.minor_units, "currency": command.total.currency, "scale": command.total.scale}, sort_keys=True).encode()).hexdigest()
+        request_hash = hashlib.sha256(json.dumps({"mandate": command.mandate_id, "checkout": command.checkout_id, "merchant": command.merchant_id, "amount": command.total.minor_units, "currency": command.total.currency, "scale": command.total.scale, "instrument": command.instrument_id}, sort_keys=True).encode()).hexdigest()
         def prepare(connection):
             idem = SqliteIdempotencyRepository(connection)
             try:
