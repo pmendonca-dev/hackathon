@@ -13,3 +13,6 @@ __pycache__/
 .venv/
 venv/
 .vercel
+
+# Playwright MCP scratch output
+.playwright-mcp/
