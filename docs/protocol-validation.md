@@ -1,0 +1,35 @@
+# AVAL Protocol Validation Record
+
+**Validated on:** 2026-08-29
+**Purpose:** Record external protocol facts before AVAL adopts a wire format, header grammar, schema, or SDK. The canonical authorization model remains in `docs/aval-integration-architecture.md`; edge specifications do not write business state.
+
+## Adopted compatibility baseline
+
+| Area | Official source checked | Observed contract | AVAL decision |
+| --- | --- | --- | --- |
+| UCP HTTP signatures | [UCP Message Signatures](https://ucp.dev/specification/signatures/) and [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421.html) | UCP HTTP transports use RFC 9421; `Signature-Input` and `Signature` are Structured Field dictionaries; UCP requires ES256 verification as its universal baseline. | Verify ES256 requests at the UCP boundary, preserving structured-field ordering. The local registry is the sole trusted source used by the demo. |
+| UCP body integrity | [UCP Message Signatures](https://ucp.dev/specification/signatures/) and [RFC 9530](https://www.rfc-editor.org/rfc/rfc9530.html) | UCP uses `Content-Digest` with SHA-256 over the raw body bytes when a body is present. | Raw request bytes are captured before JSON parsing; the digest is computed and verified on exactly those bytes. |
+| UCP profile keys | [UCP Overview](https://ucp.dev/2026-04-08/specification/overview/) and [UCP Message Signatures](https://ucp.dev/specification/signatures/) | The current UCP text publishes JWKs in the profile `keys[]` collection and resolves `Signature-Input` `keyid` against `kid`. | Do not implement the older `signing_keys` spelling stated in the architecture narrative. The local trusted-profile fixture uses `keys[]` and JWK P-256 values. |
+| AP2 UCP extension | [UCP AP2 Mandates Extension](https://ucp.dev/2026-01-11/specification/ap2-mandates/) | When the AP2 capability is negotiated, checkout responses require `ap2.merchant_authorization`; completion requires `ap2.checkout_mandate`. Merchant authorization is detached JWS, `<protected>..<signature>`, over the JCS-canonical checkout excluding `ap2`. | Model the lock as an adapter validation rule. It cannot override the core's live policy, revocation, or capture decision. |
+| AP2 mandate evidence | [AP2 checkout mandate specification](https://github.com/google-agentic-commerce/AP2/blob/main/docs/ap2/checkout_mandate.md) and [RFC 9901](https://www.rfc-editor.org/rfc/rfc9901.html) | Closed checkout mandates bind the checkout JWT hash. SD-JWT+KB transports an issuer-signed JWT, disclosures, and a holder-signed KB-JWT; key binding validates `aud`, `nonce`, and `sd_hash`. | Implement the minimum AP2-compatible evidence shape behind local ports. No AP2 sample application or agent code is imported. Any vendored AP2 material remains pinned to historical commit `e1ea56db72a6385bce3e5c1112b3a56ce60acb43` only after license and hash review. |
+| JSON canonicalization | [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785.html) | JCS uses I-JSON-compatible values, deterministic recursive property sorting, and ECMAScript serialization semantics. | Use JCS only for durable JSON artifacts that require it, including the detached merchant authorization. Never replace raw-byte `Content-Digest` with JCS. |
+| JWS and ES256 encoding | [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html) and [RFC 7518, §3.4](https://www.rfc-editor.org/rfc/rfc7518.html#section-3.4) | ES256 JWS signatures are exactly 64 bytes: 32-byte big-endian `R` followed by 32-byte big-endian `S`. | Convert library DER ECDSA output at the adapter boundary; reject DER or any non-64-byte ES256 signature as wire input. |
+| Structured fields | [RFC 8941](https://www.rfc-editor.org/rfc/rfc8941.html) | HTTP dictionaries are ordered and serialized member order is significant to their wire representation. | Parse and construct `Signature-Input`/`Signature` as RFC 8941 structures; do not use ad-hoc comma splitting. |
+| ACP Delegate Payment | [ACP repository and versioning](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol) and its [2026-04-17 Delegate Payment OpenAPI](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol/blob/main/spec/2026-04-17/openapi/openapi.delegate_payment.yaml) | `2026-04-17` is a released date-versioned ACP snapshot and publishes a dedicated Delegate Payment OpenAPI contract. | Restrict ACP to the local mock's opaque `vt_` delegated-payment token. The core derives allowance from live balance, mandate ceiling, and canonical total; no PAN is persisted or returned. Exact external HTTP interoperability stays out of the demo unless its schema is separately fixture-tested. |
+| x402 | [x402](https://x402.org/) | x402 is an HTTP-native payment protocol built around HTTP 402; its public material describes stablecoin/API-payment use cases. | Deferred. No chain, Web3 package, or real facilitator is adopted. A local mock can be added only after the primary core and required scenarios are green. |
+
+## Package and runtime gate
+
+The developer environment provides CPython 3.13.12 and `uv` 0.10.6. AVAL will set its Python requirement to this verified runtime and will pin package versions only from the resolver output recorded in `uv.lock`. The first implementation uses no protocol SDK: FastAPI, SQLAlchemy, Alembic, Pydantic, `cryptography`, and pytest are implementation libraries, not authorities for external wire formats.
+
+## Rejected assumptions
+
+- `signing_keys[]` is not treated as the current UCP profile key field; the current UCP specification uses `keys[]`.
+- JSON reparsing or reserialization is not used to verify `Content-Digest`.
+- Library-native DER ECDSA output is not sent on ES256 JWS or RFC 9421 boundaries.
+- AP2 evidence does not replace AVAL's fresh revocation check, budget accounting, reservation commit point, or idempotency state.
+- ACP and x402 never receive direct database access and do not become alternate ledgers.
+
+## Revalidation triggers
+
+Revalidate this record before enabling a real remote UCP/ACP/x402 counterparty, upgrading a protocol-facing dependency, changing the AP2 source commit, or adding a protocol field not listed above.
