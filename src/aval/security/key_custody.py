@@ -4,6 +4,8 @@ import base64
 
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from aval.security.ecdsa import sign_es256_raw
+
 
 def _b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
@@ -38,14 +40,18 @@ class KeyCustodyService:
             raise ValueError("kid must be new and non-empty")
         self._keys[kid] = ec.generate_private_key(ec.SECP256R1())
 
-    def private_key(self, kid: str) -> ec.EllipticCurvePrivateKey:
-        return self._keys[kid]
-
-    def public_key(self, kid: str) -> ec.EllipticCurvePublicKey:
-        return self.private_key(kid).public_key()
+    def sign_es256(self, kid: str, payload: bytes) -> bytes:
+        try:
+            private_key = self._keys[kid]
+        except KeyError as error:
+            raise ValueError("unknown custody key") from error
+        return sign_es256_raw(private_key, payload)
 
     def public_jwk(self, kid: str) -> dict[str, str]:
-        numbers = self.public_key(kid).public_numbers()
+        try:
+            numbers = self._keys[kid].public_key().public_numbers()
+        except KeyError as error:
+            raise ValueError("unknown custody key") from error
         return {
             "kid": kid,
             "kty": "EC",

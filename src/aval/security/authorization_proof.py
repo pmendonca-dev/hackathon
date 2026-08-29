@@ -7,7 +7,7 @@ from uuid import uuid4
 from aval.domain.entities import AuthorizationProof, Reservation
 from aval.domain.enums import ReservationStatus
 from aval.security.jws import sign_compact_jws, verify_compact_jws
-from aval.security.key_custody import KeyCustodyService
+from aval.security.key_custody import KeyCustodyService, public_key_from_jwk
 
 
 class AuthorizationProofService:
@@ -46,7 +46,7 @@ class AuthorizationProofService:
         )
 
     def verify_and_consume(self, token: str) -> dict[str, object]:
-        payload = verify_compact_jws(token, self._custody.public_key(self._kid))
+        payload = verify_compact_jws(token, public_key_from_jwk(self._custody.public_jwk(self._kid)))
         try:
             jti = str(payload["jti"])
             expires_at = int(payload["exp"])
