@@ -6,7 +6,8 @@ import { HumanView } from './pages/HumanView.tsx';
 import { MerchantView } from './pages/MerchantView.tsx';
 import { AuditorView } from './pages/AuditorView.tsx';
 import { TrialConsole } from './pages/TrialConsole.tsx';
-import { AvalProvider, useAval } from './state/AvalProvider.tsx';
+import { useAval } from './state/AvalContext.ts';
+import { AvalProvider } from './state/AvalProvider.tsx';
 
 function Workspace() {
   const { snapshot, loading, error, view, reload, lastCommandReceipt, submitTrialCommand } = useAval();

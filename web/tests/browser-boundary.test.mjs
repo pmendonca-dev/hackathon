@@ -33,4 +33,6 @@ test('default gateway identity is stable across provider renders', () => {
   assert.match(providerSource, /const DEFAULT_AVAL_GATEWAY = createMockAvalGateway\(\);/);
   assert.match(providerSource, /gateway = DEFAULT_AVAL_GATEWAY/);
   assert.equal(providerSource.includes('gateway = createMockAvalGateway()'), false);
+  assert.equal(providerSource.includes('void reload();'), false);
+  assert.equal(providerSource.includes('export function useAval'), false);
 });

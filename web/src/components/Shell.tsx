@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Gavel, RefreshCw, ScrollText, Store, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
-import { useAval, type View } from '../state/AvalProvider.tsx';
+import { useAval, type View } from '../state/AvalContext.ts';
 import { Badge, Button } from './ui.tsx';
 
 const views: Array<{ id: View; label: string; context: string; icon: LucideIcon }> = [

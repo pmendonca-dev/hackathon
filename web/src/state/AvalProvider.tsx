@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -15,21 +13,7 @@ import type {
   TrialCommandReceipt,
 } from '../contracts/avalGateway.ts';
 import { createMockAvalGateway } from '../fixtures/mockAvalGateway.ts';
-
-export type View = 'human' | 'merchant' | 'auditor' | 'trial';
-
-interface AvalContextValue {
-  snapshot: AvalSnapshot | null;
-  loading: boolean;
-  error: string | null;
-  view: View;
-  lastCommandReceipt: TrialCommandReceipt | null;
-  setView(view: View): void;
-  reload(): Promise<void>;
-  submitTrialCommand(command: TrialCommand): Promise<void>;
-}
-
-const AvalContext = createContext<AvalContextValue | null>(null);
+import { AvalContext, type AvalContextValue, type View } from './AvalContext.ts';
 const DEFAULT_AVAL_GATEWAY = createMockAvalGateway();
 
 export function AvalProvider({
@@ -58,8 +42,24 @@ export function AvalProvider({
   }, [gateway]);
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    let active = true;
+
+    async function loadInitialSnapshot() {
+      try {
+        const loadedSnapshot = await gateway.loadWorkspace();
+        if (active) setSnapshot(loadedSnapshot);
+      } catch {
+        if (active) setError('Não foi possível carregar o snapshot. Verifique a boundary configurada.');
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    void loadInitialSnapshot();
+    return () => {
+      active = false;
+    };
+  }, [gateway]);
 
   const submitTrialCommand = useCallback(
     async (command: TrialCommand) => {
@@ -88,10 +88,4 @@ export function AvalProvider({
   );
 
   return <AvalContext.Provider value={value}>{children}</AvalContext.Provider>;
-}
-
-export function useAval(): AvalContextValue {
-  const context = useContext(AvalContext);
-  if (!context) throw new Error('useAval must be used inside AvalProvider');
-  return context;
 }
