@@ -29,3 +29,9 @@ class AvalCheckoutStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     REJECTED = "rejected"
+
+
+class AuthorizationDecision(str, Enum):
+    AUTHORIZED = "authorized"
+    AWAITING_HUMAN = "awaiting_human"
+    REJECTED = "rejected"

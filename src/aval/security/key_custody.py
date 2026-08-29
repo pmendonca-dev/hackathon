@@ -9,6 +9,24 @@ def _b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
+def _b64url_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def public_key_from_jwk(jwk: dict[str, str] | object) -> ec.EllipticCurvePublicKey:
+    if not isinstance(jwk, dict) or jwk.get("kty") != "EC" or jwk.get("crv") != "P-256":
+        raise ValueError("only P-256 EC JWKs are supported")
+    try:
+        numbers = ec.EllipticCurvePublicNumbers(
+            int.from_bytes(_b64url_decode(jwk["x"]), "big"),
+            int.from_bytes(_b64url_decode(jwk["y"]), "big"),
+            ec.SECP256R1(),
+        )
+        return numbers.public_key()
+    except (KeyError, ValueError) as error:
+        raise ValueError("invalid P-256 JWK") from error
+
+
 class KeyCustodyService:
     """In-memory demo custody; keys never cross the service boundary."""
 
