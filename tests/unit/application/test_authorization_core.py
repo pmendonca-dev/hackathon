@@ -13,14 +13,17 @@ from aval.domain.enums import AuthorizationDecision, RevocationRole
 from aval.domain.money import Money
 from aval.security.jws import sign_compact_jws
 from aval.security.key_custody import KeyCustodyService
+from aval.security.authorization_proof import AuthorizationProofService
 
 
 class RecordingSettlementAdapter:
     def __init__(self) -> None:
         self.reservation_statuses: list[str] = []
+        self.proofs: list[str] = []
 
-    def authorize(self, reservation, _proof):
+    def authorize(self, reservation, proof):
         self.reservation_statuses.append(reservation.status.value)
+        self.proofs.append(proof)
         return SettlementResult(approved=True, reference="psp_1")
 
 
@@ -89,6 +92,26 @@ def test_capture_commits_before_calling_settlement_and_replays_idempotently():
     assert first.approved
     assert replay == first
     assert settlement.reservation_statuses == ["COMMITTED"]
+
+
+def test_capture_issues_a_signed_authorization_proof_only_after_commit():
+    now = datetime(2026, 8, 29, tzinfo=UTC)
+    custody = KeyCustodyService()
+    custody.generate_es256("aval-proof")
+    settlement = RecordingSettlementAdapter()
+    proofs = AuthorizationProofService(clock=lambda: now, custody=custody, kid="aval-proof")
+    core = AuthorizationCore(
+        clock=lambda: now,
+        settlement_adapter=settlement,
+        authorization_proof_issuer=proofs,
+    )
+    core.register_mandate(make_mandate(expires_at=now + timedelta(hours=1)))
+
+    result = core.capture(CaptureCommand(**command().__dict__, idempotency_key="idem_with_proof"))
+
+    assert result.approved
+    assert settlement.reservation_statuses == ["COMMITTED"]
+    assert settlement.proofs[0].count(".") == 2
 
 
 def test_revocation_before_capture_blocks_settlement():

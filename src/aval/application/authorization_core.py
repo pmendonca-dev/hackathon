@@ -8,6 +8,7 @@ import json
 from typing import Protocol
 from uuid import uuid4
 
+from aval.application.ports import AuthorizationProofIssuer, SettlementAdapter
 from aval.domain.entities import Mandate, Reservation
 from aval.domain.enums import AuthorizationDecision, MandateStatus, ReservationStatus
 from aval.domain.money import Money
@@ -49,10 +50,6 @@ class CaptureResult:
     settlement_reference: str | None = None
 
 
-class SettlementAdapter(Protocol):
-    def authorize(self, reservation: Reservation, proof: str) -> SettlementResult: ...
-
-
 class AuthorizationCore:
     """The sole writer for the in-process authorization state used by the MVP."""
 
@@ -61,9 +58,11 @@ class AuthorizationCore:
         *,
         clock: Callable[[], datetime],
         settlement_adapter: SettlementAdapter | None = None,
+        authorization_proof_issuer: AuthorizationProofIssuer | None = None,
     ) -> None:
         self._clock = clock
         self._settlement_adapter = settlement_adapter
+        self._authorization_proof_issuer = authorization_proof_issuer
         self._mandates: dict[str, Mandate] = {}
         self._reservations: dict[str, Reservation] = {}
         self._idempotency: dict[str, CaptureResult] = {}
@@ -127,6 +126,7 @@ class AuthorizationCore:
             result = CaptureResult(False, decision.reason_code)
             self._idempotency[command.idempotency_key] = result
             return result
+        mandate = self._mandates[command.mandate_id]
         reservation = Reservation(
             id=f"rsv_{uuid4().hex}",
             mandate_id=command.mandate_id,
@@ -137,7 +137,16 @@ class AuthorizationCore:
         if self._settlement_adapter is None:
             result = CaptureResult(True, "committed", reservation)
         else:
-            settlement = self._settlement_adapter.authorize(reservation, f"proof_{reservation.id}")
+            proof = (
+                self._authorization_proof_issuer.issue(
+                    reservation,
+                    policy_version=mandate.policy_version,
+                    revocation_epoch=int(mandate.revocation_metadata.get("epoch", 0)),
+                ).signed_proof
+                if self._authorization_proof_issuer is not None
+                else f"proof_{reservation.id}"
+            )
+            settlement = self._settlement_adapter.authorize(reservation, proof)
             final_reservation = reservation.settle() if settlement.approved else reservation.release()
             self._reservations[reservation.id] = final_reservation
             result = CaptureResult(
