@@ -1,0 +1,65 @@
+"""Stable application boundaries; infrastructure implements persistence, never adapters."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import datetime
+from typing import Protocol
+
+from aval.domain.entities import (
+    AuditEvent,
+    AuthorizationProof,
+    CaptureAttempt,
+    Mandate,
+    Reservation,
+    Revocation,
+)
+from aval.domain.money import Money
+
+
+class Clock(Protocol):
+    def now(self) -> datetime: ...
+
+
+class AuthorizationProofIssuer(Protocol):
+    def issue(
+        self, reservation: Reservation, *, policy_version: int, revocation_epoch: int
+    ) -> AuthorizationProof: ...
+
+
+class SettlementAdapter(Protocol):
+    def authorize(self, reservation: Reservation, proof: str): ...
+
+
+class MandateRepository(Protocol):
+    def put(self, mandate: Mandate) -> None: ...
+    def get(self, mandate_id: str) -> Mandate | None: ...
+
+
+class PolicyRepository(Protocol):
+    def active_limit_for(self, mandate_id: str, fallback: Money) -> tuple[Money, int]: ...
+
+
+class RevocationRepository(Protocol):
+    def is_revoked(self, mandate_id: str) -> bool: ...
+    def append(self, revocation: Revocation) -> None: ...
+
+
+class LedgerRepository(Protocol):
+    def spent_for(self, mandate_id: str, unit: Money) -> Money: ...
+    def save_reservation(self, reservation: Reservation) -> None: ...
+    def get_reservation(self, reservation_id: str) -> Reservation | None: ...
+
+
+class IdempotencyStore(Protocol):
+    def get_or_claim(self, surface: str, key: str, request_hash: str): ...
+    def complete(self, surface: str, key: str, response_body: str) -> None: ...
+
+
+class CaptureRepository(Protocol):
+    def save_attempt(self, attempt: CaptureAttempt) -> None: ...
+
+
+class AuditLedger(Protocol):
+    def append(self, event: AuditEvent) -> AuditEvent: ...
+    def timeline_for(self, mandate_id: str) -> Sequence[AuditEvent]: ...
