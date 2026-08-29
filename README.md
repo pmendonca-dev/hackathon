@@ -1,6 +1,12 @@
-# Hackathon
+# NextWave Hackathon 2026
 
-Projeto criado para o hackathon.
+Projeto da equipe para o desafio 01, **The Buyer Who Isn't Human**.
+
+## Referência do evento
+
+- [Regras, entregáveis, avaliação e checklist](docs/hackathon-rules.md)
+- [Levantamento das fontes oficiais](docs/research/hackathon-rules-source.md)
+- [Plano da documentação](docs/plans/document-hackathon-rules.md)
 
 ## Status
 
