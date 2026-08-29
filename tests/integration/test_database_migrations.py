@@ -46,3 +46,6 @@ def test_upgrade_from_initial_revision_adds_persisted_authorization_hardening(tm
         constraint["name"] == "idempotency_scope_key"
         for constraint in inspector.get_unique_constraints("idempotency_records")
     )
+    idempotency_columns = {column["name"] for column in inspector.get_columns("idempotency_records")}
+    assert "retained_until" in idempotency_columns
+    assert "mandate_locks" in inspector.get_table_names()
