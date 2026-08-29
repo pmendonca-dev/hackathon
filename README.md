@@ -6,6 +6,10 @@ Projeto criado para o hackathon.
 
 🚧 Em desenvolvimento
 
+## Decisões
+
+- [Decision Log](docs/decision-log.md)
+
 ## Como começar
 
 ```bash
