@@ -1,0 +1,7 @@
+interface:
+  display_name: "Decision Flight Log"
+  short_description: "Automatically log project decisions"
+  default_prompt: "Use $decision-flight-log to continuously detect and record finalized project decisions."
+
+policy:
+  allow_implicit_invocation: true
