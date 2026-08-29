@@ -25,3 +25,17 @@ Introduce a separate service or frontend stack before the authorization core exi
 **What we chose:** Use Python 3.13 with FastAPI, SQLAlchemy, Alembic, and SQLite WAL, with AVAL-owned domain and persistence code.
 
 **Why:** The historical AP2 review identified Python as the compatible ecosystem while explicitly excluding its sample applications. SQLite WAL with `BEGIN IMMEDIATE` and a single writer is the documented demo boundary; it keeps durable authorization state local and leaves repositories isolatable for a later Postgres migration.
+
+## Live authorization outcomes
+
+**Decision:** Outcome for checkout policy violations before the capture commit point
+
+**Options considered (one per line):**
+
+Reject every policy violation immediately
+Escalate recoverable scope and budget violations to a human while rejecting expired or revoked mandates
+Allow protocol adapters to decide the outcome independently
+
+**What we chose:** Escalate merchant-scope and budget violations to human approval, and reject missing, expired, or revoked mandates deterministically.
+
+**Why:** This preserves the UCP `requires_escalation` path for consent that can be renewed while never silently authorizing a mandate that has lost validity or been revoked.
