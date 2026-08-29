@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
+from fastapi import HTTPException
+import pytest
+
 from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
 from aval.api.routers.delegate_payment import (
     CardCredentialInput,
@@ -72,17 +75,18 @@ def test_revoked_mandate_is_rejected_before_the_card_is_tokenized() -> None:
 
     tokenizer = SpyTokenizer()
     service = VaultService(authorizer=MockRevokedAuthorizer(), tokenizer=tokenizer)
+    router = create_delegate_payment_router(service)
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/agentic_commerce/delegate_payment")
+    request = DelegatePaymentRequest(
+        mandate_id="mandate_1",
+        checkout_session_id="checkout_42",
+        merchant_id="merchant_aval",
+        payment_method=CardCredentialInput(card_number="4242424242424242"),
+    )
 
-    try:
-        service.delegate(
-            mandate_id="mandate_1",
-            checkout_id="checkout_42",
-            merchant_id="merchant_aval",
-            card_number="4242424242424242",
-        )
-    except DelegationRejected as error:
-        assert error.reason_code == "mandate_revoked"
-    else:
-        raise AssertionError("revoked mandate was accepted")
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(endpoint(request, "idem-revoked"))
 
     assert tokenizer.called is False
+    assert raised.value.status_code == 403
+    assert raised.value.detail == "mandate_revoked"
