@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from aval.application.ports import AuthorizationProofIssuer, SettlementAdapter
 from aval.domain.entities import AuditEvent, Mandate, Reservation, Revocation
-from aval.domain.enums import AuthorizationDecision, MandateStatus, ReservationStatus
+from aval.domain.enums import AuthorizationDecision, MandateStatus, ReservationStatus, RevocationRole
 from aval.domain.money import Money
 from aval.security.jws import verify_compact_jws
 from aval.security.key_custody import public_key_from_jwk
@@ -115,8 +115,13 @@ class AuthorizationCore:
                     payload = verify_compact_jws(token, public_key_from_jwk(dict(authority.public_jwk)))
                     if payload.get("mandate_id") != mandate.id:
                         raise ValueError("revocation mandate does not match authority")
-                    if payload.get("scope") not in authority.allowed_scopes:
+                    scope = payload.get("scope")
+                    if not isinstance(scope, str) or not self._is_canonical_revocation_scope(scope):
+                        raise ValueError("invalid revocation scope")
+                    if scope not in authority.allowed_scopes:
                         raise ValueError("revocation scope is not allowed")
+                    if authority.role in (RevocationRole.GUARDIAN, RevocationRole.ISSUER) and scope != "mandate":
+                        raise ValueError("guardian and issuer may only revoke the mandate")
                     if not payload.get("reason") or not isinstance(payload.get("epoch"), int):
                         raise ValueError("revocation payload is incomplete")
                     SqliteMandateLockRepository(connection).acquire(
@@ -124,17 +129,23 @@ class AuthorizationCore:
                     )
                     revocation = Revocation(
                         id=f"rev_{uuid4().hex}", mandate_id=mandate.id, authority_id=authority.id,
-                        scope=str(payload["scope"]), reason=str(payload["reason"]), epoch=int(payload["epoch"]),
+                        scope=scope, reason=str(payload["reason"]), epoch=int(payload["epoch"]),
                         signed_jws=token, revoked_at=self._clock(),
                     )
                     SqliteRevocationRepository(connection).append(revocation)
                     metadata = dict(mandate.revocation_metadata)
                     metadata["epoch"] = revocation.epoch
-                    if revocation.scope == "mandate":
+                    if scope == "mandate":
                         mandate = replace(mandate, status=MandateStatus.REVOKED, revocation_metadata=metadata)
                     else:
                         mandate = replace(mandate, revocation_metadata=metadata)
                     SqliteMandateRepository(connection).put(mandate)
+                    SqliteAuditRepository(connection).append(AuditEvent(
+                        id=f"aud_{uuid4().hex}", mandate_id=mandate.id,
+                        event_type=f"revocation.{authority.role.value}",
+                        human_summary=f"Revogação de escopo {scope} por {authority.role.value} aceita.",
+                        occurred_at=self._clock(),
+                    ))
                     return
             raise ValueError("unknown revocation authority")
         run_in_write_transaction(self._engine, operation)
@@ -276,6 +287,16 @@ class AuthorizationCore:
         item = value["reservation"]
         reservation = None if item is None else Reservation(item["id"], item["mandate_id"], item["checkout_id"], Money(item["amount"], item["currency"], item["scale"]), ReservationStatus(item["status"]), item["transaction_hash"])
         return CaptureResult(value["approved"], value["reason_code"], reservation, value["reference"])
+
+    @staticmethod
+    def _is_canonical_revocation_scope(scope: str) -> bool:
+        if scope in {"mandate", "budget:zero"}:
+            return True
+        if scope.startswith("merchant:"):
+            return bool(scope.removeprefix("merchant:"))
+        if scope.startswith("instrument:vt_"):
+            return len(scope) > len("instrument:vt_")
+        return False
 
     @staticmethod
     def _reject(reason_code: str, human_summary: str) -> AuthorizationResult:
