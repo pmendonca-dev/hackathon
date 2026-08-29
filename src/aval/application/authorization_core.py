@@ -12,7 +12,7 @@ from sqlalchemy import Engine, create_engine
 from sqlalchemy.pool import StaticPool
 
 from aval.application.ports import AuthorizationProofIssuer, SettlementAdapter
-from aval.domain.entities import Mandate, Reservation, Revocation
+from aval.domain.entities import AuditEvent, Mandate, Reservation, Revocation
 from aval.domain.enums import AuthorizationDecision, MandateStatus, ReservationStatus
 from aval.domain.money import Money
 from aval.security.jws import verify_compact_jws
@@ -24,6 +24,7 @@ from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyR
 from aval.infrastructure.sqlite.capture_repository import SqliteCaptureRepository
 from aval.infrastructure.sqlite.policy_repository import SqlitePolicyRepository
 from aval.infrastructure.sqlite.revocation_repository import SqliteRevocationRepository
+from aval.infrastructure.sqlite.audit_repository import SqliteAuditRepository
 from aval.infrastructure.sqlite.transaction import run_in_write_transaction
 
 
@@ -124,7 +125,11 @@ class AuthorizationCore:
                     SqliteRevocationRepository(connection).append(revocation)
                     metadata = dict(mandate.revocation_metadata)
                     metadata["epoch"] = revocation.epoch
-                    SqliteMandateRepository(connection).put(replace(mandate, status=MandateStatus.REVOKED, revocation_metadata=metadata))
+                    if revocation.scope == "mandate":
+                        mandate = replace(mandate, status=MandateStatus.REVOKED, revocation_metadata=metadata)
+                    else:
+                        mandate = replace(mandate, revocation_metadata=metadata)
+                    SqliteMandateRepository(connection).put(mandate)
                     return
             raise ValueError("unknown revocation authority")
         run_in_write_transaction(self._engine, operation)
@@ -135,12 +140,26 @@ class AuthorizationCore:
 
     def _evaluate_with(self, connection, command: AuthorizationCommand) -> tuple[AuthorizationResult, Mandate | None]:
         mandate = SqliteMandateRepository(connection).get(command.mandate_id)
-        revoked = mandate is not None and SqliteRevocationRepository(connection).is_revoked(command.mandate_id)
-        limit, _ = SqlitePolicyRepository(connection).active_limit_for(command.mandate_id, mandate.limit) if mandate else (None, 0)
         if mandate is None:
             return self._reject("mandate_not_found", "Mandato não encontrado."), None
+        try:
+            revocations = SqliteRevocationRepository(connection)
+            revoked = revocations.is_revoked(command.mandate_id)
+            budget_zero = revocations.has_scope(command.mandate_id, "budget:zero")
+            merchant_revoked = revocations.has_scope(command.mandate_id, f"merchant:{command.merchant_id}")
+        except Exception:
+            return self._reject("revocation_unavailable", "Revogação indisponível; captura recusada."), mandate
+        limit, _ = SqlitePolicyRepository(connection).active_limit_for(command.mandate_id, mandate.limit)
         if revoked or mandate.status is MandateStatus.REVOKED:
             return self._reject("mandate_revoked", "Mandato revogado."), mandate
+        if merchant_revoked:
+            return self._reject("merchant_revoked", "Merchant revogado para este mandato."), mandate
+        if budget_zero:
+            return AuthorizationResult(
+                AuthorizationDecision.AWAITING_HUMAN,
+                "budget_revoked",
+                "Orçamento do mandato foi zerado; aprovação humana necessária.",
+            ), mandate
         if mandate.status is MandateStatus.EXPIRED or self._clock() >= mandate.expires_at:
             return self._reject("mandate_expired", "Mandato expirado."), mandate
         if command.merchant_id not in mandate.allowed_merchant_ids:
@@ -166,7 +185,10 @@ class AuthorizationCore:
         request_hash = hashlib.sha256(json.dumps({"mandate": command.mandate_id, "checkout": command.checkout_id, "merchant": command.merchant_id, "amount": command.total.minor_units, "currency": command.total.currency, "scale": command.total.scale}, sort_keys=True).encode()).hexdigest()
         def prepare(connection):
             idem = SqliteIdempotencyRepository(connection)
-            claim = idem.get_or_claim("capture", command.idempotency_key, request_hash)
+            try:
+                claim = idem.get_or_claim("capture", command.idempotency_key, request_hash)
+            except Exception:
+                return ("result", CaptureResult(False, "idempotency_unavailable"))
             if claim.state == "REPLAY":
                 return ("replay", claim.response_body)
             if claim.state == "MISMATCH":
@@ -219,6 +241,12 @@ class AuthorizationCore:
             SqliteLedgerRepository(connection).update(result.reservation)
             SqliteCaptureRepository(connection).complete(attempt_id, approved=result.approved, reference=result.settlement_reference)
             SqliteIdempotencyRepository(connection).complete("capture", command.idempotency_key, self._serialize_result(result))
+            SqliteAuditRepository(connection).append(AuditEvent(
+                id=f"aud_{uuid4().hex}", mandate_id=command.mandate_id,
+                event_type="capture.committed" if result.approved else "capture.declined",
+                human_summary="Captura liquidada." if result.approved else "Captura recusada.",
+                occurred_at=self._clock(),
+            ))
         run_in_write_transaction(self._engine, finish)
         return result
 

@@ -15,6 +15,13 @@ class SqliteRevocationRepository:
             select(revocations.c.id).where(revocations.c.mandate_id == mandate_id, revocations.c.scope == "mandate").limit(1)
         ).scalar() is not None
 
+    def has_scope(self, mandate_id: str, scope: str) -> bool:
+        return self._connection.execute(
+            select(revocations.c.id).where(
+                revocations.c.mandate_id == mandate_id, revocations.c.scope == scope
+            ).limit(1)
+        ).scalar() is not None
+
     def append(self, revocation: Revocation) -> None:
         self._connection.execute(revocations.insert().values(
             id=revocation.id, mandate_id=revocation.mandate_id, authority_id=revocation.authority_id,
