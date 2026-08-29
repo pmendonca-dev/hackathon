@@ -23,7 +23,13 @@ class Clock(Protocol):
 
 class AuthorizationProofIssuer(Protocol):
     def issue(
-        self, reservation: Reservation, *, policy_version: int, revocation_epoch: int
+        self,
+        reservation: Reservation,
+        *,
+        policy_version: int,
+        revocation_epoch: int,
+        merchant_id: str,
+        terms_hash: str | None = None,
     ) -> AuthorizationProof: ...
 
 

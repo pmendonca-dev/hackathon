@@ -33,6 +33,7 @@ def mandate() -> Mandate:
         id="mandate_1",
         principal=Principal(id="principal_1", display_name="Marta"),
         allowed_merchant_ids=frozenset({"merchant_1"}),
+        allowed_categories=frozenset({"travel"}),
         limit=Money(minor_units=10_000, currency="BRL", scale=2),
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         policy_version=1,
@@ -57,11 +58,47 @@ def test_mandate_requires_revocation_metadata_and_authority():
             id="mandate_without_authority",
             principal=valid.principal,
             allowed_merchant_ids=valid.allowed_merchant_ids,
+            allowed_categories=valid.allowed_categories,
             limit=valid.limit,
             expires_at=valid.expires_at,
             policy_version=1,
             revocation_metadata={},
             authorities=(),
+        )
+
+
+def test_mandate_must_declare_what_may_be_bought():
+    valid = mandate()
+
+    with pytest.raises(DomainError):
+        Mandate(
+            id="mandate_without_category",
+            principal=valid.principal,
+            allowed_merchant_ids=valid.allowed_merchant_ids,
+            allowed_categories=frozenset(),
+            limit=valid.limit,
+            expires_at=valid.expires_at,
+            policy_version=1,
+            revocation_metadata=valid.revocation_metadata,
+            authorities=valid.authorities,
+        )
+
+
+def test_a_mandate_ceiling_must_share_the_limit_money_unit():
+    valid = mandate()
+
+    with pytest.raises(DomainError):
+        Mandate(
+            id="mandate_with_foreign_ceiling",
+            principal=valid.principal,
+            allowed_merchant_ids=valid.allowed_merchant_ids,
+            allowed_categories=valid.allowed_categories,
+            limit=valid.limit,
+            expires_at=valid.expires_at,
+            policy_version=1,
+            revocation_metadata=valid.revocation_metadata,
+            authorities=valid.authorities,
+            ceiling=Money(minor_units=50_000, currency="USD", scale=2),
         )
 
 

@@ -27,7 +27,13 @@ class RecordingSettlementAdapter:
         return SettlementResult(approved=True, reference="psp_1")
 
 
-def make_mandate(*, expires_at: datetime | None = None, public_jwk: dict[str, str] | None = None) -> Mandate:
+def make_mandate(
+    *,
+    expires_at: datetime | None = None,
+    public_jwk: dict[str, str] | None = None,
+    allowed_categories: frozenset[str] | None = None,
+    ceiling: Money | None = None,
+) -> Mandate:
     authority = RevocationAuthority(
         id="authority_1",
         kid="holder-key",
@@ -39,20 +45,25 @@ def make_mandate(*, expires_at: datetime | None = None, public_jwk: dict[str, st
         id="mandate_1",
         principal=Principal(id="principal_1", display_name="Marta"),
         allowed_merchant_ids=frozenset({"merchant_1"}),
+        allowed_categories=allowed_categories or frozenset({"travel"}),
         limit=Money(10_000, "BRL", 2),
         expires_at=expires_at or datetime.now(UTC) + timedelta(hours=1),
         policy_version=1,
         revocation_metadata={"revocation_id": "rev_1", "epoch": 0},
         authorities=(authority,),
+        ceiling=ceiling,
     )
 
 
-def command(*, merchant_id: str = "merchant_1", amount: int = 500) -> AuthorizationCommand:
+def command(
+    *, merchant_id: str = "merchant_1", amount: int = 500, category: str = "travel"
+) -> AuthorizationCommand:
     return AuthorizationCommand(
         mandate_id="mandate_1",
         checkout_id="checkout_1",
         merchant_id=merchant_id,
         total=Money(amount, "BRL", 2),
+        category=category,
     )
 
 
@@ -73,6 +84,40 @@ def test_core_escalates_a_checkout_for_a_non_allowed_merchant():
 
     assert result.decision is AuthorizationDecision.AWAITING_HUMAN
     assert result.reason_code == "merchant_out_of_scope"
+
+
+def test_core_escalates_a_checkout_outside_the_allowed_categories():
+    core = AuthorizationCore(clock=lambda: datetime.now(UTC))
+    core.register_mandate(make_mandate(allowed_categories=frozenset({"travel"})))
+
+    result = core.evaluate(command(category="lodging"))
+
+    assert result.decision is AuthorizationDecision.AWAITING_HUMAN
+    assert result.reason_code == "category_not_allowed"
+
+
+def test_core_rejects_amounts_above_the_mandate_ceiling_without_escalating():
+    core = AuthorizationCore(clock=lambda: datetime.now(UTC))
+    core.register_mandate(make_mandate(ceiling=Money(50_000, "BRL", 2)))
+
+    above = core.evaluate(command(amount=90_000))
+    within_ceiling_over_budget = core.evaluate(command(amount=20_000))
+
+    assert above.decision is AuthorizationDecision.REJECTED
+    assert above.reason_code == "mandate_ceiling"
+    assert within_ceiling_over_budget.decision is AuthorizationDecision.AWAITING_HUMAN
+    assert within_ceiling_over_budget.reason_code == "budget_exceeded"
+
+
+def test_a_live_limit_change_never_raises_the_mandate_ceiling():
+    core = AuthorizationCore(clock=lambda: datetime.now(UTC))
+    core.register_mandate(make_mandate(ceiling=Money(50_000, "BRL", 2)))
+
+    core.replace_live_limit("mandate_1", Money(100_000, "BRL", 2))
+
+    result = core.evaluate(command(amount=90_000))
+    assert result.decision is AuthorizationDecision.REJECTED
+    assert result.reason_code == "mandate_ceiling"
 
 
 def test_core_rejects_expired_mandates():

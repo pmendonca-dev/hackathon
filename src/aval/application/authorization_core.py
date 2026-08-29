@@ -8,17 +8,17 @@ import hashlib
 import json
 from uuid import uuid4
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.pool import StaticPool
 
 from aval.application.ports import AuthorizationProofIssuer, SettlementAdapter
-from aval.domain.entities import Mandate, Reservation, Revocation
-from aval.domain.enums import AuthorizationDecision, MandateStatus, ReservationStatus
+from aval.domain.entities import Dispute, Mandate, Reservation, Revocation
+from aval.domain.enums import AuthorizationDecision, DisputeStatus, MandateStatus, ReservationStatus
 from aval.domain.money import Money
 from aval.security.jws import verify_compact_jws
 from aval.security.key_custody import public_key_from_jwk
 from aval.infrastructure.sqlite.mandate_repository import SqliteMandateRepository
-from aval.infrastructure.sqlite.models import authorization_proofs, metadata
+from aval.infrastructure.sqlite.models import authorization_proofs, disputes, metadata, reservations
 from aval.infrastructure.sqlite.ledger_repository import SqliteLedgerRepository
 from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
 from aval.infrastructure.sqlite.capture_repository import SqliteCaptureRepository
@@ -33,11 +33,13 @@ class AuthorizationCommand:
     checkout_id: str
     merchant_id: str
     total: Money
+    category: str
 
 
 @dataclass(frozen=True)
 class CaptureCommand(AuthorizationCommand):
     idempotency_key: str
+    terms_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +131,84 @@ class AuthorizationCore:
             raise ValueError("unknown revocation authority")
         run_in_write_transaction(self._engine, operation)
 
+    def open_dispute(self, *, reservation_id: str, reason: str) -> Dispute:
+        """Record a later denial. Opening a dispute decides nothing on its own."""
+
+        def operation(connection) -> Dispute:
+            mandate_id = connection.execute(
+                select(reservations.c.mandate_id).where(reservations.c.id == reservation_id)
+            ).scalar_one_or_none()
+            if mandate_id is None:
+                raise ValueError("dispute references an unknown reservation")
+            dispute = Dispute(
+                id=f"dsp_{uuid4().hex}", mandate_id=mandate_id, reservation_id=reservation_id,
+                reason=reason, opened_at=self._clock(),
+            )
+            connection.execute(disputes.insert().values(
+                id=dispute.id, mandate_id=dispute.mandate_id, reservation_id=dispute.reservation_id,
+                reason=dispute.reason, status=dispute.status.value, resolution=None,
+                opened_at=dispute.opened_at, resolved_at=None,
+            ))
+            return dispute
+
+        return run_in_write_transaction(self._engine, operation)
+
+    def resolve_dispute(self, dispute_id: str) -> Dispute:
+        """Resolve by reading the trail: an authorization proof bound to a committed
+        reservation answers the claim; its absence answers it the other way."""
+
+        def operation(connection) -> Dispute:
+            row = connection.execute(
+                select(disputes).where(disputes.c.id == dispute_id)
+            ).mappings().one_or_none()
+            if row is None:
+                raise ValueError("dispute not found")
+            dispute = Dispute(
+                id=row["id"], mandate_id=row["mandate_id"], reservation_id=row["reservation_id"],
+                reason=row["reason"], opened_at=row["opened_at"], status=DisputeStatus(row["status"]),
+                resolution=row["resolution"], resolved_at=row["resolved_at"],
+            )
+            proof = connection.execute(
+                select(authorization_proofs.c.jti, authorization_proofs.c.signed_proof)
+                .where(authorization_proofs.c.reservation_id == dispute.reservation_id)
+            ).mappings().first()
+            reservation_status = connection.execute(
+                select(reservations.c.status).where(reservations.c.id == dispute.reservation_id)
+            ).scalar_one()
+            settled = reservation_status in (
+                ReservationStatus.COMMITTED.value, ReservationStatus.SETTLED.value
+            )
+            if proof is None or not settled:
+                resolved = dispute.resolve(
+                    DisputeStatus.MANDATE_FAILED,
+                    "Nenhuma prova de autorização vincula esta compra.",
+                    self._clock(),
+                )
+            else:
+                bound = self._proof_payload(proof["signed_proof"])
+                resolved = dispute.resolve(
+                    DisputeStatus.MANDATE_HELD,
+                    "Prova {jti} vincula merchant {merchant}, valor {amount} e terms_hash {terms}.".format(
+                        jti=proof["jti"], merchant=bound.get("merchant_id"),
+                        amount=bound.get("amount_minor_units"), terms=bound.get("terms_hash"),
+                    ),
+                    self._clock(),
+                )
+            connection.execute(disputes.update().where(disputes.c.id == dispute.id).values(
+                status=resolved.status.value, resolution=resolved.resolution,
+                resolved_at=resolved.resolved_at,
+            ))
+            return resolved
+
+        return run_in_write_transaction(self._engine, operation)
+
+    @staticmethod
+    def _proof_payload(signed_proof: str) -> dict:
+        """Read the payload AVAL itself recorded. Signature verification belongs to the
+        merchant, which holds the token; this row is the ledger's own copy."""
+        encoded = signed_proof.split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+
     def evaluate(self, command: AuthorizationCommand) -> AuthorizationResult:
         with self._engine.connect() as connection:
             return self._evaluate_with(connection, command)[0]
@@ -149,11 +229,21 @@ class AuthorizationCore:
                 "merchant_out_of_scope",
                 "Merchant fora do escopo do mandato; aprovação humana necessária.",
             ), mandate
+        if command.category not in mandate.allowed_categories:
+            return AuthorizationResult(
+                AuthorizationDecision.AWAITING_HUMAN,
+                "category_not_allowed",
+                "Categoria fora do escopo do mandato; aprovação humana necessária.",
+            ), mandate
         assert limit is not None
         if (command.total.currency, command.total.scale) != (limit.currency, limit.scale):
             return self._reject("money_unit_mismatch", "Moeda ou escala incompatível com o mandato."), mandate
         if command.total.minor_units <= 0:
             return self._reject("invalid_amount", "Valor de captura inválido."), mandate
+        # The ceiling is fixed when the mandate is created. A live limit change moves the
+        # budget, never this bound, so no approval path exists above it.
+        if mandate.ceiling is not None and command.total.minor_units > mandate.ceiling.minor_units:
+            return self._reject("mandate_ceiling", "Valor acima do teto do mandato."), mandate
         if SqliteLedgerRepository(connection).spent_for(mandate.id, limit).add(command.total).minor_units > limit.minor_units:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
@@ -163,7 +253,7 @@ class AuthorizationCore:
         return AuthorizationResult(AuthorizationDecision.AUTHORIZED, "authorized", "Compra autorizada."), mandate
 
     def capture(self, command: CaptureCommand) -> CaptureResult:
-        request_hash = hashlib.sha256(json.dumps({"mandate": command.mandate_id, "checkout": command.checkout_id, "merchant": command.merchant_id, "amount": command.total.minor_units, "currency": command.total.currency, "scale": command.total.scale}, sort_keys=True).encode()).hexdigest()
+        request_hash = hashlib.sha256(json.dumps({"mandate": command.mandate_id, "checkout": command.checkout_id, "merchant": command.merchant_id, "amount": command.total.minor_units, "currency": command.total.currency, "scale": command.total.scale, "category": command.category, "terms": command.terms_hash}, sort_keys=True).encode()).hexdigest()
         def prepare(connection):
             idem = SqliteIdempotencyRepository(connection)
             claim = idem.get_or_claim("capture", command.idempotency_key, request_hash)
@@ -194,6 +284,7 @@ class AuthorizationCore:
                 issued_proof = self._authorization_proof_issuer.issue(
                     reservation, policy_version=mandate.policy_version,
                     revocation_epoch=int(mandate.revocation_metadata.get("epoch", 0)),
+                    merchant_id=command.merchant_id, terms_hash=command.terms_hash,
                 )
                 connection.execute(authorization_proofs.insert().values(
                     id=issued_proof.id, reservation_id=reservation.id, jti=issued_proof.jti,

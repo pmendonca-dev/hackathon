@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Mapping
 
-from aval.domain.enums import MandateStatus, ReservationStatus, RevocationRole
+from aval.domain.enums import DisputeStatus, MandateStatus, ReservationStatus, RevocationRole
 from aval.domain.errors import DomainError
 from aval.domain.money import Money
 
@@ -37,11 +37,13 @@ class Mandate:
     id: str
     principal: Principal
     allowed_merchant_ids: frozenset[str]
+    allowed_categories: frozenset[str]
     limit: Money
     expires_at: datetime
     policy_version: int
     revocation_metadata: Mapping[str, object]
     authorities: tuple[RevocationAuthority, ...]
+    ceiling: Money | None = None
     status: MandateStatus = MandateStatus.ACTIVE
 
     def __post_init__(self) -> None:
@@ -49,6 +51,13 @@ class Mandate:
             raise DomainError("mandate id is required")
         if not self.allowed_merchant_ids:
             raise DomainError("mandate must allow at least one merchant")
+        if not self.allowed_categories:
+            raise DomainError("mandate must declare at least one allowed category")
+        if self.ceiling is not None and (self.ceiling.currency, self.ceiling.scale) != (
+            self.limit.currency,
+            self.limit.scale,
+        ):
+            raise DomainError("mandate ceiling must share the limit money unit")
         if not self.authorities:
             raise DomainError("mandate requires at least one revocation authority")
         if not self.revocation_metadata.get("revocation_id"):
@@ -156,3 +165,30 @@ class AuditEvent:
     human_summary: str
     occurred_at: datetime
     evidence_id: str | None = None
+
+
+@dataclass(frozen=True)
+class Dispute:
+    """A later denial of a purchase, resolved by reading the trail rather than by trust."""
+
+    id: str
+    mandate_id: str
+    reservation_id: str
+    reason: str
+    opened_at: datetime
+    status: DisputeStatus = DisputeStatus.OPEN
+    resolution: str | None = None
+    resolved_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.reservation_id:
+            raise DomainError("a dispute must name the reservation it denies")
+        if not self.reason:
+            raise DomainError("a dispute must carry the reason it was opened")
+
+    def resolve(self, status: DisputeStatus, resolution: str, resolved_at: datetime) -> "Dispute":
+        if self.status is not DisputeStatus.OPEN:
+            raise DomainError("only an open dispute may be resolved")
+        if status is DisputeStatus.OPEN:
+            raise DomainError("a dispute resolution must be conclusive")
+        return replace(self, status=status, resolution=resolution, resolved_at=resolved_at)

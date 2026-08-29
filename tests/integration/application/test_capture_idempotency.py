@@ -26,7 +26,8 @@ class CountingSettlement:
 def make_mandate(public_jwk: dict[str, str]) -> Mandate:
     return Mandate(
         id="mandate_persisted", principal=Principal("principal_1", "Marta"),
-        allowed_merchant_ids=frozenset({"merchant_1"}), limit=Money(1_000, "BRL", 2),
+        allowed_merchant_ids=frozenset({"merchant_1"}), allowed_categories=frozenset({"travel"}),
+        limit=Money(1_000, "BRL", 2),
         expires_at=datetime(2026, 8, 30, tzinfo=UTC), policy_version=1,
         revocation_metadata={"revocation_id": "rev_1", "epoch": 0},
         authorities=(RevocationAuthority("authority_1", "holder-key", RevocationRole.HOLDER, public_jwk, frozenset({"mandate"})),),
@@ -34,7 +35,7 @@ def make_mandate(public_jwk: dict[str, str]) -> Mandate:
 
 
 def capture_command(*, key: str, amount: int = 500) -> CaptureCommand:
-    return CaptureCommand("mandate_persisted", "checkout_1", "merchant_1", Money(amount, "BRL", 2), key)
+    return CaptureCommand("mandate_persisted", "checkout_1", "merchant_1", Money(amount, "BRL", 2), "travel", key)
 
 
 def test_capture_idempotency_is_durable_and_rejects_changed_bodies(tmp_path):

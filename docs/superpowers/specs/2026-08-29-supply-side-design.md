@@ -77,6 +77,8 @@ Exatamente a forma fixada no contrato §8.1:
 
 As ofertas são **cunhadas no request**, nunca pré-assinadas: `nonce` e `not_after` exigem isso. `not_after` = `now + 10 minutos`, lido do `Clock` injetado, nunca de `datetime.now()` direto.
 
+O `item.category` **é decidido pelo núcleo**, não pela borda. A borda copia a categoria da oferta para `AuthorizationCommand.category`; `Mandate.allowed_categories` é que diz se ela pode. Uma categoria fora do escopo devolve `category_not_allowed` e escala. Ver §11.
+
 ### 3.2 `terms_hash`
 
 `base64url(SHA-256(canonicalize(payload)))`, com `canonicalize` de `src/aval/security/jcs.py` (RFC 8785).
@@ -141,11 +143,13 @@ Demonstração: a mesma compra em dois merchants produz **o mesmo `reason_code` 
 
 Recebe o recibo e reexecuta os cinco checks que `web/src/pages/MerchantView.tsx` já desenha:
 
-1. assinatura da oferta válida
-2. oferta ainda válida (`not_after`)
-3. decisão do AVAL válida
-4. `terms_hash` confere com o `canonical_payload` gravado
-5. status de revogação do mandato válido
+1. **assinatura da oferta** — JWS detached verifica com a chave do próprio merchant
+2. **oferta ainda válida** — `not_after` não venceu
+3. **prova do AVAL** — a prova de autorização verifica com a JWK pública do AVAL, e o `merchant_id`, o valor e a moeda que ela vincula batem com a oferta
+4. **`terms_hash`** — o da prova é igual ao hash JCS do `canonical_payload` gravado
+5. **revogação** — releitura viva do estado do mandato
+
+O check 3 é o que torna a verificação **independente**: o merchant não pergunta ao AVAL se a compra vale, ele verifica uma assinatura. E consegue fazer isso sem nunca receber `mandate_id` nem `principal_id` — a prova omite os dois de propósito.
 
 O check 5 é uma **releitura viva**, nunca cache. Um mandato revogado depois da compra faz este check reportar revogado, e isso é o comportamento correto: a verificação responde *"isto ainda vale agora?"*.
 
@@ -235,3 +239,21 @@ A segunda loja é o upgrade B e só é executada depois dos itens 1–7 do contr
 | A casca HTTP (item #1 do contrato) não existe; nada disto encosta em lugar nenhum sem ela | Este design pressupõe `POST /authorize` e `POST /capture` como pré-requisito, não como parte |
 | Chaves in-memory somem no restart | Ofertas expiram em 10 min; não reiniciar entre ensaio e pitch |
 | O detached JWS é código cripto novo escrito sob pressão | Os testes de payload adulterado são obrigatórios, não opcionais |
+| `transaction_hash` tem `mandate_id` no preimage e vai para o merchant | Os demais campos do preimage são conhecidos do merchant, mas `mandate_<uuid4>` tem 128 bits de entropia; é um compromisso, não uma divulgação |
+
+---
+
+## 11. Mudanças no núcleo que este design exigiu
+
+A auditoria do lado da oferta contra o enunciado encontrou dois requisitos nomeados que o núcleo não atendia. Ambos foram corrigidos antes da borda existir, porque nenhum deles pode viver na borda.
+
+| Correção | O que era | O que é |
+|---|---|---|
+| **Escopo de compra** | `Mandate` só tinha merchant, limite e validade. A categoria viajava na oferta assinada e era ignorada. | `Mandate.allowed_categories` (não vazio, invariante), `AuthorizationCommand.category`, `category_not_allowed` → escala |
+| **Teto do mandato** | Todo valor acima do orçamento escalava; não existia valor que a aprovação humana não destravasse | `Mandate.ceiling` opcional, fixo na criação. Acima dele: `mandate_ceiling`, rejeição sem botão. `replace_live_limit` move o orçamento e **não** move o teto |
+| **Prova de autorização** | Payload vinculava só `reservation_id` e `transaction_hash`; o merchant não conseguia verificar que a prova era da oferta dele | Payload vincula `checkout_id`, `merchant_id`, valor, moeda e `terms_hash`; **omite** `mandate_id` e `principal_id` |
+| **Disputa** | Não existia | Entidade `Dispute`, tabela `disputes`, `open_dispute()` e `resolve_dispute()`. A resolução lê a trilha: prova sobre reserva comprometida → `MANDATE_HELD`; ausência → `MANDATE_FAILED` |
+
+Migração `0002_mandate_scope_and_disputes`, escrita idempotente porque `0001` constrói o schema a partir do metadata vivo.
+
+**Ainda em aberto, e é defesa de palco, não código:** o enunciado diz que o mandato define *"o meio de pagamento"*. O AVAL emite a credencial por checkout, não por mandato (ver *Payment credential scope* no decision log). É uma divergência deliberada e mais forte — mas alguém vai perguntar, e a resposta precisa estar ensaiada.

@@ -178,3 +178,59 @@ Implement the detached form over the RFC 8785 canonical payload as recorded in t
 **What we chose:** Detached JWS, protected header and signature with the payload omitted, signed over the JCS serialization of the offer.
 
 **Why:** The protocol validation record already states that the AP2 merchant authorization is detached over JCS. A code path that contradicts a published validation record costs more in technical defence than the small amount of code the detached form requires, and the raw ES256 helpers it needs already exist. The attached compact JWS keeps its own separate role, where its payload encoding is deliberately not JCS.
+
+## Mandate purchase scope
+
+**Decision:** How a mandate expresses what may be bought, not only how much
+
+**Options considered (one per line):**
+
+Carry the category on the signed offer and let the merchant enforce it
+Add an allowed category set to the mandate and evaluate it in the authorization core
+Treat the merchant allow list as a sufficient proxy for the purchase scope
+
+**What we chose:** The mandate declares a non-empty set of allowed categories, the authorization command carries the category of the purchase, and the core escalates a category outside that set with `category_not_allowed`.
+
+**Why:** The challenge states that a mandate defines what may be bought with limits on amount, category and validity, and names a forbidden category among the cases that must never pass silently. Carrying the category only on the offer would have left it signed, transported and then ignored, because the edge is not allowed to decide. Escalation rather than rejection matches the treatment of an out-of-scope merchant: both are scope violations that a human may still resolve, while integrity and validity failures stay hard rejections.
+
+## Mandate hard ceiling
+
+**Decision:** Whether any amount exists that human approval cannot unlock
+
+**Options considered (one per line):**
+
+Escalate every amount above the live budget and let the principal approve it
+Give the mandate a fixed ceiling above which the decision is a rejection with no approval path
+Treat the live limit itself as the ceiling
+
+**What we chose:** A mandate may carry an optional ceiling fixed at creation. An amount above it is rejected with `mandate_ceiling` and offers no approval, while an amount within the ceiling but beyond the live budget still escalates.
+
+**Why:** Without a ceiling, an agent that can trigger an approval prompt can eventually reach any amount, which makes the mandate a suggestion rather than an authority. Fixing the ceiling at creation and moving only the budget keeps the live limit useful to a judge without letting a limit change raise the bound: `replace_live_limit` alters the budget and leaves the ceiling untouched, which is covered by a test.
+
+## Authorization proof audience
+
+**Decision:** What the merchant learns from the proof it is asked to verify
+
+**Options considered (one per line):**
+
+Keep the proof bound to the reservation and let the merchant re-query the authorization layer
+Bind the offer terms, merchant and amount into the proof while omitting the mandate and the principal
+Include the mandate identifier so the merchant can recompute the transaction hash
+
+**What we chose:** The proof payload carries the checkout, merchant, amount, money unit and terms hash, and omits the mandate identifier and the principal.
+
+**Why:** The merchant view of the ledger deliberately hides the mandate and the budget, so a proof that could only be checked with the mandate identifier left the merchant verifying nothing and trusting a response instead. Binding the terms hash lets the merchant confirm that the proof answers the exact offer it signed, at the price it signed, without learning who the buyer is or what remains of their budget. The transaction hash stays in the payload as an opaque commitment that an auditor can bind to the reservation.
+
+## Dispute resolution rule
+
+**Decision:** What decides a later denial of a purchase
+
+**Options considered (one per line):**
+
+Record the dispute and resolve it manually outside the system
+Resolve by reading the trail: an authorization proof bound to a committed reservation answers the claim
+Treat any dispute as upheld until the merchant produces evidence
+
+**What we chose:** Opening a dispute records it and decides nothing. Resolution reads the trail, and the presence of an authorization proof over a committed or settled reservation resolves the dispute as `MANDATE_HELD`, its absence as `MANDATE_FAILED`.
+
+**Why:** The challenge requires a later dispute to be handled explicitly, and its bonus asks the auditable trail to decide who is right. Making the proof the deciding artefact means the answer is derived from evidence the system already produces at the commit point rather than from a new claim, and it gives the enriched proof payload a second use: the resolution quotes the merchant, amount and terms hash the proof binds.

@@ -20,17 +20,31 @@ class AuthorizationProofService:
         self._used_jtis: set[str] = set()
 
     def issue(
-        self, reservation: Reservation, *, policy_version: int, revocation_epoch: int
+        self,
+        reservation: Reservation,
+        *,
+        policy_version: int,
+        revocation_epoch: int,
+        merchant_id: str,
+        terms_hash: str | None = None,
     ) -> AuthorizationProof:
         if reservation.status is not ReservationStatus.COMMITTED or not reservation.transaction_hash:
             raise ValueError("authorization proofs require a committed reservation")
         issued_at = self._clock()
         expires_at = issued_at + timedelta(seconds=60)
         jti = uuid4().hex
+        # The merchant is a verifier, not a confidant: this payload binds the offer it
+        # signed and omits the mandate and the principal it is never allowed to learn.
         payload = {
             "v": 1,
             "jti": jti,
             "reservation_id": reservation.id,
+            "checkout_id": reservation.checkout_intent_id,
+            "merchant_id": merchant_id,
+            "amount_minor_units": reservation.amount.minor_units,
+            "currency": reservation.amount.currency,
+            "scale": reservation.amount.scale,
+            "terms_hash": terms_hash,
             "transaction_hash": reservation.transaction_hash,
             "policy_version": policy_version,
             "revocation_epoch": revocation_epoch,

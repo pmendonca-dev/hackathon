@@ -61,7 +61,10 @@ def test_alembic_upgrade_creates_the_initial_schema(tmp_path):
     command.upgrade(config, "head")
 
     engine = create_engine(f"sqlite+pysqlite:///{database_path.as_posix()}")
-    assert set(CORE_TABLE_NAMES) <= set(inspect(engine).get_table_names())
+    inspector = inspect(engine)
+    assert set(CORE_TABLE_NAMES) <= set(inspector.get_table_names())
+    mandate_columns = {column["name"] for column in inspector.get_columns("mandates")}
+    assert {"allowed_categories", "ceiling_minor_units"} <= mandate_columns
 
 
 def test_seed_is_deterministic_and_idempotent(tmp_path):

@@ -23,10 +23,12 @@ mandates = Table(
     Column("principal_id", String, nullable=False),
     Column("principal_display_name", String, nullable=False),
     Column("allowed_merchant_ids", Text, nullable=False),
+    Column("allowed_categories", Text, nullable=False),
     Column("status", String, nullable=False),
     Column("currency", String(3), nullable=False),
     Column("scale", Integer, nullable=False),
     Column("limit_minor_units", Integer, nullable=False),
+    Column("ceiling_minor_units", Integer),
     Column("expires_at", DateTime(timezone=True), nullable=False),
     Column("policy_version", Integer, nullable=False),
     Column("revocation_epoch", Integer, nullable=False, default=0),
@@ -172,6 +174,22 @@ vault_tokens = Table(
     Column("expires_at", DateTime(timezone=True), nullable=False),
 )
 
+disputes = Table(
+    "disputes",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("mandate_id", ForeignKey("mandates.id"), nullable=False),
+    Column("reservation_id", ForeignKey("reservations.id"), nullable=False),
+    Column("reason", Text, nullable=False),
+    Column("status", String, nullable=False),
+    Column("resolution", Text),
+    Column("opened_at", DateTime(timezone=True), nullable=False),
+    Column("resolved_at", DateTime(timezone=True)),
+    CheckConstraint(
+        "status IN ('OPEN', 'MANDATE_HELD', 'MANDATE_FAILED')", name="dispute_status"
+    ),
+)
+
 CORE_TABLE_NAMES = (
     "mandates",
     "revocation_authorities",
@@ -186,4 +204,5 @@ CORE_TABLE_NAMES = (
     "audit_events",
     "agent_profiles",
     "vault_tokens",
+    "disputes",
 )
