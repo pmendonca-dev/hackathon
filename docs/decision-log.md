@@ -81,3 +81,17 @@ Freeze the historical initial schema and apply a forward-only incremental migrat
 **What we chose:** Preserve `0001_initial_core` as the original schema and add `0002_authorization_hardening` for persisted mandate fields and uniqueness constraints.
 
 **Why:** A metadata-driven initial migration silently leaves an existing database stamped at `0001` without subsequent columns or constraints. An explicit forward migration upgrades both clean and already-migrated databases without treating a reset as a correctness mechanism.
+
+## Authorization-proof replay storage
+
+**Decision:** Storage boundary for one-use AuthorizationProof JTIs
+
+**Options considered (one per line):**
+
+Keep consumed JTIs in each process memory
+Create a separate replay datastore for authorization proofs
+Consume proof JTIs atomically in the shared durable idempotency store
+
+**What we chose:** Store and atomically consume each AuthorizationProof JTI in the existing durable idempotency store under its own scope.
+
+**Why:** Replay must remain blocked across new AuthorizationCore instances and process restarts. Reusing the transactionally protected idempotency store keeps one anti-replay authority instead of introducing a second, independently failing state source.
