@@ -128,8 +128,9 @@ def test_revocation_with_an_invalid_signature_is_rejected():
     )
 
     header, payload, signature = revocation.split(".")
+    tampered_payload = ("A" if payload[0] != "A" else "B") + payload[1:]
     try:
-        core.submit_signed_revocation(f"{header}.{payload}.{signature[:-1]}A")
+        core.submit_signed_revocation(f"{header}.{tampered_payload}.{signature}")
     except ValueError:
         pass
     else:
