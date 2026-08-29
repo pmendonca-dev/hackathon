@@ -76,10 +76,13 @@ class AuthorizationCore:
         authorization_proof_issuer: AuthorizationProofIssuer | None = None,
     ) -> None:
         self._clock = clock
-        self._engine = engine or create_engine(
-            "sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-        )
-        metadata.create_all(self._engine)
+        if engine is None:
+            self._engine = create_engine(
+                "sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+            )
+            metadata.create_all(self._engine)
+        else:
+            self._engine = engine
         self._settlement_adapter = settlement_adapter
         self._authorization_proof_issuer = authorization_proof_issuer
 
