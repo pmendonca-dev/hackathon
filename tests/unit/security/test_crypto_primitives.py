@@ -5,9 +5,9 @@ import base64
 import pytest
 
 from aval.security.content_digest import content_digest_sha256, verify_content_digest_sha256
-from aval.security.ecdsa import sign_es256_raw, verify_es256_raw
+from aval.security.ecdsa import verify_es256_raw
 from aval.security.jcs import canonicalize
-from aval.security.key_custody import KeyCustodyService
+from aval.security.key_custody import KeyCustodyService, public_key_from_jwk
 
 
 def test_content_digest_covers_exact_raw_utf8_bytes():
@@ -28,11 +28,12 @@ def test_es256_boundary_uses_fixed_length_raw_r_and_s():
     custody.generate_es256("test-key")
     message = b"authorization-proof"
 
-    signature = sign_es256_raw(custody.private_key("test-key"), message)
+    signature = custody.sign_es256("test-key", message)
+    public_key = public_key_from_jwk(custody.public_jwk("test-key"))
 
     assert len(signature) == 64
-    assert verify_es256_raw(custody.public_key("test-key"), message, signature)
-    assert not verify_es256_raw(custody.public_key("test-key"), b"tampered", signature)
+    assert verify_es256_raw(public_key, message, signature)
+    assert not verify_es256_raw(public_key, b"tampered", signature)
 
     with pytest.raises(ValueError):
-        verify_es256_raw(custody.public_key("test-key"), message, signature[:-1])
+        verify_es256_raw(public_key, message, signature[:-1])

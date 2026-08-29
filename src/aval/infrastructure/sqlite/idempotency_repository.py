@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sqlalchemy import Connection, select, update
+from sqlalchemy.exc import IntegrityError
 
 from aval.infrastructure.sqlite.models import idempotency_records
 
@@ -36,3 +37,13 @@ class SqliteIdempotencyRepository:
         self._connection.execute(update(idempotency_records).where(
             idempotency_records.c.scope == scope, idempotency_records.c.idempotency_key == key
         ).values(state="COMPLETED", response_body=response_body))
+
+    def consume_once(self, scope: str, key: str) -> bool:
+        try:
+            self._connection.execute(idempotency_records.insert().values(
+                id=f"idem_{scope}_{key}", scope=scope, idempotency_key=key,
+                request_hash=key, state="COMPLETED", response_body="consumed",
+            ))
+        except IntegrityError:
+            return False
+        return True

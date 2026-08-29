@@ -6,7 +6,7 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from aval.security.ecdsa import sign_es256_raw, verify_es256_raw
+from aval.security.ecdsa import verify_es256_raw
 from aval.security.key_custody import KeyCustodyService
 
 
@@ -24,7 +24,7 @@ def sign_compact_jws(payload: dict[str, Any], custody: KeyCustodyService, kid: s
         json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     )
     signing_input = f"{header}.{encoded_payload}".encode("ascii")
-    signature = _b64url_encode(sign_es256_raw(custody.private_key(kid), signing_input))
+    signature = _b64url_encode(custody.sign_es256(kid, signing_input))
     return f"{header}.{encoded_payload}.{signature}"
 
 

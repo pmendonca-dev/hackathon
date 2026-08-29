@@ -67,3 +67,17 @@ Atomically commit a reservation in the core before settlement, with durable idem
 **What we chose:** Under the SQLite immediate-write transaction, the core checks fresh revocation, claims idempotency, commits a reservation, and persists its capture attempt before calling settlement outside the lock.
 
 **Why:** This gives revocation and capture one serial decision boundary, prevents an adapter from receiving an uncommitted reservation, retains a recoverable pending attempt during external I/O, and makes retries deterministic across process restarts.
+
+## Incremental authorization-schema evolution
+
+**Decision:** Alembic strategy for authorization-core schema hardening
+
+**Options considered (one per line):**
+
+Keep `0001_initial_core` coupled to current SQLAlchemy metadata
+Reset migrated demo databases when the schema changes
+Freeze the historical initial schema and apply a forward-only incremental migration
+
+**What we chose:** Preserve `0001_initial_core` as the original schema and add `0002_authorization_hardening` for persisted mandate fields and uniqueness constraints.
+
+**Why:** A metadata-driven initial migration silently leaves an existing database stamped at `0001` without subsequent columns or constraints. An explicit forward migration upgrades both clean and already-migrated databases without treating a reset as a correctness mechanism.
