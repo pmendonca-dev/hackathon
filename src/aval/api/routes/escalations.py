@@ -51,14 +51,23 @@ def escalation_view(escalation: Escalation) -> dict[str, Any]:
 
 @router.get("/escalations")
 def list_escalations(
-    request: Request, mandate_id: str | None = None, principal_id: str | None = None
+    request: Request,
+    mandate_id: str | None = None,
+    principal_id: str | None = None,
+    authorization_jws: str | None = None,
 ) -> dict[str, Any]:
     """What is waiting on a person, by mandate or across every mandate they hold.
 
     One of the two scopes is required. An unscoped listing would be a feed of what
     everybody is about to buy — amount, merchant and item — to anyone who asks, so
-    there is no such call. `principal_id` is what the bot and the browser use to poll
-    for new approvals without knowing a mandate id in advance.
+    there is no such call.
+
+    The two scopes are not equally safe, and they are no longer treated as if they were.
+    A `mandate_id` is 32 random hex: knowing one is itself the entitlement. A
+    `principal_id` is `usr_tg_{chat_id}` or `usr_marta` — a name anyone can guess — so
+    that scope carries a holder signature, and answers only for the mandates that key
+    actually holds. Otherwise one judge polls another judge's pending approvals and reads
+    what they are about to buy.
     """
     core = runtime_of(request).core
     if mandate_id is None and principal_id is None:
@@ -73,7 +82,23 @@ def list_escalations(
         escalations = core.open_escalations(mandate_id)
     else:
         assert principal_id is not None
-        escalations = core.open_escalations_for_principal(principal_id)
+        if not authorization_jws:
+            raise ApiError(
+                422,
+                "read_authorization_required",
+                "A listagem por principal precisa da assinatura do titular.",
+            )
+        try:
+            readable = set(core.mandates_readable_by(authorization_jws, principal_id))
+        except ValueError as error:
+            raise ApiError(
+                422, "read_authorization_malformed", "Autorização de leitura malformada."
+            ) from error
+        escalations = [
+            item
+            for item in core.open_escalations_for_principal(principal_id)
+            if item.mandate_id in readable
+        ]
     return {
         "mandate_id": mandate_id,
         "principal_id": principal_id,

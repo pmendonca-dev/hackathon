@@ -432,6 +432,54 @@ class AuthorizationCore:
             raise ValueError("unknown revocation authority")
         run_in_write_transaction(self._engine, operation)
 
+    def mandates_readable_by(self, token: str, principal_id: str) -> list[str]:
+        """Which of this buyer's mandates the signer of `token` is entitled to see.
+
+        The reach is decided exactly the way a revocation's is — by verifying the
+        signature against each mandate's *own* registered holder authority — so a key
+        sees the mandates it could already have ended, and not one more. Holding a key
+        for one of a person's mandates never becomes sight of the rest of them.
+
+        A key that is an authority on nothing gets an empty list rather than a refusal.
+        That is deliberate: a distinct answer for "wrong key" and "no mandates yet"
+        would turn this into an oracle for which buyers exist, and it is also what lets
+        a holder open the page before they have created anything.
+
+        The token names the buyer it is being presented for, so it cannot be lifted from
+        one listing and replayed against another. It is not otherwise time-bound, and it
+        does not need to be: its entire reach is *the mandates this key already
+        controls*, so replaying it grants nothing the key does not already grant.
+        """
+        try:
+            encoded_header = token.split(".")[0]
+            header = json.loads(
+                base64.urlsafe_b64decode(encoded_header + "=" * (-len(encoded_header) % 4))
+            )
+            kid = header["kid"]
+        except (IndexError, KeyError, ValueError, json.JSONDecodeError) as error:
+            raise ValueError("malformed read authorization") from error
+
+        readable: list[str] = []
+        with self._engine.connect() as connection:
+            for mandate in SqliteMandateRepository(connection).for_authority_kid(kid):
+                if mandate.principal.id != principal_id:
+                    continue
+                for authority in mandate.authorities:
+                    if authority.kid != kid or authority.role is not RevocationRole.HOLDER:
+                        continue
+                    try:
+                        claims = verify_compact_jws(
+                            token, public_key_from_jwk(dict(authority.public_jwk))
+                        )
+                    except ValueError:
+                        continue
+                    # The token has to be about this buyer, or a listing signed for one
+                    # person would answer for another.
+                    if claims.get("principal_id") == principal_id:
+                        readable.append(mandate.id)
+                        break
+        return readable
+
     def submit_principal_revocation(self, token: str) -> list[str]:
         """End every mandate this key is an authority on, under one signature.
 
