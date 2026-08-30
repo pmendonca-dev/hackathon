@@ -93,6 +93,88 @@ A vigília não ganha autoridade nenhuma com isso: disparar significa chamar o m
 revogado é recusada igualzinho. A autonomia está em *quando* o agente age, nunca no
 *que* ele pode fazer.
 
+## Teste ponta a ponta: Telegram → decisão → evidência
+
+Este é o caminho curto para verificar o protótipo sem depender de uma oferta externa.
+Ele usa o processador `demo`: há uma captura e um recibo verificável, mas não há
+cobrança em cartão real nem pedido enviado a um vendedor. Para testar descoberta de
+ofertas públicas e Stripe em modo de teste, siga o
+[ensaio de duas máquinas](docs/verification/two-computer-telegram-rehearsal.md).
+
+### 1. Suba o núcleo e o bot
+
+Em Git Bash ou WSL no Windows, copie o ambiente e informe somente o token do bot:
+
+```bash
+cp .env.example .env
+# edite .env e preencha TELEGRAM_BOT_TOKEN
+# mantenha AVAL_API_BASE_URL=http://127.0.0.1:8099 e AVAL_PSP=demo
+
+bash scripts/dev_up.sh       # API em :8099 e interface web em :5173
+bash scripts/bot_up.sh       # o bot confirma /health antes de iniciar
+```
+
+`AVAL_TELEGRAM_LLM=1` com `OPENAI_API_KEY` é opcional: ele torna a conversa que
+monta o mandato mais natural; sem as duas variáveis, o mesmo fluxo funciona pelo
+interpretador determinístico. Nunca coloque o token do bot ou a chave da OpenAI no
+navegador.
+
+### 2. Crie a autoridade e o meio de pagamento
+
+No Telegram, abra o bot e execute:
+
+```text
+/start
+/cartao
+```
+
+O primeiro comando cria uma chave e um mandato próprios daquele chat. `/cartao` abre
+a página do processador; conclua-a e envie `/cartao` novamente para vincular o token do
+processador ao mandato. O bot mostra apenas um rótulo como `•••• 4242`: o número do
+cartão nunca passa pela AVAL nem pelo Telegram.
+
+### 3. Prove uma compra autorizada
+
+Envie uma instrução que o catálogo de demonstração atende:
+
+```text
+/comprar compre um voo para Córdoba abaixo de $150
+```
+
+O retorno esperado é `✅ Comprado.`, acompanhado da referência de liquidação e de um
+recibo. O bot só apresenta esse estado depois de o núcleo avaliar o mandato e a captura
+ser concluída. Em seguida, envie `/extrato`: ele mostra os eventos e o estado da cadeia
+de hash que sustentam essa compra. A mesma trilha pode ser lida na visão **Auditor** da
+interface em `http://localhost:5173`.
+
+### 4. Prove que uma tentativa negada não cobra
+
+Primeiro encerre a autoridade no próprio chat:
+
+```text
+/revogar
+/comprar compre um voo para Córdoba abaixo de $150
+```
+
+O segundo comando deve retornar uma recusa com `mandate_revoked`; não há referência de
+liquidação, nem recibo de compra, nem cobrança. Consulte `/extrato` novamente: a
+revogação e a tentativa recusada ficam na trilha, permitindo confirmar que o agente
+tentou agir, mas o núcleo não autorizou nem capturou o pagamento.
+
+Para demonstrar uma recusa por valor, em vez de revogar envie uma instrução acima do
+teto do mandato, por exemplo `/comprar compre a passagem executiva de $900`. O resultado
+deve parar no degrau `below_ceiling`; o orçamento não é consultado e o processador não
+é chamado.
+
+### 5. Exercite a compra autônoma com oferta pública
+
+No modo de duas máquinas, a pessoa pode escrever `acompanhe um notebook até 2000 por
+30 dias`, confirmar o mandato e a vigília, e aguardar um tick. A mensagem final contém
+o vendedor, preço, URL pública da oferta e a referência Stripe — ou `Tentei e não
+comprei` com o motivo do núcleo. O roteiro completo inclui o teste de revogar durante a
+vigília e confirma que uma oferta descoberta ainda é recusada quando a autoridade não
+permite pagar.
+
 `AVAL_OPERATOR_TOKEN` protege as superfícies de operador (`/agents`, `/admin/psp`,
 `/reconcile`). **Sem ela essas superfícies ficam desligadas** — nenhum token apresentado
 confere, e toda chamada é recusada com `403 operator_token_invalid`. A instância nasce

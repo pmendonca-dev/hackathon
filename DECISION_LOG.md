@@ -11,6 +11,25 @@ one screen in [`docs/decision-log-short.md`](https://github.com/pmendonca-dev/ha
 Each entry records the decision, the alternatives that were real at the time, what
 we chose, and why.
 
+## Browser visual-system restoration
+
+**Decision:** Restore the approved blue/lilac palette and desktop-collapsible
+sidebar without changing the current header's information hierarchy.
+
+**Options considered (one per line):**
+
+Keep the translated paper/teal presentation
+Restore the previous shell wholesale, including its older header
+Restore the palette and sidebar interaction while keeping the current header
+
+**What we chose:** Restore the indigo visual tokens, divider treatment, and
+collapsible desktop navigation. The current header continues to show runtime
+context on the left and Reload on the right.
+
+**Why:** The earlier visual affordances were lost during the English frontend
+integration, while the newer header arrangement is the preferred operational
+layout. Preserving that arrangement avoids regressing the current workflow.
+
 ## Browser BFF session migration identity
 
 **Decision:** Alembic revision number for durable browser sessions
@@ -857,45 +876,3 @@ Associate reads with an in-memory session generation and ignore stale completion
 **What we chose:** The UI increments an in-memory session generation whenever protected state is cleared or a new login succeeds, and applies BFF projections only when the originating generation remains current.
 
 **Why:** A delayed response from an expired or logged-out session must not repopulate the next user's projection. The generation is transient browser control state, not an authority credential, and is never persisted or transmitted.
-
-## Real-offer Telegram MVP boundary
-
-**Decision:** Scope of the autonomous shopping demonstration
-
-**Options considered (one per line):**
-
-Keep the static travel catalogue and only improve presentation
-Use real-offer discovery and send the customer to each seller checkout
-Use real-offer discovery with a seller-specific external checkout integration
-Use real-offer discovery with Stripe test-mode settlement inside AVAL
-
-**What we chose:** Use Telegram to create a durable purchase watch, discover
-real public offers through OpenAI web search, and settle only through the
-existing Stripe adapter in test mode after AVAL authorization. The bot reports
-the real seller URL but does not claim to order at that seller.
-
-**Why:** This validates the intended autonomous flow—conversation, mandate,
-secure payment-method collection, monitoring, discovery, authorization, and
-settlement—within the available implementation window. A Stripe charge alone
-does not create an external merchant order, and adding unapproved seller APIs
-would make the demo misleading and exceed the scope.
-
-## Two-computer trust boundary
-
-**Decision:** Deployment split for the real-offer Telegram MVP
-
-**Options considered (one per line):**
-
-Run bot, OpenAI calls, authorization database, and Stripe on one computer
-Put all background work on the Telegram and OpenAI computer
-Place conversation and discovery on one computer and authority, state, and settlement on another
-
-**What we chose:** Computer A runs Telegram conversation and OpenAI discovery;
-Computer B runs AVAL authorization, durable watches and events, Stripe Setup
-Checkout, and test-mode settlement. They communicate with separate scoped
-service credentials over authenticated private HTTP.
-
-**Why:** The public-facing bot and untrusted search results are isolated from
-Stripe secrets, mandate state, signing keys, and payment-method tokens. The
-durable scheduler stays beside the database and settlement path, so restarting
-the conversation edge cannot lose a pending purchase or charge twice.
