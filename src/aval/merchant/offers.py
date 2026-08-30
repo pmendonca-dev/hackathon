@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from aval.merchant.catalog import CATALOG, MERCHANT_ID, MERCHANT_KID, CatalogItem
+from aval.merchant.catalog import CATALOG, MERCHANTS, CatalogItem
 from aval.security.jcs import canonicalize
 from aval.security.jws import sign_compact_jws
 from aval.security.key_custody import KeyCustodyService
@@ -34,14 +34,22 @@ class MerchantOfferService:
         self._custody = custody
 
     def public_jwks(self) -> dict[str, Any]:
-        return {"keys": [self._custody.public_jwk(MERCHANT_KID)]}
+        """Every seller's key, so any offer in the catalogue verifies offline."""
+        return {"keys": [self._custody.public_jwk(kid) for kid in MERCHANTS.values()]}
 
     def _offer_payload(self, item: CatalogItem) -> dict[str, Any]:
         not_after = self._clock() + OFFER_VALIDITY
         return {
             "offer_id": f"off_{uuid4().hex[:12]}",
-            "merchant_id": MERCHANT_ID,
-            "item": {"sku": item.sku, "title": item.title, "category": item.category},
+            "merchant_id": item.merchant_id,
+            # The attributes are inside the payload, and the payload is what is hashed:
+            # whatever the agent decides on, the seller signed.
+            "item": {
+                "sku": item.sku,
+                "title": item.title,
+                "category": item.category,
+                **item.attributes(),
+            },
             "total": {
                 "minor_units": item.minor_units,
                 "currency": item.currency,
@@ -57,7 +65,9 @@ class MerchantOfferService:
         return {
             **payload,
             "terms_hash": terms_hash_of(payload),
-            "merchant_authorization": sign_compact_jws(payload, self._custody, MERCHANT_KID),
+            "merchant_authorization": sign_compact_jws(
+                payload, self._custody, MERCHANTS[item.merchant_id]
+            ),
         }
 
     def catalog(self) -> list[dict[str, Any]]:

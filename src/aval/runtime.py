@@ -23,7 +23,7 @@ from aval.infrastructure.sqlite.engine import create_sqlite_engine
 from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
 from aval.infrastructure.sqlite.models import metadata
 from aval.infrastructure.sqlite.transaction import run_in_write_transaction
-from aval.merchant.catalog import MERCHANT_KID
+from aval.merchant.catalog import MERCHANTS
 from aval.merchant.offers import MerchantOfferService
 from aval.security.authorization_proof import AuthorizationProofService
 from aval.security.clock import ClockService
@@ -112,7 +112,8 @@ def build_runtime(
     # Kept in its own custody: the seller signs offers, AVAL signs authorizations,
     # and neither can produce the other side of the exchange.
     merchant_custody = KeyCustodyService()
-    merchant_custody.generate_es256(MERCHANT_KID)
+    for merchant_kid in MERCHANTS.values():
+        merchant_custody.generate_es256(merchant_kid)
     psp_control = PspControl()
 
     def verify_proof_for_settlement(proof: str, reservation) -> None:

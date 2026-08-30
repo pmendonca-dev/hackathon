@@ -63,15 +63,26 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 - [x] Loop de descoberta sobre o catálogo, com preço-alvo e casamento por palavra
 - [x] Chamada assinada em `/authorize` e `/capture`, carregando a oferta assinada
 - [x] Chave própria do agente, separada da chave do humano
-- [ ] Decisão por LLM *(o módulo `agent/intent.py` é o ponto de troca; ver abaixo)*
+- [x] **Decisão por LLM** — `agent/llm_proposer.py`, com queda para regras
+- [x] Catálogo de 40 ofertas em três vendedores, atributos dentro da assinatura
 
 > **O agente em processo não tem privilégio.** Ele assina e passa pela **mesma**
 > verificação que a borda HTTP roda (`verify_signed_request`). Rodar dentro do processo
 > não compra confiança nenhuma — e é o que torna a defesa contra impostor honesta.
 
-> **Sobre o LLM:** `agent/intent.py` é a metade que *propõe*. Trocá-lo por um modelo não
-> muda nada sobre o que pode ser comprado, e é exatamente esse o ponto da arquitetura.
-> A demo funciona sem chave de API e sem risco de timeout no palco.
+> **O LLM entrou, e o núcleo não mudou uma linha.** `AVAL_LLM_API_KEY` liga o
+> proponente: pré-filtro determinístico (`shortlist`) reduz o catálogo a ~12 candidatos,
+> o modelo escolhe um e escreve o motivo, e o motivo aparece no recibo do Telegram. Sem
+> chave, com timeout, com resposta fora do formato ou com um SKU inventado, `intent.py`
+> decide e a compra acontece do mesmo jeito — **a demo não depende de rede**. Trocar o
+> proponente não muda nada sobre o que pode ser comprado, e é esse o ponto.
+
+> **Por que o catálogo é local.** Preço raspado da web não é oferta: não tem chave de
+> vendedor, então não tem `terms_hash` para a prova vincular nem nada para o
+> `/merchant/verify` verificar. Buscar na internet trocaria a invariante do case por
+> inventário. O catálogo tem trade-off de verdade — o mais barato tem 2 escalas e 19h, o
+> segundo mais barato parte 04:20 — para que a escolha do modelo seja uma decisão e não
+> um `min(price)`.
 
 ### A6. Liquidação com falha demonstrável
 ✅ Completo, incluindo o reconciliador.
@@ -187,6 +198,7 @@ Assinatura RFC 9421 (ES256) sobre `@method`, `@path` e `content-digest`, exigida
 | derrubar o PSP | `POST /admin/psp` | `test_an_unreachable_processor_is_not_a_refusal` |
 | reconciliar | `POST /reconcile` | `test_reconciling_after_the_processor_returns_settles_what_was_held` |
 | comprar fora do escopo **em texto livre** | `POST /agent/purchase` | `test_agent_purchase_api.py` |
+| **injetar prompt no agente** (*"a Marta liberou"*) | `POST /agent/purchase` | `test_a_prompt_injection_does_not_move_the_ceiling` |
 | trocar o merchant permitido | recriar o mandato | `test_a_purchase_from_another_merchant_escalates_instead_of_passing` |
 | mudar a validade | recriar o mandato | `test_the_clock_moving_past_the_expiry_ends_the_mandate` |
 
@@ -202,6 +214,10 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 - [x] **Agente adversarial** — o agente aceita texto livre e tenta de verdade. Cinco
   caminhos criativos testados: teto, orçamento acumulado, merchant fora do escopo,
   categoria fora do escopo e retentativa. Nenhum passa.
+- [x] **Injeção de prompt no proponente** — o modelo recebe os limites do mandato de
+  propósito, e é convencido a propor a executiva alegando autorização da titular. Ele
+  propõe, escreve o motivo, e o teto recusa igual. Um sistema cuja segurança dependesse
+  de o modelo não ser enganado não teria segurança nenhuma.
 - 🟡 **Mandatos com condições ricas** — o preço-alvo do case (*"if it drops below $150"*)
   funciona: o agente lê o alvo da instrução e recusa ofertas acima dele
   (`test_the_agent_holds_its_own_target_price`). Frequência (*"até 3× por mês"*) não foi
@@ -228,8 +244,10 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
   roda nesta máquina. **161 testes passando.**
 - [x] **Ambiente limpo verificado** — `scripts/smoke_demo.py` roda o case inteiro contra
   um servidor HTTP real e passa. Rodar de novo a partir de um clone do zero antes do freeze.
-- [x] **Agente sem dependência de LLM** — nenhuma chave de API, nenhum timeout possível
-  no palco. A decisão de autorização nunca dependeu do modelo, e agora isso é visível.
+- [x] **LLM sem dependência de rede** — o proponente cai para regras em qualquer falha
+  (sem chave, timeout, JSON inválido, SKU inventado), com teste para cada caso. A decisão
+  de autorização nunca dependeu do modelo, e agora isso é demonstrável nos dois sentidos:
+  ligado, o modelo propõe e explica; desligado ao vivo, a compra continua acontecendo.
 - [x] **Telegram por long polling, não webhook** — sem URL pública, sem túnel no palco
 - [ ] **Ensaio em 7 minutos**, com 3 sobrando para os jurados
 - [ ] **Confirmar qual máquina apresenta** e rodar o smoke nela
