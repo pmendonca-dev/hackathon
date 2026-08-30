@@ -54,6 +54,10 @@ class MandateView:
     expires_at: datetime
     policy_version: int
     revocation_epoch: int
+    # How often the agent may act, and how much of that window it has already used.
+    max_uses: int | None = None
+    window_seconds: int | None = None
+    uses_in_window: int = 0
     # The card the mandate names, as four digits. The token behind it is never served.
     instrument_label: str | None = None
     instrument_revoked: bool = False
@@ -118,9 +122,56 @@ class LedgerEntryView:
 
 
 @dataclass(frozen=True)
+class CardSessionView:
+    """A card registration in progress: a page to open, and an id to watch."""
+
+    session_id: str
+    url: str
+
+
+@dataclass(frozen=True)
+class AgentProfileView:
+    """Who the agent is, as an identity of its own.
+
+    The case keeps the agent's identity separate from the human's, and the two are
+    separate here down to the key: the agent signs its requests with `kid`, the person
+    signs their decisions with theirs. Neither can produce the other's signature.
+    """
+
+    agent_id: str
+    kid: str
+    trusted: bool
+    profile_url: str | None
+
+
+@dataclass(frozen=True)
+class ChainView:
+    """The hash chain behind the trail, as the core itself verified it."""
+
+    intact: bool
+    checked: int
+    broken_at: int | None
+
+
+@dataclass(frozen=True)
+class DisputeView:
+    """A denial, and what the trail answered back.
+
+    `MANDATE_HELD` means an authorization proof binds this purchase to this
+    mandate; `MANDATE_FAILED` means nothing does. The bot never picks a side —
+    it repeats the verdict the ledger produced.
+    """
+
+    id: str
+    status: str
+    resolution: str | None
+
+
+@dataclass(frozen=True)
 class ReceiptView:
     mandate: MandateView
     entries: tuple[LedgerEntryView, ...]
+    chain: ChainView | None = None
 
 
 # Paths as the running API exposes them; `GET /docs` on the instance is the live
@@ -139,7 +190,13 @@ ENDPOINTS = {
     "watches": "/agent/watches",
     "watch_tick": "/agent/watches/tick",
     "offers": "/merchant/offers",
+    "agent_profile": "/agent/profile",
+    "card_session": "/mandates/{mandate_id}/instrument/session",
+    "card_session_read": "/mandates/{mandate_id}/instrument/session/{session_id}",
+    "instrument": "/mandates/{mandate_id}/instrument",
     "disputes": "/disputes",
+    "dispute_resolution": "/disputes/{dispute_id}/resolution",
+    "ledger_verify": "/ledger/verify",
 }
 
 
@@ -168,7 +225,8 @@ class AvalGateway:
 
         Scoped by the key, exactly like revocation: this bot signs with the chat key
         that holds the mandate, so one judge's chat never reads another's — the room
-        shares a bot, never an authority.
+        shares a bot, never an authority. Without this the server answers
+        `read_authorization_required` and the bot shows an error instead of a mandate.
         """
         identity = self._identities.for_mandate(mandate_id)
         if identity is None:
@@ -223,7 +281,37 @@ class AvalGateway:
         )
         entries = [_entry(item) for item in payload.get("entries", [])]
         entries.sort(key=lambda item: item.sequence, reverse=True)
-        return ReceiptView(_mandate(payload["mandate"]), tuple(entries[:limit]))
+        return ReceiptView(_mandate(payload["mandate"]), tuple(entries[:limit]), self.verify(mandate_id))
+
+    def verify(self, mandate_id: str) -> ChainView | None:
+        """Ask the core whether its own trail still hashes.
+
+        A statement nobody checked is a claim. Returning None when the check itself
+        is unreachable keeps the receipt honest: it then says nothing rather than
+        implying an integrity it never confirmed.
+        """
+        try:
+            payload = self._call("GET", ENDPOINTS["ledger_verify"], query={"mandate_id": mandate_id})
+        except GatewayError:
+            return None
+        broken = payload.get("broken_at")
+        return ChainView(
+            intact=bool(payload.get("intact")),
+            checked=int(payload.get("checked", 0)),
+            broken_at=None if broken is None else int(broken),
+        )
+
+    def agent_profile(self) -> AgentProfileView | None:
+        try:
+            payload = self._call("GET", ENDPOINTS["agent_profile"])
+        except GatewayError:
+            return None
+        return AgentProfileView(
+            agent_id=str(payload.get("agent_id", "—")),
+            kid=str(payload.get("kid", "—")),
+            trusted=bool(payload.get("trusted")),
+            profile_url=payload.get("profile_url"),
+        )
 
     def catalogue(self) -> Sequence[OfferView]:
         payload = self._call("GET", ENDPOINTS["offers"])
@@ -248,35 +336,49 @@ class AvalGateway:
         ceiling: MoneyView | None,
         valid_for: timedelta,
         card_number: str | None = None,
+        max_uses: int | None = None,
+        usage_window: timedelta | None = None,
     ) -> tuple[str, str | None]:
         body: dict[str, Any] = {
-            "principal": {
-                "id": identity.principal_id,
-                "display_name": identity.display_name,
-            },
-            "allowed_merchant_ids": list(merchants),
-            "allowed_categories": list(categories),
-            "limit": _money_body(limit),
-            "ceiling": None if ceiling is None else _money_body(ceiling),
-            "expires_at": (datetime.now(UTC) + valid_for).isoformat(),
-            # The number is typed here and forgotten there. What comes back is a
-            # token the agent may present and four digits the holder recognises.
-            **({} if not card_number else {"payment_method": {"card_number": card_number}}),
-            # The holder key lives in this bot, so the mandate is revocable by
-            # the person who created it and by nobody else.
-            "authorities": [
-                {
-                    "id": f"ath_{identity.chat_id}",
-                    "kid": identity.kid,
-                    "role": "holder",
-                    "public_jwk": self._identities.public_jwk(identity),
-                    "allowed_scopes": ["mandate"],
-                }
-            ],
+                "principal": {
+                    "id": identity.principal_id,
+                    "display_name": identity.display_name,
+                },
+                "allowed_merchant_ids": list(merchants),
+                "allowed_categories": list(categories),
+                "limit": _money_body(limit),
+                "ceiling": None if ceiling is None else _money_body(ceiling),
+                **(
+                    {}
+                    if max_uses is None or usage_window is None
+                    else {
+                        "usage_limit": {
+                            "max_uses": max_uses,
+                            "window_seconds": int(usage_window.total_seconds()),
+                        }
+                    }
+                ),
+                "expires_at": (datetime.now(UTC) + valid_for).isoformat(),
+                # The number is typed here and forgotten there. What comes back is a
+                # token the agent may present and four digits the holder recognises.
+                **(
+                    {} if not card_number else {"payment_method": {"card_number": card_number}}
+                ),
+                # The holder key lives in this bot, so the mandate is revocable by
+                # the person who created it and by nobody else.
+                "authorities": [
+                    {
+                        "id": f"ath_{identity.chat_id}",
+                        "kid": identity.kid,
+                        "role": "holder",
+                        "public_jwk": self._identities.public_jwk(identity),
+                        "allowed_scopes": ["mandate"],
+                    }
+                ],
         }
-        # The mandate is born signed by the same chat key that will be able to revoke
-        # it. Without this the server would be taking someone's word that this chat
-        # speaks for this person — and a dispute later would have nothing to read.
+        # O mandato nasce assinado pela mesma chave do chat que podera revoga-lo.
+        # Sem isto o servidor aceitaria a palavra do bot de que este chat fala por
+        # esta pessoa, e a rota recusa com `mandate_creation_unsigned`.
         body["creation_jws"] = self._identities.sign(identity, mandate_creation_claims(body))
         payload = self._call("POST", ENDPOINTS["mandates"], body=body)
         return str(payload["mandate_id"]), payload.get("instrument_revocation_scope")
@@ -337,14 +439,88 @@ class AvalGateway:
         # An approval is not a bypass: the core re-checks everything on resume.
         return f"Aprovação registrada, mas a compra não passou: {capture.get('reason_code', 'desconhecido')}."
 
-    def open_dispute(self, identity: ChatIdentity, reservation_id: str, reason: str) -> str:
-        """A later denial, answered by the trail rather than by trust — and signed.
+    # ── card registration ──────────────────────────────────────────────────
+    def open_card_session(self, identity: ChatIdentity, mandate_id: str) -> CardSessionView:
+        """Ask AVAL for the processor's own card form. The bot never sees a number."""
+        payload = self._call(
+            "POST",
+            ENDPOINTS["card_session"].format(mandate_id=mandate_id),
+            body={
+                "authorization_jws": self._identities.sign(
+                    identity, {"mandate_id": mandate_id, "scope": "instrument_session"}
+                )
+            },
+        )
+        return CardSessionView(str(payload["session_id"]), str(payload["url"]))
 
-        The trail records this as the holder contesting a purchase and names the key that
-        did it. Sending it unsigned would put a claim about who acted into the evidence
-        an arbitration reads afterwards, which is the one place a claim must not go.
+    def read_card_session(
+        self, identity: ChatIdentity, mandate_id: str, session_id: str
+    ) -> tuple[str, str] | None:
+        """The registered card as (token, label), or None while the form is still open."""
+        payload = self._call(
+            "GET",
+            ENDPOINTS["card_session_read"].format(
+                mandate_id=mandate_id, session_id=session_id
+            ),
+            query={
+                "authorization_jws": self._identities.sign(
+                    identity, {"mandate_id": mandate_id, "scope": "instrument_session"}
+                )
+            },
+        )
+        if not payload.get("ready"):
+            return None
+        return str(payload["token"]), str(payload["label"])
+
+    def bind_instrument(
+        self,
+        identity: ChatIdentity,
+        mandate_id: str,
+        *,
+        token: str,
+        label: str,
+        supersedes: str | None,
+    ) -> str:
+        """Name the registered card on the mandate, signed by the person who registered it.
+
+        `supersedes` is the compare-and-swap: it names the card bound right now, so a
+        captured binding cannot be replayed to bring back a card already replaced.
         """
         payload = self._call(
+            "POST",
+            ENDPOINTS["instrument"].format(mandate_id=mandate_id),
+            body={
+                "token": token,
+                "label": label,
+                "authorization_jws": self._identities.sign(
+                    identity,
+                    {
+                        "mandate_id": mandate_id,
+                        "scope": "instrument",
+                        "instrument_token": token,
+                        "instrument_label": label,
+                        "supersedes": supersedes,
+                    },
+                ),
+            },
+        )
+        return str(payload["instrument_label"])
+
+    def open_dispute(
+        self, identity: ChatIdentity, reservation_id: str, reason: str
+    ) -> DisputeView:
+        """A later denial, answered by the trail rather than by trust — and signed.
+
+        Opening and resolving are one gesture here on purpose. The resolution reads
+        the ledger and nothing else, so there is nobody to wait for — leaving the
+        dispute open would only mean showing the person a promise instead of an answer.
+
+        The signature is not optional politeness: the trail records this as *"compra
+        contestada pelo titular"* and names an actor, and that sentence has to be true.
+        An unsigned dispute would put a claim about who acted into the very evidence an
+        arbitration reads months later.
+        """
+        opened = self._call(
             "POST",
             ENDPOINTS["disputes"],
             body={
@@ -355,7 +531,20 @@ class AvalGateway:
                 ),
             },
         )
-        return f"Disputa {payload.get('dispute_id', '?')} aberta ({payload.get('status', 'OPEN')})."
+        dispute_id = str(opened.get("dispute_id", ""))
+        try:
+            resolved = self._call(
+                "POST", ENDPOINTS["dispute_resolution"].format(dispute_id=dispute_id)
+            )
+        except GatewayError:
+            # Opened but unresolved is a real state, not a failure to hide: the
+            # denial is registered and the verdict is simply not in yet.
+            return DisputeView(dispute_id, str(opened.get("status", "OPEN")), None)
+        return DisputeView(
+            dispute_id,
+            str(resolved.get("status", "OPEN")),
+            resolved.get("resolution"),
+        )
 
     def revoke(self, identity: ChatIdentity, mandate_id: str, *, epoch: int, reason: str) -> str:
         token = self._identities.sign(
@@ -476,6 +665,7 @@ def _instant(value: Any) -> datetime:
 
 def _mandate(payload: Mapping[str, Any]) -> MandateView:
     ceiling = payload.get("ceiling")
+    usage = payload.get("usage_limit") or {}
     return MandateView(
         id=str(payload["mandate_id"]),
         status=str(payload["status"]),
@@ -491,6 +681,9 @@ def _mandate(payload: Mapping[str, Any]) -> MandateView:
         revocation_epoch=int(payload.get("revocation_epoch", 0)),
         instrument_label=payload.get("instrument_label"),
         instrument_revoked=bool(payload.get("instrument_revoked", False)),
+        max_uses=None if not usage else int(usage["max_uses"]),
+        window_seconds=None if not usage else int(usage["window_seconds"]),
+        uses_in_window=int(payload.get("uses_in_window", 0)),
     )
 
 

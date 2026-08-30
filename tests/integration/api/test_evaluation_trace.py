@@ -35,6 +35,9 @@ def test_an_authorized_purchase_publishes_every_check_it_passed(harness: Harness
         "revocation_readable",
         "mandate_not_revoked",
         "merchant_not_revoked",
+        # The mandate now names a card, so the ladder has a rung for it: a cancelled
+        # instrument stops the purchase before any money check is consulted.
+        "instrument_not_revoked",
         "budget_not_zeroed",
         "mandate_not_expired",
         "merchant_in_scope",

@@ -571,4 +571,50 @@ export class AuthorizationGateway {
       operator: true,
     });
   }
+  /**
+   * Put a card on a mandate the way a person does: at the processor.
+   *
+   * A mandate is born unfunded — it is authority to spend, not a means of paying — so
+   * until this runs the agent is refused with `instrument_not_in_mandate`, before any
+   * question about money is even asked. Three calls, and not one of them carries a
+   * number: open the processor's own form, read what was left on it, and name it on
+   * the mandate with the holder's signature.
+   *
+   * `sign` stays a callback because the key belongs to the wallet and this class has
+   * never held one — the same reason every other holder action here only carries a JWS
+   * it was handed.
+   */
+  async registerCard(
+    mandateId: string,
+    sign: (claims: Record<string, unknown>) => Promise<string>,
+  ): Promise<string | null> {
+    const base = `/mandates/${encodeURIComponent(mandateId)}/instrument`;
+    const sessionClaims = { mandate_id: mandateId, scope: 'instrument_session' };
+    const opened = await this.#request<{ session_id: string }>(`${base}/session`, {
+      method: 'POST',
+      body: { authorization_jws: await sign(sessionClaims) },
+    });
+    const registered = await this.#request<{ ready: boolean; token?: string; label?: string }>(
+      `${base}/session/${encodeURIComponent(opened.session_id)}` +
+        `?authorization_jws=${encodeURIComponent(await sign(sessionClaims))}`,
+    );
+    // Not ready is the normal answer while a person is still typing, not a failure.
+    if (!registered.ready || !registered.token || !registered.label) return null;
+    const bound = await this.#request<{ instrument_label: string }>(base, {
+      method: 'POST',
+      body: {
+        token: registered.token,
+        label: registered.label,
+        authorization_jws: await sign({
+          mandate_id: mandateId,
+          scope: 'instrument',
+          instrument_token: registered.token,
+          instrument_label: registered.label,
+          // Nothing to supersede: this mandate has never named a card.
+          supersedes: null,
+        }),
+      },
+    });
+    return bound.instrument_label;
+  }
 }

@@ -49,6 +49,7 @@ class DemoPspAdapter:
     ) -> None:
         self._mode_provider = mode_provider or (lambda: "online")
         self._proof_verifier = proof_verifier
+        self._setup_sessions: dict[str, str] = {}
 
     def authorize(self, reservation: Reservation, proof: str) -> SettlementResult:
         mode = self._mode_provider()
@@ -86,3 +87,39 @@ class DemoPspAdapter:
             return SettlementResult(approved=False)
         digest = hashlib.sha256(f"refund:{reservation.id}".encode("utf-8")).hexdigest()[:24]
         return SettlementResult(approved=True, reference=f"psp_refund_{digest}")
+
+    # ── card registration ──────────────────────────────────────────────────
+    #
+    # The same two calls Stripe answers, so every surface registers a card the one way:
+    # ask the processor for a page, come back with a token. Without these the offline
+    # demo had no card at all — and a mandate that names no payment method is refused
+    # at capture, so the default configuration could not complete a purchase through
+    # any interface. A demo processor with no card form is not a simpler processor,
+    # it is a processor nobody can pay with.
+    #
+    # There is no page and no number: the form is imaginary and the card is a fiction
+    # the processor mints. What is preserved is the property that matters — the token
+    # comes from the processor and the caller never names it, so nothing upstream can
+    # attach a credential its holder never registered.
+
+    def create_setup_session(self, mandate_id: str, *, return_url: str) -> dict[str, str]:
+        if self._mode_provider() == "offline":
+            raise PspUnreachable("o processador não respondeu")
+        session_id = "cs_demo_" + hashlib.sha256(mandate_id.encode("utf-8")).hexdigest()[:16]
+        # ponytail: in memory, so a restart forgets the open sessions. The card itself
+        # is on the mandate by then; a forgotten session just means opening a new one.
+        self._setup_sessions[session_id] = mandate_id
+        return {"session_id": session_id, "url": f"{return_url}?demo_session={session_id}"}
+
+    def read_setup_session(self, session_id: str, *, mandate_id: str) -> dict[str, str] | None:
+        """The card, or None for a session this mandate did not open.
+
+        The same refusal the Stripe adapter makes, and it carries more weight here:
+        this session id is derived from the mandate rather than minted at random, so
+        it is the *only* thing standing between a guessed id and somebody else's card.
+        The endpoints above it are holder-signed for that reason — a processor's
+        session id was never an entitlement, and this one is not even a secret.
+        """
+        if self._setup_sessions.get(session_id) != mandate_id:
+            return None
+        return {"token": f"vt_demo_{session_id.removeprefix('cs_demo_')}", "label": "•••• 4242"}

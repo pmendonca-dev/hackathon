@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Connection, select, update
+from sqlalchemy import Connection, delete, select, update
 from sqlalchemy.exc import IntegrityError
 
 from aval.infrastructure.sqlite.models import idempotency_records
@@ -47,6 +47,16 @@ class SqliteIdempotencyRepository:
         self._connection.execute(update(idempotency_records).where(
             idempotency_records.c.scope == scope, idempotency_records.c.idempotency_key == key
         ).values(state="COMPLETED", response_body=response_body))
+
+    def purge_expired(self, *, now: datetime) -> int:
+        """Delete only completed responses whose 24-hour replay window has ended."""
+        result = self._connection.execute(
+            delete(idempotency_records).where(
+                idempotency_records.c.state == "COMPLETED",
+                idempotency_records.c.retained_until <= now,
+            )
+        )
+        return int(result.rowcount)
 
     def consume_once(self, scope: str, key: str) -> bool:
         try:

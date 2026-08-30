@@ -25,10 +25,10 @@ export function Shell({ children }: { children: ReactNode }) {
       <aside className="border-b border-line bg-ink-900 lg:sticky lg:top-0 lg:h-screen lg:border-r lg:border-b-0">
         <div className="flex items-center justify-between border-b border-line px-5 py-5">
           <div className="flex items-center gap-3">
-            <span className="flex size-9 items-center justify-center rounded-full bg-verify font-display text-lg font-bold text-white shadow-sm">A</span>
+            <span className="flex size-9 items-center justify-center rounded-lg bg-allow font-display text-sm font-black text-ink-950">A</span>
             <div>
               <p className="font-display text-base font-bold tracking-tight">AVAL</p>
-              <p className="eyebrow mt-0.5">Cartografia da confiança</p>
+              <p className="eyebrow mt-0.5">Authorization control</p>
             </div>
           </div>
         </div>
@@ -43,7 +43,7 @@ export function Shell({ children }: { children: ReactNode }) {
                     type="button"
                     aria-current={active ? 'page' : undefined}
                     onClick={() => setView(id)}
-                    className={`group flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors ${active ? 'bg-ink-850 text-fg shadow-sm' : 'text-fg-mute hover:bg-ink-800 hover:text-fg'}`}
+                    className={`group flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors ${active ? 'bg-ink-800 text-fg' : 'text-fg-mute hover:bg-white/4 hover:text-fg'}`}
                   >
                     <Icon size={17} className={active ? 'text-allow' : ''} aria-hidden="true" />
                     <span>
@@ -73,7 +73,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <header className="sticky top-0 z-20 border-b border-line bg-ink-950/90 px-5 py-3 backdrop-blur-md sm:px-7">
           <div className="mx-auto flex max-w-[1180px] items-center justify-between gap-4">
             <div className="min-w-0">
-              <p className="eyebrow">Circuito de autorização · núcleo determinístico</p>
+              <p className="eyebrow">Lane de autorização · núcleo determinístico</p>
               <p className="mono truncate text-[11px] text-fg-mute">
                 <KeyRound size={11} className="mr-1 inline" aria-hidden="true" />
                 {holderKid ?? 'carteira do titular ainda não aberta'}

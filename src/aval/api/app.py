@@ -27,6 +27,7 @@ from aval.api.routes import (
     merchant,
     operations,
     operator,
+    telegram_chats,
 )
 from aval.api.routes.demo_rogue import create_demo_rogue_router, rogue_charges_enabled
 from aval.api.routes.demo_tamper import create_demo_tamper_router, tampering_enabled
@@ -58,8 +59,14 @@ def allowed_origins() -> list[str]:
     return named or list(DEFAULT_ORIGINS)
 
 
-def create_app(runtime: AvalRuntime | None = None) -> FastAPI:
-    app = FastAPI(title="AVAL")
+def create_app(runtime: AvalRuntime | None = None, *, lifespan=None) -> FastAPI:
+    """Build the authorization surfaces.
+
+    `lifespan` is accepted so the composition root can attach background work — the
+    standing-order scheduler — without this module learning what that work is. It has to
+    arrive at construction: FastAPI reads it when the app is built, not afterwards.
+    """
+    app = FastAPI(title="AVAL", lifespan=lifespan)
     app.state.runtime = runtime if runtime is not None else build_runtime()
 
     # The bot and the operator console are served from other origins during the demo,
@@ -137,6 +144,7 @@ def create_app(runtime: AvalRuntime | None = None) -> FastAPI:
     app.include_router(merchant.router)
     app.include_router(operations.router)
     app.include_router(operator.router)
+    app.include_router(telegram_chats.router)
     # Mounted only when explicitly enabled. A route that corrupts the audit log is
     # not something a deployment should have to remember to lock down: without the
     # flag it does not exist, and does not appear in the OpenAPI document either.

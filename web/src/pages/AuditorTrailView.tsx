@@ -51,32 +51,30 @@ export function AuditorTrailView() {
           {auditorEntries.length === 0 ? (
             <EmptyNotice title="Nada registrado" body="Selecione um mandato com atividade para ler a trilha." />
           ) : (
-            <ol className="audit-timeline">
+            <ol className="space-y-2">
               {auditorEntries.map((entry) => {
                 const broken = chain?.broken_at !== null && chain?.broken_at === entry.sequence;
                 return (
                   <li
                     key={String(entry.sequence)}
-                    className={`audit-event ${broken ? 'audit-event--broken' : ''}`}
+                    className={`rounded-lg border p-3 ${broken ? 'border-deny/50 bg-deny/8' : 'border-line bg-ink-800/40'}`}
                   >
-                    <span className="audit-sequence">#{String(entry.sequence)}</span>
-                    <div className={`rounded-xl border p-3 ${broken ? 'border-deny/50 bg-deny/8' : 'border-line bg-ink-850/70'}`}>
-                      <div className="flex flex-wrap items-baseline justify-between gap-2">
-                        <span className="flex items-center gap-2">
-                          {broken ? (
-                            <Link2Off size={13} className="text-deny" aria-hidden="true" />
-                          ) : (
-                            <Link2 size={13} className="text-verify" aria-hidden="true" />
-                          )}
-                          <span className={`mono text-[11px] ${broken ? 'text-deny' : 'text-verify'}`}>{entry.event_type}</span>
-                        </span>
-                        <span className="mono text-[10px] text-fg-mute">{formatDateTime(entry.occurred_at)}</span>
-                      </div>
-                      <p className="mt-1 text-[13px] leading-relaxed">{entry.human_summary}</p>
-                      {typeof entry.sha256 === 'string' && (
-                        <p className="mono mt-1 text-[10px] text-fg-faint">{shortHash(entry.sha256)}</p>
-                      )}
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="flex items-center gap-2">
+                        {broken ? (
+                          <Link2Off size={13} className="text-deny" aria-hidden="true" />
+                        ) : (
+                          <Link2 size={13} className="text-verify" aria-hidden="true" />
+                        )}
+                        <span className="mono text-[11px] text-fg-mute">#{String(entry.sequence)}</span>
+                        <span className="mono text-[11px] text-verify">{entry.event_type}</span>
+                      </span>
+                      <span className="mono text-[10px] text-fg-mute">{formatDateTime(entry.occurred_at)}</span>
                     </div>
+                    <p className="mt-1 text-[13px] leading-relaxed">{entry.human_summary}</p>
+                    {typeof entry.sha256 === 'string' && (
+                      <p className="mono mt-1 text-[10px] text-fg-faint">{shortHash(entry.sha256)}</p>
+                    )}
                   </li>
                 );
               })}

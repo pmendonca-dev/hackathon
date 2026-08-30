@@ -63,14 +63,18 @@ $env:ANTHROPIC_API_KEY = "..."      # sem chave, ele volta às regras sozinho
 ## Verificação limpa
 
 ```powershell
-.venv\Scripts\python.exe -m pytest -q       # 593 testes
+.venv\Scripts\python.exe -m pytest -q       # a suíte inteira, verde
 .venv\Scripts\python.exe scripts/smoke_demo.py
 
 Set-Location web
-npm test                            # 44 testes
+npm test                            # a suíte do navegador
 npm run build
 npm run lint
 ```
+
+> Os números de testes saíram destes comandos de propósito. Contagem escrita à mão
+> envelhece em silêncio, e três documentos citando três totais diferentes é pior do que
+> nenhum: o que a banca confere é a suíte verde, não o total.
 
 Com o servidor de pé, a jornada do navegador ponta a ponta:
 
@@ -92,8 +96,16 @@ passa, o jurado consegue fazer tudo no navegador.
    gerada no navegador; o servidor recebe só a metade pública. A tira lateral mostra
    qual chave está assinando — ela não rola para fora da tela.
 
+   O mandato nasce **sem meio de pagamento** — ele é autoridade para gastar, não uma
+   forma de pagar — então a mesma ação registra o cartão no processador logo em
+   seguida, em três chamadas assinadas que nunca carregam um número. O aviso de
+   sucesso diz com que cartão o mandato passou a pagar (`•••• 4242`). Se ele disser
+   *nenhum cartão registrado*, o agente vai ser recusado em `instrument_not_in_mandate`
+   antes de qualquer pergunta sobre dinheiro — e essa é a recusa certa.
+
 2. **O agente compra.** Digite *"compre um voo para Córdoba abaixo de $150"*. A escada
-   de avaliação aparece inteira: doze degraus verdes, com o orçamento no fim.
+   de avaliação aparece inteira, toda verde, com o orçamento no último degrau — que é
+   onde ele tem que estar: autoridade antes de dinheiro.
 
 3. **O agente tenta o que não pode.** *"compre a passagem executiva de $900"* → o teto
    recusa **sem** botão de aprovar. A escada mostra onde parou: `below_ceiling` em
@@ -109,31 +121,22 @@ passa, o jurado consegue fazer tudo no navegador.
 6. **O jurado derruba o processador.** A compra fica em dúvida com o orçamento retido,
    `502`, e `Reconciliar` fecha depois. Timeout não é recusa.
 
-7. **O agente compra sem ninguém pedir.** Digite *"compre um voo para Córdoba abaixo
-   de $100"*. Nada atende, e o agente **oferece** ficar vigiando — abrir uma ordem de
-   gasto permanente é decisão do titular, um toque. No console, `O preço caiu — e
-   agora?` derruba o voo para $90; em `Ordens permanentes`, `Tentar agora` e a vigília
-   dispara sozinha. É a única parte do sistema em que o comprador não é uma pessoa
-   apertando pagar. Vale mostrar depois da revogação também: a mesma vigília não
-   compra mais, porque disparar é chamar o mesmo mandato de sempre.
-
-8. **O jurado avança o relógio** e vê o mandato expirar na frente dele. O relógio só
+7. **O jurado avança o relógio** e vê o mandato expirar na frente dele. O relógio só
    avança: rebobinar reviveria um mandato expirado, e isso seria um operador devolvendo
-   autoridade de gasto. O formulário de criação se data pelo relógio do **servidor**,
-   então criar um mandato novo depois desse passo continua funcionando.
+   autoridade de gasto.
 
-9. **As três visões.** Titular, merchant e auditor. Na do merchant, o painel lado a
+8. **As três visões.** Titular, merchant e auditor. Na do merchant, o painel lado a
    lado mostra o mesmo evento nas duas projeções e a lista de campos retidos — que vem
    do servidor, não do navegador.
 
-10. **A trilha se defende.** Na visão do auditor, `Adulterar evento`. A linha continua
+9. **A trilha se defende.** Na visão do auditor, `Adulterar evento`. A linha continua
    bem formada e a cadeia acusa a posição exata. Não há botão que conserte.
 
-11. **A revogação.** Assinada no navegador, irreversível. A tentativa seguinte falha
+10. **A revogação.** Assinada no navegador, irreversível. A tentativa seguinte falha
     com `mandate_revoked`, e a escada para antes de qualquer checagem de dinheiro —
     mesmo para uma compra que também estouraria o teto.
 
-12. **O botão vermelho.** `Revogar tudo desta chave` encerra todos os mandatos que
+11. **O botão vermelho.** `Revogar tudo desta chave` encerra todos os mandatos que
     aquela chave sustenta, e nenhum outro.
 
 ## O que não fingimos

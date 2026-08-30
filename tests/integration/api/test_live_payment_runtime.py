@@ -115,7 +115,6 @@ def test_runtime_delegation_derives_live_allowance_redacts_pan_and_replays(tmp_p
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     request = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_live_1", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         _create_checkout(client, app)
@@ -136,7 +135,6 @@ def test_operational_posts_require_rfc9421_authentication(tmp_path) -> None:
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     payload = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_auth_1", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     body = json.dumps(payload, separators=(",", ":")).encode()
     with TestClient(app, base_url="https://merchant.aval.local") as client:
@@ -161,7 +159,6 @@ def test_delegate_and_capture_accept_only_the_authenticated_agent_role(tmp_path)
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     delegation = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_role_1", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_role_1")
@@ -190,7 +187,6 @@ def test_delegate_rejects_tampered_body_invalid_signature_and_impostor_profile(t
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     payload = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_auth_matrix", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     body = json.dumps(payload, separators=(",", ":")).encode()
     with TestClient(app, base_url="https://merchant.aval.local") as client:
@@ -218,7 +214,6 @@ def test_capture_and_revocation_reject_tampered_bytes_invalid_signatures_and_imp
     app = create_app(database_path=database)
     delegation = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_post_auth_1", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_post_auth_1")
@@ -269,7 +264,6 @@ def test_runtime_maps_unavailable_revocation_storage_to_503(tmp_path, monkeypatc
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     delegation = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_revocation_down", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_revocation_down")
@@ -292,7 +286,6 @@ def test_runtime_capture_settles_committed_reservation_and_replays(tmp_path) -> 
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     delegate = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_capture_1", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_capture_1")
@@ -321,7 +314,6 @@ def test_capture_rejects_caller_controlled_scope_with_the_stable_validation_enve
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     delegation = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_scope_1", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_scope_1")
@@ -342,7 +334,6 @@ def test_second_capture_with_a_new_key_is_a_stable_conflict(tmp_path) -> None:
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     delegation = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_double_1", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_double_1")
@@ -365,7 +356,6 @@ def test_capture_rejects_a_changed_ap2_envelope_reusing_the_same_idempotency_key
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     delegation = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_capture_idem_body", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_capture_idem_body")
@@ -395,7 +385,6 @@ def test_capture_rejects_missing_or_mismatched_ap2_evidence_before_settlement(tm
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     delegation = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_ap2_1", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_ap2_1")
@@ -423,7 +412,6 @@ def test_capture_rejects_invalid_ap2_signature_and_checkout_bindings_before_sett
     app = create_app(database_path=database)
     delegation = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_ap2_bindings", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_ap2_bindings")
@@ -483,7 +471,6 @@ def test_invalid_ap2_chain_creates_no_reservation_settlement_receipt_or_audit(tm
     app = create_app(database_path=database)
     delegation = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_ap2_stop", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_ap2_stop")
@@ -511,7 +498,6 @@ def test_runtime_issues_receipts_only_after_settlement_and_mounts_audit(tmp_path
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     request = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_receipt_1", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_receipt_1")
@@ -628,9 +614,16 @@ def test_revocation_rejects_unknown_authority_and_path_mismatch(tmp_path) -> Non
             profile="https://holder.aval.local/.well-known/ucp", signing_kid="holder-key",
         )
 
-    assert unknown_response.status_code == 422
+    # 403, not 422. Both refusals are about *authority*: the caller is understood, and
+    # is not allowed. A key that is not an authority on this mandate, and a token aimed
+    # at another mandate, are answers to "may you", not "is this well formed".
+    #
+    # These read 422 while the coarser of the two revocation routers was the mounted one
+    # — it funnelled every core refusal into a single status. The router that survived
+    # carries the team's own code table, and that table already said 403.
+    assert unknown_response.status_code == 403
     assert unknown_response.json() == {"detail": {"code": "revocation_authority_unknown"}}
-    assert mismatch_response.status_code == 422
+    assert mismatch_response.status_code == 403
     assert mismatch_response.json() == {"detail": {"code": "revocation_mandate_mismatch"}}
 
 
@@ -639,7 +632,6 @@ def test_revocation_before_capture_blocks_settlement(tmp_path) -> None:
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     before_delegate = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_before_revoke", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_before_revoke")
@@ -669,7 +661,6 @@ def test_revocation_after_settlement_preserves_receipt_and_blocks_future_purchas
     app = create_app(database_path=tmp_path / "runtime.sqlite3")
     first_delegate = {
         "mandate_id": "mandate_01", "checkout_session_id": "chi_settled_before_revoke", "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app, "chi_settled_before_revoke")
@@ -694,7 +685,6 @@ def test_revocation_after_settlement_preserves_receipt_and_blocks_future_purchas
         _create_checkout(client, app, "chi_blocked_after_revoke")
         future = _post_operational(client, app, "/agentic_commerce/delegate_payment", {
             "mandate_id": "mandate_01", "checkout_session_id": "chi_blocked_after_revoke", "merchant_id": "merchant_01",
-            "payment_method": {"card_number": "4242424242424242"},
         }, "delegate-after-revoke")
 
     assert capture.status_code == 201
@@ -722,7 +712,6 @@ def test_runtime_restart_preserves_signed_revocation(tmp_path) -> None:
     with TestClient(second, base_url="https://merchant.aval.local") as client:
         response = _post_operational(client, second, "/agentic_commerce/delegate_payment", {
             "mandate_id": "mandate_01", "checkout_session_id": "chi_restart_1", "merchant_id": "merchant_01",
-            "payment_method": {"card_number": "4242424242424242"},
         }, "restart-delegate")
 
     assert response.status_code == 403
@@ -743,7 +732,6 @@ def test_runtime_restart_does_not_extend_seed_mandate_expiry(tmp_path) -> None:
     with TestClient(second, base_url="https://merchant.aval.local") as client:
         response = _post_operational(client, second, "/agentic_commerce/delegate_payment", {
             "mandate_id": "mandate_01", "checkout_session_id": "chi_expiry_1", "merchant_id": "merchant_01",
-            "payment_method": {"card_number": "4242424242424242"},
         }, "expiry-delegate")
 
     assert response.status_code == 403

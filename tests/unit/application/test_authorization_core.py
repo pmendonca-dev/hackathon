@@ -9,7 +9,7 @@ from aval.application.authorization_core import (
     CaptureCommand,
     SettlementResult,
 )
-from aval.domain.entities import Mandate, Principal, RevocationAuthority
+from aval.domain.entities import Mandate, PaymentInstrument, Principal, RevocationAuthority
 from aval.domain.enums import AuthorizationDecision, MandateStatus, RevocationRole
 from aval.domain.money import Money
 from aval.security.jws import sign_compact_jws
@@ -53,6 +53,7 @@ def make_mandate(
         revocation_metadata={"revocation_id": "rev_1", "epoch": 0},
         authorities=(authority,),
         ceiling=ceiling,
+        instrument=PaymentInstrument("vt_test_instrument", "•••• 4242"),
     )
 
 
@@ -132,8 +133,8 @@ def test_capture_commits_before_calling_settlement_and_replays_idempotently():
     core = AuthorizationCore(clock=lambda: datetime.now(UTC), settlement_adapter=settlement)
     core.register_mandate(make_mandate())
 
-    first = core.capture(CaptureCommand(**command().__dict__, idempotency_key="idem_1"))
-    replay = core.capture(CaptureCommand(**command().__dict__, idempotency_key="idem_1"))
+    first = core.capture(CaptureCommand(**command().__dict__, instrument_id="vt_test_instrument", idempotency_key="idem_1"))
+    replay = core.capture(CaptureCommand(**command().__dict__, instrument_id="vt_test_instrument", idempotency_key="idem_1"))
 
     assert first.approved
     # Identical outcome, and marked as the replay it is: same reservation, same
@@ -156,7 +157,7 @@ def test_capture_issues_a_signed_authorization_proof_only_after_commit():
     )
     core.register_mandate(make_mandate(expires_at=now + timedelta(hours=1)))
 
-    result = core.capture(CaptureCommand(**command().__dict__, idempotency_key="idem_with_proof"))
+    result = core.capture(CaptureCommand(**command().__dict__, instrument_id="vt_test_instrument", idempotency_key="idem_with_proof"))
 
     assert result.approved
     assert settlement.reservation_statuses == ["COMMITTED"]
@@ -181,7 +182,7 @@ def test_revocation_before_capture_blocks_settlement():
     )
     core.submit_signed_revocation(revocation)
 
-    result = core.capture(CaptureCommand(**command().__dict__, idempotency_key="idem_1"))
+    result = core.capture(CaptureCommand(**command().__dict__, instrument_id="vt_test_instrument", idempotency_key="idem_1"))
 
     assert not result.approved
     assert result.reason_code == "mandate_revoked"
@@ -244,8 +245,8 @@ def test_a_declined_purchase_can_be_attempted_again():
     )
     core.register_mandate(make_mandate())
 
-    declined = core.capture(CaptureCommand(**command().__dict__, idempotency_key="idem_declined"))
-    retried = core.capture(CaptureCommand(**command().__dict__, idempotency_key="idem_retry"))
+    declined = core.capture(CaptureCommand(**command().__dict__, instrument_id="vt_test_instrument", idempotency_key="idem_declined"))
+    retried = core.capture(CaptureCommand(**command().__dict__, instrument_id="vt_test_instrument", idempotency_key="idem_retry"))
 
     assert not declined.approved
     assert retried.reason_code != "transaction_already_captured"
@@ -257,8 +258,8 @@ def test_a_settled_purchase_still_blocks_an_identical_second_charge():
     )
     core.register_mandate(make_mandate())
 
-    core.capture(CaptureCommand(**command().__dict__, idempotency_key="idem_first"))
-    duplicate = core.capture(CaptureCommand(**command().__dict__, idempotency_key="idem_second"))
+    core.capture(CaptureCommand(**command().__dict__, instrument_id="vt_test_instrument", idempotency_key="idem_first"))
+    duplicate = core.capture(CaptureCommand(**command().__dict__, instrument_id="vt_test_instrument", idempotency_key="idem_second"))
 
     assert duplicate.reason_code == "transaction_already_captured"
 
@@ -283,6 +284,7 @@ def make_second_mandate(public_jwk):
                 allowed_scopes=frozenset({"mandate"}),
             ),
         ),
+        instrument=PaymentInstrument("vt_test_instrument", "•••• 4242"),
     )
 
 

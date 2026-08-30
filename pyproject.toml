@@ -15,8 +15,9 @@ dependencies = [
 
 [project.optional-dependencies]
 # The agent runs on rules by default. Install this only to demonstrate a real
-# model proposing — and hallucinating — with the core still refusing it.
-llm = ["anthropic"]
+# model proposing — and hallucinating — with the core still refusing it, and a
+# real model conversing in Telegram until the mandate is fully described.
+llm = ["anthropic", "openai"]
 
 [dependency-groups]
 dev = [
@@ -33,4 +34,8 @@ packages = ["src/aval"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# The repository root travels with `src` because eight integration modules import their
+# shared harness as `tests.integration.api.conftest`. Without it pytest puts only the
+# module's own directory on the path — `tests` is not a package — and those eight fail
+# to collect, which aborts the whole run before a single test executes.
+pythonpath = ["src", "."]

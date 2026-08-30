@@ -94,8 +94,10 @@ class Mandate:
     authorities: tuple[RevocationAuthority, ...]
     ceiling: Money | None = None
     usage_limit: UsageLimit | None = None
-    # None means the mandate names no payment method and accepts any, which is what
-    # every mandate written before instruments existed meant.
+    # None means the mandate names no payment method, and so cannot pay for anything:
+    # a capture against it is refused. Authority to spend is not a means of payment,
+    # and letting the absence of one stand for "any card will do" is how a mandate
+    # nobody funded ends up settling a charge.
     instrument: PaymentInstrument | None = None
     status: MandateStatus = MandateStatus.ACTIVE
 

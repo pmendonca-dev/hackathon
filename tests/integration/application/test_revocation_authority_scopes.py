@@ -86,10 +86,25 @@ def test_holder_accepts_each_registered_canonical_scope(tmp_path, scope):
     core.submit_signed_revocation(_token(custody, "holder", scope))
 
 
-def test_holder_rejects_malformed_registered_instrument_scope(tmp_path):
+def test_holder_rejects_an_instrument_scope_that_names_no_credential(tmp_path):
     core, custody, _ = _core_with_authorities(
-        tmp_path, (("holder", RevocationRole.HOLDER, frozenset({"instrument:card_123"})),)
+        tmp_path, (("holder", RevocationRole.HOLDER, frozenset({"instrument:"})),)
     )
 
     with pytest.raises(ValueError, match="invalid revocation scope"):
-        core.submit_signed_revocation(_token(custody, "holder", "instrument:card_123"))
+        core.submit_signed_revocation(_token(custody, "holder", "instrument:"))
+
+
+def test_holder_cancels_a_card_whatever_processor_minted_it(tmp_path):
+    """This used to demand a `vt_` prefix — the demo tokenizer's own shape.
+
+    A card vaulted at a real processor comes back as `pm_...`, so the rule meant a
+    mandate could name that card and the holder could then never cancel it: their
+    signed revocation was refused as malformed. What a payment credential looks like
+    is the tokenizer's business, never the core's.
+    """
+    core, custody, _ = _core_with_authorities(
+        tmp_path, (("holder", RevocationRole.HOLDER, frozenset({"instrument:pm_1ABCxyz"})),)
+    )
+
+    core.submit_signed_revocation(_token(custody, "holder", "instrument:pm_1ABCxyz"))

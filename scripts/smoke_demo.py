@@ -15,7 +15,15 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-import httpx
+# The project depends on httpx2 — the 2.x line, published under its own name, and what
+# both `anthropic` and Starlette's TestClient pull in. This script asked for `httpx` and
+# so could not run at all on a clean clone, which is the worst place for that to happen:
+# it is the rehearsal for the trial by fire. The fallback keeps a clone that installed
+# the 0.x line working, and only `Client` is used, which both provide.
+try:
+    import httpx2 as httpx
+except ModuleNotFoundError:  # pragma: no cover - depends on what the clone installed
+    import httpx
 
 from aval.security.jws import sign_compact_jws
 from aval.security.mandate_creation import mandate_creation_claims
@@ -73,6 +81,53 @@ class Smoke:
         key, so the id alone stopped being enough to read a person's budget."""
         return sign_compact_jws({"principal_id": "usr_marta"}, self.custody, HOLDER_KID)
 
+    def sign(self, claims: dict) -> str:
+        return sign_compact_jws(claims, self.custody, HOLDER_KID)
+
+    def register_card(self, mandate_id: str) -> str:
+        """Put a card on the mandate the way a person does: at the processor.
+
+        A mandate is born unfunded — it is authority to spend, not a means of paying —
+        and the core refuses a capture whose instrument the mandate does not name. So
+        the card is registered before anything is bought, in three calls that never
+        carry a number: open the processor's form, read what was left on it, and name
+        it on the mandate with the holder's own signature.
+        """
+        session_scope = {"mandate_id": mandate_id, "scope": "instrument_session"}
+        session = self.client.post(
+            f"/mandates/{mandate_id}/instrument/session",
+            json={"authorization_jws": self.sign(session_scope)},
+        )
+        session.raise_for_status()
+        session_id = session.json()["session_id"]
+        card = self.client.get(
+            f"/mandates/{mandate_id}/instrument/session/{session_id}",
+            params={"authorization_jws": self.sign(session_scope)},
+        )
+        card.raise_for_status()
+        registered = card.json()
+        if not registered.get("ready"):
+            return ""
+        bound = self.client.post(
+            f"/mandates/{mandate_id}/instrument",
+            json={
+                "token": registered["token"],
+                "label": registered["label"],
+                "authorization_jws": self.sign(
+                    {
+                        "mandate_id": mandate_id,
+                        "scope": "instrument",
+                        "instrument_token": registered["token"],
+                        "instrument_label": registered["label"],
+                        # Nothing to supersede: this mandate has never named a card.
+                        "supersedes": None,
+                    }
+                ),
+            },
+        )
+        bound.raise_for_status()
+        return bound.json()["instrument_label"]
+
     def buy(self, mandate_id: str, instruction: str) -> dict:
         return self.client.post(
             "/agent/purchase", json={"mandate_id": mandate_id, "instruction": instruction}
@@ -84,6 +139,16 @@ class Smoke:
 
         mandate_id = self.create_mandate()
         self.check("mandate created", mandate_id.startswith("mandate_"), mandate_id)
+
+        unfunded = self.buy(mandate_id, "compre um voo para Córdoba abaixo de $150")
+        self.check(
+            "a mandate with no card cannot pay",
+            unfunded["reason_code"] == "instrument_not_in_mandate",
+            unfunded["reason_code"],
+        )
+
+        label = self.register_card(mandate_id)
+        self.check("the card is registered at the processor", label.startswith("••••"), label)
 
         bought = self.buy(mandate_id, "compre um voo para Córdoba abaixo de $150")
         self.check(

@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from aval.application.authorization_core import AuthorizationCore, CaptureCommand
-from aval.domain.entities import Mandate, Principal, RevocationAuthority
+from aval.domain.entities import Mandate, PaymentInstrument, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
 from aval.infrastructure.sqlite.engine import create_sqlite_engine
@@ -18,12 +18,12 @@ def test_capture_appends_an_audit_event_in_the_core(tmp_path):
     mandate = Mandate(
         "m1", Principal("p1", "Marta"), frozenset({"merchant"}), frozenset({"travel"}), Money(1_000, "BRL", 2),
         datetime(2026, 8, 30, tzinfo=UTC), 1, {"revocation_id": "r1", "epoch": 0},
-        (RevocationAuthority("a1", "holder", RevocationRole.HOLDER, {"kty": "EC", "crv": "P-256", "x": "x", "y": "y"}, frozenset({"mandate"})),),
+        (RevocationAuthority("a1", "holder", RevocationRole.HOLDER, {"kty": "EC", "crv": "P-256", "x": "x", "y": "y"}, frozenset({"mandate"})),), instrument=PaymentInstrument("vt_test_instrument", "•••• 4242"),
     )
     core = AuthorizationCore(clock=lambda: datetime(2026, 8, 29, tzinfo=UTC), engine=engine)
     core.register_mandate(mandate)
 
-    core.capture(CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "travel", "idem"))
+    core.capture(CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "travel", "idem", instrument_id="vt_test_instrument"))
 
     with engine.connect() as connection:
         events = connection.execute(select(audit_events)).mappings().all()

@@ -24,7 +24,11 @@ import {
   type View,
 } from './AvalContext.ts';
 
-const environment = import.meta.env;
+// Read one variable at a time, never the object. `const environment = import.meta.env`
+// makes Vite inline the *whole* env record at that position, so every VITE_* value
+// present at build time ships — including `VITE_AVAL_OPERATOR_TOKEN`, which switches
+// off the processor, moves the demo clock and, with tampering on, corrupts the trail.
+// A named member access is replaced with just that value, and nothing else follows it.
 
 /**
  * Built once, outside render. It holds the base URL and, once a judge opens one, the
@@ -43,10 +47,10 @@ const environment = import.meta.env;
  * nothing is listening. The variable stays for `vite dev`, which does run on two ports.
  */
 const DEFAULT_GATEWAY = new AuthorizationGateway({
-  baseUrl: environment.VITE_AVAL_API_BASE_URL ?? '',
+  baseUrl: import.meta.env.VITE_AVAL_API_BASE_URL ?? '',
 });
 
-const DEFAULT_PRINCIPAL = environment.VITE_AVAL_PRINCIPAL_ID ?? 'usr_marta';
+const DEFAULT_PRINCIPAL = import.meta.env.VITE_AVAL_PRINCIPAL_ID ?? 'usr_marta';
 
 function describe(error: unknown): { reasonCode: string | null; message: string } {
   if (error instanceof GatewayError) return { reasonCode: error.reasonCode, message: error.message };
@@ -314,7 +318,16 @@ export function AvalProvider({
             creation_jws: await signCompactJws(mandateCreationClaims(terms), holder),
           });
           setSelectedMandateId(created.mandate_id);
-          return `Mandato ${created.mandate_id} criado na versão de política ${created.policy_version}.`;
+          // O mandato nasce sem fundo: autoridade para gastar, e nenhum meio de pagar.
+          // Registrar o cartão aqui mantém isso como uma ação só para a pessoa, e as
+          // três chamadas que ele custa são assinadas por esta chave como todo o resto.
+          const card = await gateway.registerCard(created.mandate_id, (claims) =>
+            signCompactJws(claims, holder),
+          );
+          return (
+            `Mandato ${created.mandate_id} criado na versão de política ${created.policy_version}` +
+            (card ? `, pagando com ${card}.` : '. Nenhum cartão registrado: ele ainda não pode pagar.')
+          );
         });
         if (accepted) await reload();
       },

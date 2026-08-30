@@ -16,22 +16,83 @@ falta é o **mandato** — a autorização verificável que uma pessoa dá ao se
 
 Requer Python 3.12 ou 3.13.
 
+O ensaio formal em ambiente limpo — clone do zero, migration e inspeção do browser —
+fica em [clean-environment-rehearsal](docs/verification/clean-environment-rehearsal.md).
+Ele é o gate antes da entrega; o que vem abaixo é o caminho curto para rodar.
+
+O caminho curto usa [uv](https://docs.astral.sh/uv/), que é o que o
+[roteiro da demo](docs/demo-runbook.md) também usa:
+
 ```bash
 git clone https://github.com/pmendonca-dev/hackathon.git
 cd hackathon
 
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -e .     # Windows
-# source .venv/bin/activate && pip install -e .  # Linux/macOS
-
-.venv/Scripts/python.exe -m pip install pytest httpx uvicorn
-.venv/Scripts/python.exe -m pytest -q             # 535 testes
-
-AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe -m uvicorn aval.main:app --port 8099
+uv run pytest -q
+uv run alembic upgrade head
+AVAL_OPERATOR_TOKEN=demo-token uv run uvicorn aval.main:app --port 8099
 ```
 
+<details>
+<summary>Sem <code>uv</code>, com venv e pip</summary>
+
+O empacotamento é hatchling, então a instalação editável exige um pip com
+[PEP 660](https://peps.python.org/pep-0660/) — atualize antes ou o `-e .` falha com
+*"editable mode currently requires a setuptools-based build"*.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate                        # Linux/macOS
+# .venv/Scripts/activate                         # Windows
+
+python -m pip install -U pip
+python -m pip install -e . pytest httpx2      # httpx2, não httpx: é o que o
+                                              # TestClient do Starlette 1.6 usa
+
+python -m pytest -q
+python -m alembic upgrade head
+AVAL_OPERATOR_TOKEN=demo-token python -m uvicorn aval.main:app --port 8099
+```
+
+</details>
+
 **O modelo é opcional.** Sem chave, o agente decide por regras e tudo funciona. Com
-chave, quem escolhe a oferta é um LLM — e nada mais no sistema muda:
+chave, quem escolhe a oferta é um LLM — e nada mais no sistema muda. São **duas**
+variáveis: uma diz que o time quer o modelo, a outra que existe um alcançável.
+Defaultar para o outro lado faria um clone limpo depender de uma conta para rodar o case.
+
+```bash
+uv sync --extra llm                      # instala o cliente `anthropic`
+
+export AVAL_LLM_AGENT=1                  # obrigatória: liga o proponente por modelo
+export ANTHROPIC_API_KEY=sk-ant-...      # obrigatória (ou ANTHROPIC_AUTH_TOKEN)
+export AVAL_LLM_MODEL=claude-opus-5      # opcional; este é o padrão
+export AVAL_LLM_TIMEOUT_SECONDS=8        # opcional; estourou, as regras assumem
+```
+
+O bot do Telegram tem o par equivalente para a *conversa* que monta o mandato —
+`AVAL_TELEGRAM_LLM=1` mais `OPENAI_API_KEY`. Tudo está em [`.env.example`](.env.example),
+que é a lista completa e a que vale.
+
+A **vigília** — a ordem permanente que compra sozinha quando o preço cai — só é
+avaliada quando alguém pede um tick. Por padrão quem pede é o bot do Telegram, no laço
+de polling dele. Para que o servidor faça isso por conta própria, sem bot:
+
+```bash
+export AVAL_WATCH_TICK_SECONDS=30   # desligado quando ausente
+```
+
+A vigília não ganha autoridade nenhuma com isso: disparar significa chamar o mesmo
+`/authorize` e `/capture` de sempre, então uma ordem permanente contra um mandato
+revogado é recusada igualzinho. A autonomia está em *quando* o agente age, nunca no
+*que* ele pode fazer.
+
+`AVAL_OPERATOR_TOKEN` protege as superfícies de operador (`/agents`, `/admin/psp`,
+`/reconcile`). **Sem ela essas superfícies ficam desligadas** — nenhum token apresentado
+confere, e toda chamada é recusada com `403 operator_token_invalid`. A instância nasce
+fechada, não aberta, e nunca sorteia uma credencial para você.
+
+**O modelo é opcional.** Sem chave, o agente decide por regras e tudo funciona.
+Com chave, quem escolhe a oferta é um LLM — e nada mais no sistema muda:
 
 ```bash
 export AVAL_LLM_AGENT=1                # o time quer o modelo
@@ -50,12 +111,11 @@ inteiro sem conta e sem rede.
 uma credencial ausente recusa como uma credencial errada. A instância nasce fechada,
 não aberta.
 
-Documentação interativa da API em <http://127.0.0.1:8099/docs>.
 
 Com o servidor de pé, em outro terminal:
 
 ```bash
-AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe scripts/smoke_demo.py http://127.0.0.1:8099
+AVAL_OPERATOR_TOKEN=demo-token uv run python scripts/smoke_demo.py http://127.0.0.1:8099
 ```
 
 O smoke percorre o case inteiro — mandato, compra, escalação com aprovação assinada,
@@ -109,9 +169,12 @@ Para conferir a jornada inteira sem clicar, com o servidor de pé:
 cd web && AVAL_OPERATOR_TOKEN=demo-token   node --experimental-strip-types tests/live-browser-journey.mjs http://127.0.0.1:8099
 ```
 
+`x402` não faz parte desta entrega. Não adicione Web3, cadeia ou facilitator ao caminho
+de demonstração.
+
 ---
 
-## O circuito completo, em sete chamadas
+## O circuito completo, em oito chamadas
 
 ```bash
 # 1. Marta cria o mandato: voos, até $200, teto de $500, na VuelaYa
@@ -126,20 +189,33 @@ curl -X POST localhost:8099/mandates -H 'content-type: application/json' -d '{
                    "public_jwk": {"kty":"EC","crv":"P-256","kid":"usr_marta_k1","x":"...","y":"..."},
                    "allowed_scopes": ["mandate"]}]}'
 
-# 2. O agente descobre, decide e paga
+# 2. O cartão. O mandato nasce SEM meio de pagamento — ele é autoridade para gastar,
+#    e o núcleo recusa uma captura cujo instrumento o mandato não nomeia. O número é
+#    digitado na página do processador; o que volta é um token. Três chamadas, todas
+#    assinadas pelo titular, e nenhuma delas carrega um PAN.
+curl -X POST localhost:8099/mandates/mandate_.../instrument/session \
+  -H 'content-type: application/json' \
+  -d '{"authorization_jws": "<JWS sobre {mandate_id, scope:\"instrument_session\"}>"}'
+curl "localhost:8099/mandates/mandate_.../instrument/session/<session_id>?authorization_jws=<o mesmo JWS>"
+curl -X POST localhost:8099/mandates/mandate_.../instrument -H 'content-type: application/json' \
+  -d '{"token": "<token do processador>", "label": "•••• 4242",
+       "authorization_jws": "<JWS sobre {mandate_id, scope:\"instrument\", instrument_token,
+                              instrument_label, supersedes: null}>"}'
+
+# 3. O agente descobre, decide e paga
 curl -X POST localhost:8099/agent/purchase -H 'content-type: application/json' \
   -d '{"mandate_id": "mandate_...", "instruction": "compre um voo para Córdoba abaixo de $150"}'
 
-# 3. O merchant verifica a compra que recebeu
+# 4. O merchant verifica a compra que recebeu
 curl -X POST localhost:8099/merchant/verify -H 'content-type: application/json' \
   -d '{"authorization_proof": "...", "merchant_authorization": "..."}'
 
-# 4. As três visões da mesma verdade
+# 5. As três visões da mesma verdade
 curl "localhost:8099/ledger?mandate_id=mandate_...&view=human"
 curl "localhost:8099/ledger?merchant_id=vuelaya&view=merchant"
 curl "localhost:8099/ledger?mandate_id=mandate_...&view=auditor"
 
-# 5. Um jurado muda o limite — vale na próxima decisão, sem restart.
+# 6. Um jurado muda o limite — vale na próxima decisão, sem restart.
 #    Exige JWS do titular sobre
 #    {mandate_id, limit_minor_units, currency, scale, policy_version}:
 #    mudar o orçamento é mudar autoridade de gasto, e isso é do dono do mandato.
@@ -149,11 +225,11 @@ curl -X PATCH localhost:8099/mandates/mandate_.../limit -H 'content-type: applic
   -d '{"limit": {"minor_units": 10000, "currency": "USD", "scale": 2},
        "authorization_jws": "<JWS ES256 assinado pela chave da Marta>"}'
 
-# 6. Revogação assinada — irreversível
+# 7. Revogação assinada — irreversível
 curl -X POST localhost:8099/mandates/mandate_.../revocation -H 'content-type: application/json' \
   -d '{"token": "<JWS ES256 assinado pela chave da Marta>"}'
 
-# 7. A trilha se verifica sozinha
+# 8. A trilha se verifica sozinha
 curl "localhost:8099/ledger/verify?mandate_id=mandate_..."
 ```
 
@@ -166,8 +242,11 @@ curl "localhost:8099/ledger/verify?mandate_id=mandate_..."
 `AuthorizationCore.evaluate()` avalia em ordem fixa, e a ordem é a regra:
 
 ```
-mandato existe → não revogado → não expirado → merchant no escopo → categoria no escopo
-              → moeda e escala conferem → valor > 0 → abaixo do TETO → dentro do ORÇAMENTO
+mandato existe → revogação legível → não revogado → merchant não revogado
+              → cartão não cancelado → orçamento não zerado → não expirado
+              → merchant no escopo → categoria no escopo → é o cartão do mandato
+              → moeda e escala conferem → valor > 0 → abaixo do TETO
+              → há vaga de reserva → dentro da frequência → dentro do ORÇAMENTO
 ```
 
 Autoridade antes de dinheiro. Uma revogação não pode ser contornada por uma compra
@@ -574,12 +653,18 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
   que ninguém pediu. O agente tem uma terceira saída além de propor e não achar: ele
   pergunta, e a resposta é um toque nos mesmos botões de sempre. **Ambiguidade pergunta,
   mandato recusa** — dois freios, em duas coisas diferentes.
-- **O mandato nomeia o cartão, e o cartão pode ser cancelado sozinho.** O número é
-  lido uma vez na criação do mandato, tokenizado na borda e esquecido; o mandato guarda
-  um token e quatro dígitos. O agente apresenta o token e nunca viu o cartão, e o núcleo
-  recusa uma captura que apresente outro — ou nenhum. Cancelar o cartão **não** revoga o
-  mandato: o agente continua autorizado a decidir e fica sem com o que pagar, o que é
-  uma recusa diferente e um botão diferente.
+- **O mandato nasce sem cartão, e o cartão é registrado no processador.** Um mandato é
+  autoridade para gastar; o meio de pagamento é da pessoa. Ela é mandada para a página
+  do próprio processador e volta com um token e quatro dígitos — o número não passa por
+  aqui em requisição nenhuma. Vincular é assinado pelo titular, com compare-and-swap
+  sobre o cartão anterior, porque escolher o cartão é escolher de quem é o dinheiro.
+  O agente apresenta o token e nunca viu o cartão, e o núcleo recusa uma captura que
+  apresente outro — ou nenhum. Cancelar o cartão **não** revoga o mandato: o agente
+  continua autorizado a decidir e fica sem com o que pagar, o que é uma recusa diferente
+  e um botão diferente. O processador de demonstração responde as mesmas duas chamadas
+  que a Stripe, com um cartão fictício, para que a demo offline registre um cartão pelo
+  mesmo caminho que a real — um processador sem formulário não é mais simples, é um
+  processador com o qual ninguém consegue pagar.
 - **O catálogo é local e assinado, não raspado da web.** Preço raspado não é oferta: sem
   assinatura do vendedor não há `terms_hash` para a autorização vincular nem nada para o
   merchant verificar. Integração real é trocar `merchant/catalog.py` por um cliente HTTP,
@@ -599,7 +684,9 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
 
 ## Referências
 
-- [Diagrama de arquitetura](docs/architecture.md) — a tese em cinco diagramas
+- [Arquitetura](docs/architecture.pdf) — a tese em seis diagramas, 9 páginas
+  (a página que gera o PDF é [`docs/architecture.html`](docs/architecture.html); a
+  versão para ler no GitHub é [`docs/architecture.md`](docs/architecture.md))
 - [Modelo de segurança](docs/security-model.md) — quem pode o quê, e como é provado
 - [Roteiro da demo](docs/demo-runbook.md) — como subir tudo e o que mostrar, na ordem
 - [Regras, entregáveis e avaliação](docs/hackathon-rules.md)

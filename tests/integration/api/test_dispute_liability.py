@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from aval.domain.entities import Mandate, Principal, RevocationAuthority
+from aval.domain.entities import Mandate, PaymentInstrument, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
 from aval.security.jws import sign_compact_jws
@@ -140,8 +140,14 @@ def test_a_mandate_with_no_holder_signature_cannot_refute_repudiation(harness):
                     allowed_scopes=frozenset({"mandate"}),
                 ),
             ),
+            # Authority to spend is not a means of paying, and the core stopped letting
+            # a mandate that names no card settle one. The card is what makes this
+            # mandate reach a purchase at all; what it still lacks — on purpose — is a
+            # signature over its own genesis, which is the thing under test.
+            instrument=PaymentInstrument(token="pm_unsigned_genesis", label="•••• 4242"),
         )
     )
+    harness.instruments[mandate_id] = "pm_unsigned_genesis"
     reservation_id = buy(harness, mandate_id).json()["reservation_id"]
 
     verdict = dispute(harness, reservation_id)["liability"]

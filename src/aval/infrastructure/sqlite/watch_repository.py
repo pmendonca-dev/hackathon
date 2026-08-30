@@ -61,6 +61,21 @@ class SqliteWatchRepository:
             if watch.status is WatchStatus.OPEN
         ]
 
+    def mandates_with_open_watches(self) -> list[str]:
+        """Which mandates still have something being watched for.
+
+        The only query in this repository that is not scoped to one mandate, and it
+        deliberately returns ids and nothing else: it exists so a scheduler knows where
+        to look, and a scheduler has no business reading what anyone asked to buy.
+        """
+        rows = self._connection.execute(
+            select(agent_watches.c.mandate_id)
+            .where(agent_watches.c.status == WatchStatus.OPEN.value)
+            .distinct()
+            .order_by(agent_watches.c.mandate_id)
+        ).all()
+        return [row[0] for row in rows]
+
     def close(
         self,
         watch_id: str,

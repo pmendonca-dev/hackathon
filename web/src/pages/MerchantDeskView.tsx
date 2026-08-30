@@ -22,7 +22,7 @@ export function MerchantDeskView() {
       <header className="page-heading">
         <div>
           <p className="eyebrow">Visão do merchant · {merchantId}</p>
-          <h1>Eu recebo uma prova da compra, não a pessoa por trás dela.</h1>
+          <h1>Verifiquei que a compra é legítima sem saber quem comprou.</h1>
           <p>
             A prova de autorização vincula checkout, merchant, valor, moeda e termos — e
             omite o mandato e o comprador. Aceitar não exige conhecê-los.
@@ -30,12 +30,6 @@ export function MerchantDeskView() {
         </div>
         <Badge tone="verify">SEM IDENTIDADE DO COMPRADOR</Badge>
       </header>
-
-      <section className="merchant-envelope" aria-label="Fluxo de verificação do merchant">
-        <div><span>01</span><strong>Oferta assinada</strong><p>Termos, valor e merchant chegam vinculados.</p></div>
-        <div><span>02</span><strong>Prova verificável</strong><p>AVAL confirma a autorização sem abrir o mandato.</p></div>
-        <div><span>03</span><strong>Identidade protegida</strong><p>O merchant nunca recebe titular, orçamento ou chave.</p></div>
-      </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
         <Panel eyebrow="O que eu recebo" title="Projeção do merchant" action={<Store size={18} className="text-verify" aria-hidden="true" />}>

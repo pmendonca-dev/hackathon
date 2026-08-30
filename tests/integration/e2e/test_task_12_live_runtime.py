@@ -148,7 +148,6 @@ class RuntimeHttp:
                 "mandate_id": "mandate_01",
                 "checkout_session_id": checkout_id,
                 "merchant_id": merchant_id,
-                "payment_method": {"card_number": "4242424242424242"},
             },
             key,
         )
@@ -277,7 +276,6 @@ def test_delegation_and_capture_without_rfc9421_are_rejected(tmp_path) -> None:
                 "mandate_id": "mandate_01",
                 "checkout_session_id": "chi_unsigned",
                 "merchant_id": "merchant_01",
-                "payment_method": {"card_number": "4242424242424242"},
             },
             headers={"Idempotency-Key": "unsigned-delegation"},
         )
@@ -488,7 +486,6 @@ def test_impostor_invalid_signature_and_raw_body_tampering_are_rejected(tmp_path
         "mandate_id": "mandate_01",
         "checkout_session_id": "chi_auth_attacks",
         "merchant_id": "merchant_01",
-        "payment_method": {"card_number": "4242424242424242"},
     }
     canonical = json.dumps(payload, separators=(",", ":")).encode()
 

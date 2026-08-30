@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import Any
 import base64
 import json
+import threading
+import time
 import urllib.error
 
 import pytest
 
 from aval.agent.intent import fold, parse_intent
-from aval.interfaces.telegram import views
+from aval.interfaces.telegram import conversation, views
 from aval.interfaces.telegram.bot import Bot, TelegramApi, _display_name
 from aval.interfaces.telegram.config import BotConfig, ConfigError
 from aval.interfaces.telegram.gateway import AvalGateway, GatewayError, MoneyView
@@ -36,16 +38,29 @@ class FakeAval:
         self.received: list[tuple[str, dict[str, Any]]] = []
         self.verified_claims: list[dict[str, Any]] = []
         self.disputes: list[dict[str, Any]] = []
+        # What the trail answers when a purchase is denied, and whether the chain
+        # still hashes. Both are knobs because both are what a judge comes to break.
+        self.card_sessions: list[str] = []
+        self.bindings: list[dict[str, Any]] = []
+        self.card_ready = False
+        self.card_token = "pm_test_1"
+        self.dispute_status = "MANDATE_HELD"
+        self.chain_intact = True
         self.watches: dict[str, dict[str, Any]] = {}
         # What Córdoba costs right now. The judge's price knob moves this.
         self.cordoba_price = 13000
         self.offline = False
+        self.hold: "threading.Event | None" = None
         self._sequence = 0
 
     # transport ------------------------------------------------------------
     def opener(self, request, timeout=None):  # noqa: ANN001 - urlopen shape
         if self.offline:
             raise OSError("connection refused")
+        if self.hold is not None and "/agent/purchase" in request.full_url:
+            # A slow merchant call, held open on purpose: what a judge's tap runs into
+            # while somebody else's purchase is still in flight.
+            self.hold.wait(timeout=10)
         path = request.full_url.split("127.0.0.1:9000", 1)[1]
         body = json.loads(request.data) if request.data else {}
         status, payload = self._route(request.get_method(), path, body)
@@ -61,6 +76,13 @@ class FakeAval:
         self.received.append((f"{method} {route}", body))
         if route == "/health":
             return 200, {"status": "ok"}
+        if route == "/agent/profile":
+            return 200, {
+                "agent_id": "agt_marta",
+                "kid": "agent-demo",
+                "trusted": True,
+                "profile_url": "https://aval.demo/agents/agt_marta",
+            }
         if route == "/merchant/offers":
             return 200, {
                 "offers": [
@@ -71,6 +93,31 @@ class FakeAval:
             }
         if route == "/mandates" and method == "POST":
             return 201, self._create_mandate(body)
+        if route.endswith("/instrument/session") and method == "POST":
+            mandate_id = route.split("/")[2]
+            self.card_sessions.append(mandate_id)
+            return 200, {"session_id": "cs_test_1", "url": "https://checkout.stripe.test/cs_test_1"}
+        if "/instrument/session/" in route and method == "GET":
+            if not self.card_ready:
+                return 200, {"ready": False}
+            return 200, {"ready": True, "token": self.card_token, "label": "•••• 4242"}
+        if route.endswith("/instrument") and method == "POST":
+            mandate_id = route.split("/")[2]
+            mandate = self.mandates[mandate_id]
+            # The real endpoint refuses an unsigned binding, so the fake verifies too:
+            # a bot that stopped signing would otherwise pass every test here.
+            claims = self._verify(mandate_id, body["authorization_jws"])
+            if claims.get("supersedes") != (
+                (mandate.get("_instrument_scope") or "").removeprefix("instrument:") or None
+            ):
+                return 403, {"reason_code": "instrument_binding_stale"}
+            self.bindings.append(body)
+            mandate["instrument_label"] = body["label"]
+            mandate["_instrument_scope"] = f"instrument:{body['token']}"
+            return 200, {
+                "instrument_label": body["label"],
+                "instrument_revocation_scope": f"instrument:{body['token']}",
+            }
         if route.startswith("/mandates/") and route.endswith("/revocation"):
             return self._revoke(route.split("/")[2], body)
         if route.startswith("/mandates/") and route.endswith("/limit"):
@@ -134,6 +181,25 @@ class FakeAval:
             self._verify(owner, token)
             self.disputes.append(body)
             return 201, {"dispute_id": "dsp_1", "status": "OPEN", "reason": body["reason"]}
+        if route.startswith("/disputes/") and route.endswith("/resolution"):
+            held = self.dispute_status == "MANDATE_HELD"
+            return 200, {
+                "dispute_id": route.split("/")[2],
+                "status": self.dispute_status,
+                "resolution": (
+                    "Prova jti_1 vincula merchant vuelaya, valor 13000 e terms_hash th_1."
+                    if held
+                    else "Nenhuma prova de autorização vincula esta compra."
+                ),
+            }
+        if route == "/ledger/verify":
+            if params.get("mandate_id") not in self.mandates:
+                return 404, {"reason_code": "mandate_not_found"}
+            return 200, {
+                "intact": self.chain_intact,
+                "checked": 3,
+                "broken_at": None if self.chain_intact else 2,
+            }
         if route == "/agent/purchase":
             return self._purchase(body)
         if route == "/agent/watches" and method == "POST":
@@ -168,6 +234,8 @@ class FakeAval:
             "expires_at": body["expires_at"],
             "policy_version": 1,
             "revocation_epoch": 0,
+            "usage_limit": body.get("usage_limit"),
+            "uses_in_window": 0,
             "_jwk": body["authorities"][0]["public_jwk"],
         }
         scope = None
@@ -417,9 +485,9 @@ class FakeApi:
         return latest.text
 
 
-@pytest.fixture
-def world(tmp_path: Path):
-    aval = FakeAval()
+def _build(tmp_path: Path, aval: "FakeAval"):
+    """One bot process. Called twice by the restart test, which is the whole point:
+    everything a restart may not forget has to live in the identity file."""
     config = BotConfig.from_env(
         {
             "TELEGRAM_BOT_TOKEN": "t",
@@ -432,6 +500,17 @@ def world(tmp_path: Path):
     gateway = AvalGateway("http://127.0.0.1:9000", identities=identities, opener=aval.opener)
     api = FakeApi()
     return Bot(config, gateway, identities, api), api, aval, identities
+
+
+@pytest.fixture
+def world(tmp_path: Path):
+    return _build(tmp_path, FakeAval())
+
+
+@pytest.fixture
+def restart(tmp_path: Path):
+    """Boot a second bot over the same identity file and the same server."""
+    return lambda aval: _build(tmp_path, aval)
 
 
 def message(text: str, chat_id: int = MARTA, first_name: str = "Marta") -> dict:
@@ -903,14 +982,92 @@ def test_a_revoked_mandate_offers_no_way_to_buy(world) -> None:
     assert not any("comprar" in label.lower() for label in labels)
 
 
-def test_start_names_a_payment_method_the_holder_can_recognise(world) -> None:
-    """The case's fourth mandate field, on screen and never as a card number."""
+def test_start_issues_a_mandate_that_cannot_pay_for_anything_yet(world) -> None:
+    """The case's fourth field is the person's to fill, and it starts empty.
+
+    A mandate born naming a card out of the environment is the system deciding, on
+    somebody's behalf, whose money the agent spends. It has authority and no means.
+    """
     bot, api, aval, _ = world
 
     bot.handle_update(message("/start"))
 
+    created = next(body for route, body in aval.received if route == "POST /mandates")
+    assert "payment_method" not in created
+    assert "••••" not in api.last_text
+
+
+def test_the_card_is_typed_at_the_processor_and_never_in_the_chat(world) -> None:
+    """A number typed here would live in Telegram's servers, the history on every
+    logged-in device, the polling response and the log. No care afterwards removes it."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(message("/cartao"))
+
+    assert aval.card_sessions == [identities.get(MARTA).mandate_id]
+    assert "checkout.stripe.test" in api.last_text
+    assert "não passa por este chat" in api.last_text
+
+
+def test_an_unfinished_registration_binds_nothing(world) -> None:
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/cartao"))
+
+    bot.handle_update(message("/cartao"))
+
+    assert aval.bindings == []
+    assert "Ainda não vi um cartão" in api.last_text
+
+
+def _instrument_claims(aval) -> dict:
+    """The claims of the binding, found by its scope rather than by its position.
+
+    Reading a mandate is holder-signed too, so the last signature a `/cartao` produces
+    is the read that renders the card back — not the binding. Asserting on `[-1]` was
+    reading an ordering the test never meant to pin.
+    """
+    return next(
+        claims
+        for claims in reversed(aval.verified_claims)
+        if claims.get("scope") == "instrument"
+    )
+
+
+def test_the_registered_card_is_bound_with_the_holders_own_signature(world) -> None:
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/cartao"))
+    aval.card_ready = True
+
+    bot.handle_update(message("/cartao"))
+
+    binding = aval.bindings[-1]
+    assert binding["token"] == "pm_test_1"
+    claims = _instrument_claims(aval)
+    assert claims["scope"] == "instrument"
+    assert claims["instrument_token"] == "pm_test_1"
+    # First card on this mandate: it supersedes nothing, and saying so is what makes
+    # the next binding's compare-and-swap meaningful.
+    assert claims["supersedes"] is None
     assert "•••• 4242" in api.last_text
-    assert "4242424242424242" not in api.last_text
+
+
+def test_replacing_a_card_names_the_one_it_supersedes(world) -> None:
+    """Compare-and-swap: without the predecessor, a captured binding could be replayed."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/cartao"))
+    aval.card_ready = True
+    bot.handle_update(message("/cartao"))
+
+    aval.card_token = "pm_test_2"
+    bot.handle_update(message("/cartao"))
+    bot.handle_update(message("/cartao"))
+
+    claims = _instrument_claims(aval)
+    assert (claims["instrument_token"], claims["supersedes"]) == ("pm_test_2", "pm_test_1")
 
 
 def test_cancelling_the_card_is_signed_and_leaves_the_mandate_alive(world) -> None:
@@ -922,6 +1079,9 @@ def test_cancelling_the_card_is_signed_and_leaves_the_mandate_alive(world) -> No
     bot, api, aval, identities = world
     bot.handle_update(message("/start"))
     mandate_id = identities.get(MARTA).mandate_id
+    bot.handle_update(message("/cartao"))
+    aval.card_ready = True
+    bot.handle_update(message("/cartao"))
 
     bot.handle_update(tap(f"{views.CALLBACK_CARD_MENU}:{mandate_id}"))
     assert "mandato continua ativo" in api.last_text
@@ -931,7 +1091,7 @@ def test_cancelling_the_card_is_signed_and_leaves_the_mandate_alive(world) -> No
     # Signed by the holder's own key, over this mandate and this scope.
     claims = aval.verified_claims[-1]
     assert claims["mandate_id"] == mandate_id
-    assert claims["scope"].startswith("instrument:vt_")
+    assert claims["scope"] == "instrument:pm_test_1"
     assert aval.mandates[mandate_id]["status"] == "ACTIVE", "the agent is still authorized"
 
     bot.handle_update(message("/comprar um voo pra Córdoba"))
@@ -1158,3 +1318,299 @@ def test_a_payment_in_confirmation_is_neither_bought_nor_refused():
     assert "confirmação" in view.text.lower()
     assert "comprado" not in view.text.lower()
     assert "recusado" not in view.text.lower()
+# ── the trail answers the dispute ───────────────────────────────────────────
+def test_denying_a_purchase_returns_the_verdict_the_trail_produced(world) -> None:
+    """The bonus the case asks for: the denial is answered, not just filed.
+
+    Opening a dispute and leaving it open would show the person a promise. The
+    resolution reads the ledger and asks nobody, so the verdict arrives in the
+    same tap or the feature is theatre.
+    """
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/comprar um voo pra Cordoba"))
+
+    bot.handle_update(tap("dsp:rsv_1"))
+
+    assert "MANDATE_HELD" in api.last_text
+    assert "terms_hash th_1" in api.last_text
+
+
+def test_a_purchase_with_no_proof_behind_it_resolves_for_the_holder(world) -> None:
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/comprar um voo pra Cordoba"))
+    aval.dispute_status = "MANDATE_FAILED"
+
+    bot.handle_update(tap("dsp:rsv_1"))
+
+    assert "MANDATE_FAILED" in api.last_text
+    assert "estorno é seu" in api.last_text
+
+
+def test_the_dispute_button_survives_a_restart_of_the_bot(world, restart) -> None:
+    """A restart that forgets what the person bought turns the denial into a lie.
+
+    The identity store already outlives the process; the reservations belong there
+    for the same reason the keys do.
+    """
+    bot, _, aval, identities = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/comprar um voo pra Cordoba"))
+
+    revived, revived_api, _, _ = restart(aval)
+    revived.handle_update(tap("dsp:rsv_1"))
+
+    assert "MANDATE_HELD" in revived_api.last_text
+
+
+# ── the extract proves itself ───────────────────────────────────────────────
+def test_the_extract_says_the_chain_was_checked(world) -> None:
+    bot, api, _, _ = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(message("/extrato"))
+
+    assert "Trilha íntegra" in api.last_text
+    assert "3 evento(s) conferidos" in api.last_text
+
+
+def test_a_broken_chain_is_reported_instead_of_being_claimed_intact(world) -> None:
+    """Tampering has to reach the person's own screen, not only the auditor's."""
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    aval.chain_intact = False
+
+    bot.handle_update(message("/extrato"))
+
+    assert "TRILHA VIOLADA" in api.last_text
+    assert "#2" in api.last_text
+
+
+# ── frequency is authority, and it is visible ───────────────────────────────
+def test_the_mandate_is_created_with_the_frequency_rule_and_shows_it(world) -> None:
+    """The case's "up to 3 times a month" — enforced by the core, said by the card."""
+    bot, api, aval, _ = world
+
+    bot.handle_update(message("/start"))
+
+    created = next(body for route, body in aval.received if route == "POST /mandates")
+    assert created["usage_limit"] == {"max_uses": 3, "window_seconds": 30 * 86_400}
+    assert "3 de 3</b> compra(s) livres nos últimos 30 dia(s)" in api.last_text
+
+
+# ── two identities, two keys ────────────────────────────────────────────────
+def test_the_agent_is_shown_as_an_identity_of_its_own(world) -> None:
+    """The case separates the agent's identity from the human's; the bot has to say so.
+
+    Both keys exist and neither can produce the other's signature — a screen that
+    names them is what turns that from architecture into something a judge can check.
+    """
+    bot, api, _, identities = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(message("/agente"))
+
+    text = api.last_text
+    assert "agt_marta" in text and "agent-demo" in text
+    assert identities.get(MARTA).kid in text
+    assert "usr_tg_" in text
+
+
+def test_the_agent_card_holds_when_the_core_cannot_name_the_agent(world) -> None:
+    """An unknown agent is said plainly, never rendered as a confident identity."""
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    aval.offline = True
+
+    bot.handle_update(message("/agente"))
+
+    assert "perfil indisponível" in api.last_text
+
+
+# ── a room of judges, not a queue ───────────────────────────────────────────
+def test_a_slow_purchase_in_one_chat_does_not_hold_up_another(world) -> None:
+    """The demo is several people tapping at once, not one person taking turns.
+
+    Serial handling made every judge wait behind whoever bought last — with an HTTP
+    timeout measured in seconds, that reads as a dead bot. Two things are asserted
+    because both can break alone: the poll loop is never blocked by a slow chat, and
+    the other chat is answered *while* that call is still in flight.
+    """
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    aval.hold = threading.Event()
+
+    started = time.monotonic()
+    bot.dispatch(message("/comprar um voo pra Cordoba"))
+    bot.dispatch(message("/start", chat_id=JUDGE, first_name="Juíza"))
+    handed_off = time.monotonic() - started
+
+    answered_while_held = False
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if any(chat == JUDGE for chat, _ in api.sent):
+            answered_while_held = True
+            break
+        time.sleep(0.01)
+    aval.hold.set()
+
+    assert handed_off < 1, "dispatch segurou a thread que faz o polling"
+    assert answered_while_held, "o outro chat só foi atendido depois da compra lenta"
+
+
+def test_one_chat_is_still_answered_in_the_order_it_typed(world) -> None:
+    """Parallel across chats, serial within one: a person's own messages are a sequence."""
+    bot, api, _, _ = world
+
+    bot.dispatch(message("/start"))
+    bot.dispatch(message("/mandato"))
+    bot.dispatch(message("/extrato"))
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and len(api.sent) < 3:
+        time.sleep(0.01)
+    assert "AVAL" in api.sent[0][1].text
+    assert "Extrato" in api.sent[2][1].text
+
+
+# ── the person defines the mandate, not the environment ─────────────────────
+def test_the_spec_reads_what_how_much_and_until_when(world) -> None:
+    """The case's first line, read off one sentence.
+
+    Counts and money share a sentence and must not be confused: `por 7 dias` is a
+    deadline, not a seven-real budget.
+    """
+    bot, _, _, _ = world
+    defaults = bot._config.mandate_defaults
+
+    spec = views.parse_mandate_spec("hotel até 300 por 7 dias, 2x", defaults=defaults)
+
+    assert spec.categories == ("lodging",)
+    assert spec.limit.minor_units == 30_000
+    assert spec.valid_for_days == 7
+    assert spec.max_uses == 2
+
+
+def test_an_empty_spec_is_refused_rather_than_defaulted(world) -> None:
+    """Silence is not a mandate: the defaults must never stand in for consent."""
+    bot, _, _, _ = world
+    assert views.parse_mandate_spec("   ", defaults=bot._config.mandate_defaults) is None
+
+
+def test_what_the_sentence_omits_falls_back_to_the_default(world) -> None:
+    bot, _, _, _ = world
+    defaults = bot._config.mandate_defaults
+
+    spec = views.parse_mandate_spec("voo", defaults=defaults)
+
+    assert spec.categories == ("travel",)
+    assert spec.limit.minor_units == defaults.limit_minor_units
+    assert spec.valid_for_days == defaults.valid_for.days
+
+
+def test_a_new_mandate_is_previewed_before_anything_is_issued(world) -> None:
+    """Replacing a mandate revokes the one in force — far too much for a typo."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    first = identities.get(MARTA).mandate_id
+    api.sent.clear()
+
+    bot.handle_update(message("/novo hotel até 300 por 7 dias"))
+
+    assert "confira antes" in api.last_text
+    assert "revoga" in api.last_text
+    assert identities.get(MARTA).mandate_id == first
+    assert aval.mandates[first]["status"] == "ACTIVE"
+
+
+def test_confirming_revokes_the_old_mandate_and_issues_the_described_one(world) -> None:
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    first = identities.get(MARTA).mandate_id
+    bot.handle_update(message("/novo hotel até 300 por 7 dias, 2x"))
+
+    bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
+
+    second = identities.get(MARTA).mandate_id
+    assert second != first
+    assert aval.mandates[first]["status"] == "REVOKED"
+    issued = aval.mandates[second]
+    assert issued["allowed_categories"] == ["lodging"]
+    assert issued["limit"]["minor_units"] == 30_000
+    assert issued["usage_limit"]["max_uses"] == 2
+    # A new mandate is authority and nothing else: the card is registered separately,
+    # and does not follow the person from the mandate they just replaced.
+    assert issued.get("instrument_label") is None
+
+
+def test_confirming_a_spec_the_bot_no_longer_holds_issues_nothing(world) -> None:
+    """A restart between describing and confirming must not invent the mandate."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    first = identities.get(MARTA).mandate_id
+
+    bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
+
+    assert identities.get(MARTA).mandate_id == first
+    assert "Descreva o mandato de novo" in api.last_text
+
+
+# ── conversation ────────────────────────────────────────────────────────────
+class ScriptedTalker:
+    """A model that says what the test needs, in the order the test needs it."""
+
+    def __init__(self, *drafts) -> None:
+        self.drafts = list(drafts)
+        self.seen: list[tuple[str, ...]] = []
+        self.categories: tuple[str, ...] = ()
+
+    def respond(self, history, *, categories, defaults):
+        self.seen.append(tuple(turn.text for turn in history))
+        self.categories = tuple(categories)
+        return self.drafts.pop(0)
+
+
+def test_free_text_is_answered_in_chat_until_the_mandate_is_complete(tmp_path) -> None:
+    """The bot converses, then always lands on a spec the person can sign."""
+    talker = ScriptedTalker(
+        conversation.Draft("Até quanto você quer poder gastar?", None),
+        conversation.Draft(
+            "Hotel até 300 dólares, por 7 dias.",
+            views.MandateSpec(("lodging",), MoneyView(30_000, "USD", 2), 7, 2),
+        ),
+    )
+    bot, api, aval, identities = _build(tmp_path, FakeAval())
+    bot._talker = talker
+    bot.handle_update(message("/start"))
+    first = identities.get(MARTA).mandate_id
+    api.sent.clear()
+
+    bot.handle_update(message("queria poder reservar hotel"))
+    assert api.last_text == "Até quanto você quer poder gastar?"
+    assert not api.sent[-1][1].buttons
+    # Nothing was granted from words alone.
+    assert aval.mandates[first]["status"] == "ACTIVE"
+    assert identities.get(MARTA).mandate_id == first
+
+    api.sent.clear()
+    bot.handle_update(message("até 300, por uma semana"))
+    preview = api.sent[-1][1]
+    assert "confira antes" in preview.text
+    assert "US$ 300,00" in preview.text and "7 dia" in preview.text
+    confirm = [label for row in preview.buttons for label, _ in row]
+    assert confirm == ["✅ Emitir este mandato"]
+
+    # The whole exchange, and only the catalogue's own categories, reached the model.
+    assert talker.seen[-1] == (
+        "queria poder reservar hotel",
+        "Até quanto você quer poder gastar?",
+        "até 300, por uma semana",
+    )
+    assert "lodging" in talker.categories
+
+    bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
+    second = identities.get(MARTA).mandate_id
+    assert second != first
+    assert aval.mandates[first]["status"] == "REVOKED"
+    assert aval.mandates[second]["limit"]["minor_units"] == 30_000

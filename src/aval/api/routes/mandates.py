@@ -1,4 +1,4 @@
-"""Mandate lifecycle: create, move the live limit, revoke.
+"""Mandate lifecycle: create, register a payment method, move the live limit, revoke.
 
 The last two are the surfaces a judge touches during the trial by fire, so they
 read and write straight through to the core. No cache sits in front of them.
@@ -7,6 +7,7 @@ read and write straight through to the core. No cache sits in front of them.
 from __future__ import annotations
 
 import base64
+import logging
 import json
 from uuid import uuid4
 
@@ -16,6 +17,11 @@ from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError
 from aval.application.authorization_core import ApprovalError
 from aval.api.schemas import (
+    BindInstrumentRequest,
+    BindInstrumentResponse,
+    InstrumentSessionRequest,
+    InstrumentSessionResponse,
+    InstrumentSessionStatusResponse,
     CreateMandateRequest,
     CreateMandateResponse,
     ReplaceLimitRequest,
@@ -23,7 +29,6 @@ from aval.api.schemas import (
     RevocationRequest,
     RevocationResponse,
 )
-from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
 from aval.domain.entities import (
     Mandate,
     PaymentInstrument,
@@ -32,6 +37,8 @@ from aval.domain.entities import (
     UsageLimit,
 )
 from aval.domain.enums import RevocationRole
+
+logger = logging.getLogger("aval.api.mandates")
 
 router = APIRouter(tags=["mandates"])
 
@@ -86,18 +93,15 @@ def create_mandate(request: Request, body: CreateMandateRequest) -> CreateMandat
     except ValueError as error:
         raise ApiError(422, "unknown_revocation_role", "Papel de autoridade desconhecido.") from error
 
-    # The card is read here and forgotten here. `instrument` carries a token and four
-    # digits from this line onwards; the number itself is not stored, logged or passed
-    # on, and the request object holding it dies with this call.
+    # A card that was vaulted somewhere else, named by its token. Nothing here reads
+    # or tokenizes a number, because no number arrives: a mandate created with no
+    # payment method simply cannot pay, which is the honest state for one whose holder
+    # has not registered a card yet.
     instrument: PaymentInstrument | None = None
     if body.payment_method is not None:
-        try:
-            token = OpaqueTestCredentialTokenizer().tokenize(body.payment_method.card_number)
-        except ValueError as error:
-            raise ApiError(
-                422, "payment_method_invalid", "Número de cartão inválido."
-            ) from error
-        instrument = PaymentInstrument(token, f"•••• {body.payment_method.card_number[-4:]}")
+        instrument = PaymentInstrument(
+            body.payment_method.token, body.payment_method.label
+        )
     mandate = Mandate(
         id=mandate_id,
         principal=Principal(id=body.principal.id, display_name=body.principal.display_name),
@@ -208,6 +212,116 @@ def replace_limit(request: Request, mandate_id: str, body: ReplaceLimitRequest) 
     )
 
 
+# Where Stripe sends the person after they finish. It is a landing page and nothing
+# more — the card never comes back through it, and the bot learns what happened by
+# asking Stripe, not by being redirected.
+DEFAULT_RETURN_URL = "https://aval.local/cartao-cadastrado"
+
+
+def _card_registration(request: Request):
+    """The processor that can host a card form, or a refusal that says why.
+
+    The demo processor cannot: it has no page, and inventing one would mean a card
+    that is registered here and worthless everywhere else.
+    """
+    psp = runtime_of(request).psp
+    if not hasattr(psp, "create_setup_session"):
+        raise ApiError(
+            409,
+            "card_registration_unavailable",
+            "Cadastro de cartão exige um processador real (AVAL_PSP=stripe).",
+        )
+    return psp
+
+
+@router.post("/mandates/{mandate_id}/instrument/session", response_model=InstrumentSessionResponse)
+def open_instrument_session(
+    request: Request, mandate_id: str, body: InstrumentSessionRequest
+) -> InstrumentSessionResponse:
+    """Open the processor's own card form for this mandate.
+
+    The number is typed at Stripe and never reaches this service. That is not a
+    nicety: a card number that touched a chat would live in the message history on
+    every logged-in device, in our polling responses and in the process log, and no
+    care afterwards takes it back out of those.
+    """
+    runtime = runtime_of(request)
+    psp = _card_registration(request)
+    try:
+        runtime.core.require_holder(
+            mandate_id, body.authorization_jws, scope="instrument_session"
+        )
+    except ApprovalError as error:
+        raise ApiError(error.status_code, error.reason_code, error.human_summary) from error
+    except ValueError as error:
+        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.") from error
+    session = psp.create_setup_session(
+        mandate_id, return_url=body.return_url or DEFAULT_RETURN_URL
+    )
+    return InstrumentSessionResponse(**session)
+
+
+@router.get(
+    "/mandates/{mandate_id}/instrument/session/{session_id}",
+    response_model=InstrumentSessionStatusResponse,
+)
+def read_instrument_session(
+    request: Request, mandate_id: str, session_id: str, authorization_jws: str | None = None
+) -> InstrumentSessionStatusResponse:
+    """The card the person registered, once they have finished registering it.
+
+    Answering nothing while the page is still open is the normal case, not an error:
+    the caller is watching a human fill in a form.
+    """
+    runtime = runtime_of(request)
+    psp = _card_registration(request)
+    try:
+        runtime.core.require_holder(mandate_id, authorization_jws, scope="instrument_session")
+    except ApprovalError as error:
+        raise ApiError(error.status_code, error.reason_code, error.human_summary) from error
+    except ValueError as error:
+        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.") from error
+    card = psp.read_setup_session(session_id, mandate_id=mandate_id)
+    if card is None:
+        return InstrumentSessionStatusResponse(ready=False)
+    return InstrumentSessionStatusResponse(ready=True, **card)
+
+
+@router.post("/mandates/{mandate_id}/instrument", response_model=BindInstrumentResponse)
+def bind_instrument(
+    request: Request, mandate_id: str, body: BindInstrumentRequest
+) -> BindInstrumentResponse:
+    """Attach the payment method the holder registered at the processor.
+
+    Unsigned is refused outright. Attaching a card decides whose money the agent will
+    spend, and a mandate id is a guessable name, not an entitlement — without the
+    holder's signature anyone who guessed one could point somebody else's agent at
+    their own card, or at nobody's.
+    """
+    runtime = runtime_of(request)
+    if not body.authorization_jws:
+        raise ApiError(
+            403,
+            "instrument_binding_unsigned",
+            "Cadastrar um meio de pagamento exige autorização assinada pelo titular.",
+        )
+    try:
+        replaced = runtime.core.bind_instrument(
+            mandate_id,
+            PaymentInstrument(body.token, body.label),
+            authorization_jws=body.authorization_jws,
+        )
+    except ApprovalError as error:
+        raise ApiError(error.status_code, error.reason_code, error.human_summary) from error
+    except ValueError as error:
+        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.") from error
+    return BindInstrumentResponse(
+        instrument_label=body.label,
+        instrument_revocation_scope=f"instrument:{body.token}",
+        replaced_label=None if replaced is None else replaced.label,
+    )
+
+
 @router.post("/mandates/{mandate_id}/revocation", response_model=RevocationResponse)
 def revoke(request: Request, mandate_id: str, body: RevocationRequest) -> RevocationResponse:
     runtime = runtime_of(request)
@@ -228,4 +342,27 @@ def revoke(request: Request, mandate_id: str, body: RevocationRequest) -> Revoca
         raise ApiError(400, reason, "Revogação inválida.") from error
     mandate = runtime.core.mandate(mandate_id)
     assert mandate is not None
+    _release_card_at_processor(runtime, unverified_claims(body.token).get("scope"))
     return RevocationResponse(revoked=True, epoch=int(mandate.revocation_metadata.get("epoch", 0)))
+
+
+def _release_card_at_processor(runtime, scope: object) -> None:
+    """Let go of the card at the processor once the holder has cancelled it here.
+
+    Done after the core has committed, and outside its write lock: a network call
+    inside the transaction that revokes a mandate would make the strongest moment of
+    the system depend on somebody else's uptime.
+
+    Best effort on purpose. The local revocation already refuses every later purchase,
+    so a processor that does not answer must not turn cancelling a card into an error
+    the person sees — and the credential stays cancelled here either way.
+    """
+    if not isinstance(scope, str) or not scope.startswith("instrument:"):
+        return
+    psp = runtime.psp
+    if not hasattr(psp, "detach"):
+        return
+    try:
+        psp.detach(scope.removeprefix("instrument:"))
+    except Exception:  # noqa: BLE001 - the revocation stands whatever the processor says
+        logger.warning("o processador não confirmou a baixa do cartão")

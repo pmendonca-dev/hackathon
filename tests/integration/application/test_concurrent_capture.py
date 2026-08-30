@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from threading import Barrier
 
 from aval.application.authorization_core import AuthorizationCore, CaptureCommand, SettlementResult
-from aval.domain.entities import Mandate, Principal, RevocationAuthority
+from aval.domain.entities import Mandate, PaymentInstrument, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
 from aval.infrastructure.sqlite.engine import create_sqlite_engine
@@ -23,11 +23,11 @@ class Settlement:
 
 
 def mandate(jwk: dict[str, str]) -> Mandate:
-    return Mandate("m1", Principal("p1", "Marta"), frozenset({"merchant"}), frozenset({"travel"}), Money(1_000, "BRL", 2), datetime(2026, 8, 30, tzinfo=UTC), 1, {"revocation_id": "r1", "epoch": 0}, (RevocationAuthority("a1", "holder", RevocationRole.HOLDER, jwk, frozenset({"mandate"})),))
+    return Mandate("m1", Principal("p1", "Marta"), frozenset({"merchant"}), frozenset({"travel"}), Money(1_000, "BRL", 2), datetime(2026, 8, 30, tzinfo=UTC), 1, {"revocation_id": "r1", "epoch": 0}, (RevocationAuthority("a1", "holder", RevocationRole.HOLDER, jwk, frozenset({"mandate"})),), instrument=PaymentInstrument("vt_test_instrument", "•••• 4242"))
 
 
 def command(key: str) -> CaptureCommand:
-    return CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "travel", key)
+    return CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "travel", key, instrument_id="vt_test_instrument")
 
 
 def test_two_concurrent_captures_have_exactly_one_settlement(tmp_path):
