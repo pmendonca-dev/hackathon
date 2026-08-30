@@ -1,3 +1,9 @@
+import type {
+  AuditVerdictProjection,
+  PaymentCaptureProjection,
+  PaymentReceiptsProjection,
+} from './paymentRuntimeApi.ts';
+
 export type DataSource = 'mock' | 'api';
 export type Tone = 'allow' | 'escalate' | 'deny' | 'verify' | 'hold' | 'neutral';
 
@@ -7,14 +13,22 @@ export interface Money {
   scale: number;
 }
 
-export interface SnapshotMeta {
-  dataSource: DataSource;
-  fixtureId: `mock_${string}`;
+interface SnapshotMetaBase {
   contractStatus: 'integrated';
   contractVersion: string;
   generatedAt: string;
-  networkUsed: boolean;
 }
+
+export type SnapshotMeta =
+  | (SnapshotMetaBase & {
+      dataSource: 'mock';
+      fixtureId: `mock_${string}`;
+      networkUsed: false;
+    })
+  | (SnapshotMetaBase & {
+      dataSource: 'api';
+      networkUsed: true;
+    });
 
 export interface AuthorityRailProjection {
   maximumMinorUnits: number;
@@ -126,12 +140,28 @@ export interface AuditorViewProjection {
   };
 }
 
-export interface AvalSnapshot {
-  meta: SnapshotMeta;
+export interface MockAvalSnapshot {
+  meta: Extract<SnapshotMeta, { dataSource: 'mock' }>;
   human: HumanViewProjection;
   merchant: MerchantViewProjection;
   auditor: AuditorViewProjection;
 }
+
+export interface LiveWorkspaceProjection {
+  mandateId: string;
+  captureId: string | null;
+  capture: PaymentCaptureProjection | null;
+  receipts: PaymentReceiptsProjection | null;
+  audit: AuditVerdictProjection;
+  dispute: AuditVerdictProjection;
+}
+
+export interface LiveAvalSnapshot {
+  meta: Extract<SnapshotMeta, { dataSource: 'api' }>;
+  live: LiveWorkspaceProjection;
+}
+
+export type AvalSnapshot = MockAvalSnapshot | LiveAvalSnapshot;
 
 export type TrialCommandKind =
   | 'lower-limit'

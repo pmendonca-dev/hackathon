@@ -4,7 +4,13 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Mapping
 
-from aval.domain.enums import MandateStatus, ReservationStatus, RevocationRole
+from aval.domain.enums import (
+    DisputeStatus,
+    EscalationStatus,
+    MandateStatus,
+    ReservationStatus,
+    RevocationRole,
+)
 from aval.domain.errors import DomainError
 from aval.domain.money import Money
 
@@ -37,11 +43,13 @@ class Mandate:
     id: str
     principal: Principal
     allowed_merchant_ids: frozenset[str]
+    allowed_categories: frozenset[str]
     limit: Money
     expires_at: datetime
     policy_version: int
     revocation_metadata: Mapping[str, object]
     authorities: tuple[RevocationAuthority, ...]
+    ceiling: Money | None = None
     status: MandateStatus = MandateStatus.ACTIVE
 
     def __post_init__(self) -> None:
@@ -49,6 +57,20 @@ class Mandate:
             raise DomainError("mandate id is required")
         if not self.allowed_merchant_ids:
             raise DomainError("mandate must allow at least one merchant")
+        if not self.allowed_categories:
+            raise DomainError("mandate must declare at least one allowed category")
+        # A limit of zero or less authorizes nothing. Left unchecked it does not fail
+        # closed either: every purchase exceeds it, so every purchase becomes an approval
+        # request instead of the refusal it should be.
+        if self.limit.minor_units <= 0:
+            raise DomainError("mandate limit must be positive")
+        if self.ceiling is not None and self.ceiling.minor_units <= 0:
+            raise DomainError("mandate ceiling must be positive")
+        if self.ceiling is not None and (self.ceiling.currency, self.ceiling.scale) != (
+            self.limit.currency,
+            self.limit.scale,
+        ):
+            raise DomainError("mandate ceiling must share the limit money unit")
         if not self.authorities:
             raise DomainError("mandate requires at least one revocation authority")
         if not self.revocation_metadata.get("revocation_id"):
@@ -156,3 +178,62 @@ class AuditEvent:
     human_summary: str
     occurred_at: datetime
     evidence_id: str | None = None
+
+
+@dataclass(frozen=True)
+class Dispute:
+    """A later denial of a purchase, resolved by reading the trail rather than by trust."""
+
+    id: str
+    mandate_id: str
+    reservation_id: str
+    reason: str
+    opened_at: datetime
+    status: DisputeStatus = DisputeStatus.OPEN
+    resolution: str | None = None
+    resolved_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.reservation_id:
+            raise DomainError("a dispute must name the reservation it denies")
+        if not self.reason:
+            raise DomainError("a dispute must carry the reason it was opened")
+
+    def resolve(self, status: DisputeStatus, resolution: str, resolved_at: datetime) -> "Dispute":
+        if self.status is not DisputeStatus.OPEN:
+            raise DomainError("only an open dispute may be resolved")
+        if status is DisputeStatus.OPEN:
+            raise DomainError("a dispute resolution must be conclusive")
+        return replace(self, status=status, resolution=resolution, resolved_at=resolved_at)
+
+
+@dataclass(frozen=True)
+class Escalation:
+    """A purchase the core refused to decide alone.
+
+    It freezes what was asked. The approval that arrives later is checked against these
+    fields, so approving cannot become a way to buy something bigger.
+    """
+
+    id: str
+    mandate_id: str
+    checkout_id: str
+    merchant_id: str
+    category: str
+    amount: Money
+    reason_code: str
+    created_at: datetime
+    expires_at: datetime
+    status: EscalationStatus = EscalationStatus.OPEN
+    agent_id: str | None = None
+    approval_jws: str | None = None
+    decided_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.reason_code:
+            raise DomainError("an escalation must carry the reason it was raised")
+        if self.expires_at <= self.created_at:
+            raise DomainError("an escalation must expire after it was created")
+
+    def is_expired_at(self, instant: datetime) -> bool:
+        return instant >= self.expires_at

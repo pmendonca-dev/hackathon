@@ -22,14 +22,14 @@ def test_capture_and_signed_revocation_touch_the_same_durable_mandate_lock(tmp_p
     custody = KeyCustodyService()
     custody.generate_es256("holder")
     mandate = Mandate(
-        "m1", Principal("p1", "Marta"), frozenset({"merchant"}), Money(1_000, "BRL", 2),
+        "m1", Principal("p1", "Marta"), frozenset({"merchant"}), frozenset({"travel"}), Money(1_000, "BRL", 2),
         datetime(2026, 8, 30, tzinfo=UTC), 1, {"revocation_id": "r1", "epoch": 0},
         (RevocationAuthority("a1", "holder", RevocationRole.HOLDER, custody.public_jwk("holder"), frozenset({"mandate"})),),
     )
     capture_core = AuthorizationCore(clock=lambda: now, engine=engine)
     capture_core.register_mandate(mandate)
 
-    assert capture_core.capture(CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "first")).approved
+    assert capture_core.capture(CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "travel", "first")).approved
 
     later = now + timedelta(seconds=1)
     token = sign_compact_jws(

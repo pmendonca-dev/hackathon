@@ -17,3 +17,8 @@ venv/
 
 # Playwright MCP scratch output
 .playwright-mcp/
+
+var/
+*.db
+*.db-wal
+*.db-shm

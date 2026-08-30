@@ -30,7 +30,7 @@ def _core_with_authorities(tmp_path, authorities: tuple[tuple[str, RevocationRol
     core = AuthorizationCore(clock=lambda: datetime(2026, 8, 29, tzinfo=UTC), engine=engine)
     core.register_mandate(
         Mandate(
-            "m1", Principal("p1", "Marta"), frozenset({"merchant-1"}), Money(1_000, "BRL", 2),
+            "m1", Principal("p1", "Marta"), frozenset({"merchant-1"}), frozenset({"travel"}), Money(1_000, "BRL", 2),
             datetime(2026, 8, 30, tzinfo=UTC), 1, {"revocation_id": "r1", "epoch": 0}, tuple(registered),
         )
     )

@@ -17,6 +17,7 @@ def make_mandate(public_jwk: dict[str, str], *, limit: int = 1_000) -> Mandate:
         id="mandate_persisted",
         principal=Principal(id="principal_1", display_name="Marta"),
         allowed_merchant_ids=frozenset({"merchant_1"}),
+        allowed_categories=frozenset({"travel"}),
         limit=Money(limit, "BRL", 2),
         expires_at=datetime(2026, 8, 30, tzinfo=UTC),
         policy_version=1,
@@ -39,6 +40,7 @@ def command(amount: int = 500) -> AuthorizationCommand:
         checkout_id="checkout_1",
         merchant_id="merchant_1",
         total=Money(amount, "BRL", 2),
+        category="travel",
     )
 
 

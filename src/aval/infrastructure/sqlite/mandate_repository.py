@@ -24,6 +24,8 @@ class SqliteMandateRepository:
             "principal_id": mandate.principal.id,
             "principal_display_name": mandate.principal.display_name,
             "allowed_merchant_ids": json.dumps(sorted(mandate.allowed_merchant_ids)),
+            "allowed_categories": json.dumps(sorted(mandate.allowed_categories)),
+            "ceiling_minor_units": None if mandate.ceiling is None else mandate.ceiling.minor_units,
             "status": mandate.status.value,
             "currency": mandate.limit.currency,
             "scale": mandate.limit.scale,
@@ -71,7 +73,11 @@ class SqliteMandateRepository:
         return Mandate(
             id=row["id"], principal=Principal(row["principal_id"], row["principal_display_name"]),
             allowed_merchant_ids=frozenset(json.loads(row["allowed_merchant_ids"])),
+            allowed_categories=frozenset(json.loads(row["allowed_categories"])),
             limit=Money(row["limit_minor_units"], row["currency"], row["scale"]),
+            ceiling=None
+            if row["ceiling_minor_units"] is None
+            else Money(row["ceiling_minor_units"], row["currency"], row["scale"]),
             expires_at=_aware(row["expires_at"]), policy_version=row["policy_version"],
             revocation_metadata=metadata, authorities=authorities, status=MandateStatus(row["status"]),
         )

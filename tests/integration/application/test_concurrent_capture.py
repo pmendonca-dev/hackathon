@@ -23,11 +23,11 @@ class Settlement:
 
 
 def mandate(jwk: dict[str, str]) -> Mandate:
-    return Mandate("m1", Principal("p1", "Marta"), frozenset({"merchant"}), Money(1_000, "BRL", 2), datetime(2026, 8, 30, tzinfo=UTC), 1, {"revocation_id": "r1", "epoch": 0}, (RevocationAuthority("a1", "holder", RevocationRole.HOLDER, jwk, frozenset({"mandate"})),))
+    return Mandate("m1", Principal("p1", "Marta"), frozenset({"merchant"}), frozenset({"travel"}), Money(1_000, "BRL", 2), datetime(2026, 8, 30, tzinfo=UTC), 1, {"revocation_id": "r1", "epoch": 0}, (RevocationAuthority("a1", "holder", RevocationRole.HOLDER, jwk, frozenset({"mandate"})),))
 
 
 def command(key: str) -> CaptureCommand:
-    return CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), key)
+    return CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "travel", key)
 
 
 def test_two_concurrent_captures_have_exactly_one_settlement(tmp_path):

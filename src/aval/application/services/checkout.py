@@ -15,6 +15,9 @@ from aval.domain.enums import AuthorizationDecision, AvalCheckoutStatus
 from aval.domain.money import Money
 
 
+DEFAULT_CHECKOUT_CATEGORY = "travel"
+
+
 @dataclass(frozen=True)
 class CheckoutCommand:
     id: str
@@ -23,6 +26,9 @@ class CheckoutCommand:
     total: Money
     line_items: Sequence[Mapping[str, object]]
     negotiated_capabilities: frozenset[str]
+    # What is being bought. The mandate declares which categories it allows, so this
+    # travels to the core rather than being assumed there.
+    category: str = DEFAULT_CHECKOUT_CATEGORY
 
 
 @dataclass(frozen=True)
@@ -70,7 +76,9 @@ class CheckoutService:
 
     def create(self, command: CheckoutCommand) -> CheckoutSession:
         decision = self._core.evaluate(
-            AuthorizationCommand(command.mandate_id, command.id, command.merchant_id, command.total)
+            AuthorizationCommand(
+                command.mandate_id, command.id, command.merchant_id, command.total, command.category
+            )
         )
         status = (
             AvalCheckoutStatus.READY
@@ -129,6 +137,7 @@ class CheckoutService:
                 checkout_id=command.id,
                 merchant_id=command.merchant_id,
                 total=command.total,
+                category=command.category,
                 idempotency_key=idempotency_key,
             )
         )

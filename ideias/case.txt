@@ -1,0 +1,53 @@
+Every payment system assumes the one pressing "pay" is a person — and that assumption is breaking down. More and more purchases are made by an AI agent on someone's behalf: your assistant buys your flight when the price drops, a company's agent restocks inventory, an agent compares and signs up for the best plan.
+
+Key definitions
+Merchant: a company that collects payments
+Purchasing agent: an AI system that discovers, decides and buys on behalf of a person (or a company)
+Mandate: the verifiable authorization a human gives their agent: what it may buy, with what limits (amount, category, validity) and with which payment method
+Verification: how the merchant confirms the agent buying from them is acting within a valid mandate from a real human
+Revocation: the human withdraws the mandate; every later purchase must fail
+Chargeback / dispute: the cardholder denies a payment ("I never authorized this") and the bank reverses the money
+Human-in-the-loop: a point where the agent must stop and ask for human approval
+1. The problem
+When the buyer is an agent, the questions change:
+
+How does the merchant know this agent represents a real human who authorized the purchase?
+How does a person authorize their agent to spend without handing over the raw card?
+What happens when the agent makes a mistake, hallucinates a purchase, or someone impersonates it?
+Who answers for the dispute: the human, the agent, the merchant?
+Today there's no good answer: merchants either block bots (and lose the legitimate sale) or let them through as humans (and eat the fraud and the chargebacks). The mandate — the piece that would make all of this safe — doesn't yet exist in practice.
+
+2. Objective
+Build the complete circuit of a safe agentic purchase:
+
+☐ A human creates a purchase mandate for their agent: what, how much, until when, with which payment method — without handing over the raw card
+☐ The merchant verifies the mandate before accepting: legitimate agent, valid mandate, purchase within limits
+☐ The purchase runs end to end: the agent discovers, decides and pays; the human receives a record of what was bought and under which mandate
+☐ The ugly cases are handled explicitly: purchase outside the mandate, expired or live-revoked mandate, impersonated agent, later dispute
+☐ Every purchase decision leaves an auditable trail that human, merchant and auditor can read
+May include (not limited to): escalation to human approval when a purchase falls outside the mandate; category-based or recurring mandates; agent identity separate from human identity.
+
+Trial by fire. The judges will operate the system live — revoke the mandate and watch the agent try to buy, or change a limit and see what happens. The system must react correctly without the team touching anything.
+
+3. Expected results
+A demo showing:
+
+☐ A human creating a mandate and their agent completing a real end-to-end purchase (mockable) within that mandate
+☐ An attempt outside the mandate (amount exceeded, forbidden category, expired) rejected or escalated to human approval — never silently approved
+☐ Live revocation working: mandate revoked → the next attempt fails
+☐ What each party sees: the human their record, the merchant their verification, the auditor the full trail
+☐ The trial by fire passed
+Bonus points
+A complete dispute flow: the human denies a purchase and the auditable trail resolves who is right
+Mandates with rich conditions ("if it drops below $150", "up to 3 times a month") evaluated correctly
+Defense against an adversarial agent trying to buy outside its mandate through creative paths
+4. Minimal fictional case
+Merchant: VuelaYa, an online travel agency that wants to accept purchases from agents without opening the door to fraud.
+Buyer: Marta authorizes her personal agent: "buy me a flight to Córdoba if it drops below $150, valid until the end of the month".
+Key moments:
+
+Marta creates the mandate; the agent starts watching prices
+A flight appears at $130 → the agent buys; Marta gets her record; VuelaYa its verification
+The agent tries to buy another flight at $300 → outside the mandate → rejected or escalated
+Marta revokes the mandate; the agent tries again → it fails
+Catalog, prices, mandates, protocols and payment methods can all be invented.

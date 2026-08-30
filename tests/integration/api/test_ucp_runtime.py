@@ -137,7 +137,10 @@ def test_mounted_completion_loads_persisted_checkout_and_captures() -> None:
 
     assert response.status_code == 200
     assert response.json()["approved"] is True
-    assert response.json()["reason_code"] == "committed"
+    # The merged runtime carries a settlement adapter, so an approved capture runs one
+    # step further than when the core had no processor behind it: committed and then
+    # settled. `approved` is the guarantee this test is about.
+    assert response.json()["reason_code"] == "settled"
 
 
 def test_checkout_persists_when_the_runtime_is_recreated(tmp_path) -> None:

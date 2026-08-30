@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from aval.adapters.ucp.http_signatures import Rfc9421Verifier, SignedRequest
 from aval.adapters.ucp.checkout_projection import project_ucp_checkout
 from aval.api.middleware.raw_body import raw_body_from
-from aval.application.services.checkout import CheckoutCommand, CheckoutService
+from aval.application.services.checkout import DEFAULT_CHECKOUT_CATEGORY, CheckoutCommand, CheckoutService
 from aval.domain.money import Money
 
 
@@ -52,6 +52,7 @@ def create_ucp_checkout_router(
                     merchant_id=body["merchant_id"],
                     total=Money(total["amount"], total["currency"], total["scale"]),
                     line_items=tuple(body["line_items"]),
+                    category=str(body.get("category", DEFAULT_CHECKOUT_CATEGORY)),
                     negotiated_capabilities=frozenset(body.get("capabilities", [])),
                 )
             )

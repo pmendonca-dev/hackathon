@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from datetime import UTC, datetime
 
 from aval.application.authorization_core import CaptureCommand
@@ -26,7 +28,8 @@ class CountingSettlement:
 def make_mandate(public_jwk: dict[str, str]) -> Mandate:
     return Mandate(
         id="mandate_persisted", principal=Principal("principal_1", "Marta"),
-        allowed_merchant_ids=frozenset({"merchant_1"}), limit=Money(1_000, "BRL", 2),
+        allowed_merchant_ids=frozenset({"merchant_1"}), allowed_categories=frozenset({"travel"}),
+        limit=Money(1_000, "BRL", 2),
         expires_at=datetime(2026, 8, 30, tzinfo=UTC), policy_version=1,
         revocation_metadata={"revocation_id": "rev_1", "epoch": 0},
         authorities=(RevocationAuthority("authority_1", "holder-key", RevocationRole.HOLDER, public_jwk, frozenset({"mandate"})),),
@@ -34,7 +37,7 @@ def make_mandate(public_jwk: dict[str, str]) -> Mandate:
 
 
 def capture_command(*, key: str, amount: int = 500) -> CaptureCommand:
-    return CaptureCommand("mandate_persisted", "checkout_1", "merchant_1", Money(amount, "BRL", 2), key)
+    return CaptureCommand("mandate_persisted", "checkout_1", "merchant_1", Money(amount, "BRL", 2), "travel", key)
 
 
 def test_capture_idempotency_is_durable_and_rejects_changed_bodies(tmp_path):
@@ -53,6 +56,9 @@ def test_capture_idempotency_is_durable_and_rejects_changed_bodies(tmp_path):
     changed_body = AuthorizationCore(clock=lambda: now, engine=engine, settlement_adapter=settlement).capture(capture_command(key="idem_1", amount=600))
 
     assert first.approved
-    assert replay == first
+    # Identical outcome, and marked as the replay it is: same reservation, same
+    # reference, no second settlement.
+    assert replay.replayed is True
+    assert replace(replay, replayed=False) == first
     assert changed_body.reason_code == "idempotency_key_reused"
     assert settlement.calls == 1

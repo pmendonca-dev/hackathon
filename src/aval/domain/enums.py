@@ -35,3 +35,15 @@ class AuthorizationDecision(str, Enum):
     AUTHORIZED = "authorized"
     AWAITING_HUMAN = "awaiting_human"
     REJECTED = "rejected"
+
+
+class DisputeStatus(str, Enum):
+    OPEN = "OPEN"
+    MANDATE_HELD = "MANDATE_HELD"
+    MANDATE_FAILED = "MANDATE_FAILED"
+
+
+class EscalationStatus(str, Enum):
+    OPEN = "OPEN"
+    APPROVED = "APPROVED"
+    DENIED = "DENIED"

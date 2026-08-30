@@ -40,6 +40,18 @@ class KeyCustodyService:
             raise ValueError("kid must be new and non-empty")
         self._keys[kid] = ec.generate_private_key(ec.SECP256R1())
 
+    def has(self, kid: str) -> bool:
+        return kid in self._keys
+
+    def verifying_key(self, kid: str) -> ec.EllipticCurvePublicKey:
+        """The public half, rebuilt from the JWK this service publishes.
+
+        Going through the JWK on purpose: it is the same material an outside verifier
+        would fetch, so nothing here can verify with a key the world cannot see — and the
+        private key still never crosses the boundary.
+        """
+        return public_key_from_jwk(self.public_jwk(kid))
+
     def sign_es256(self, kid: str, payload: bytes) -> bytes:
         try:
             private_key = self._keys[kid]

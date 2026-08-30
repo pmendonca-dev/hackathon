@@ -23,10 +23,12 @@ mandates = Table(
     Column("principal_id", String, nullable=False),
     Column("principal_display_name", String, nullable=False),
     Column("allowed_merchant_ids", Text, nullable=False),
+    Column("allowed_categories", Text, nullable=False),
     Column("status", String, nullable=False),
     Column("currency", String(3), nullable=False),
     Column("scale", Integer, nullable=False),
     Column("limit_minor_units", Integer, nullable=False),
+    Column("ceiling_minor_units", Integer),
     Column("expires_at", DateTime(timezone=True), nullable=False),
     Column("policy_version", Integer, nullable=False),
     Column("revocation_epoch", Integer, nullable=False, default=0),
@@ -157,6 +159,8 @@ audit_events = Table(
     Column("human_summary", Text, nullable=False),
     Column("evidence_id", ForeignKey("evidence.id")),
     Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column("sequence", Integer, nullable=False),
+    UniqueConstraint("mandate_id", "sequence", name="audit_event_mandate_sequence"),
 )
 
 agent_profiles = Table(
@@ -177,7 +181,58 @@ vault_tokens = Table(
     Column("merchant_id", String, nullable=False),
     Column("max_amount_minor_units", Integer, nullable=False),
     Column("currency", String(3), nullable=False),
+    Column("scale", Integer, nullable=False, default=2),
     Column("expires_at", DateTime(timezone=True), nullable=False),
+)
+
+disputes = Table(
+    "disputes",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("mandate_id", ForeignKey("mandates.id"), nullable=False),
+    Column("reservation_id", ForeignKey("reservations.id"), nullable=False),
+    Column("reason", Text, nullable=False),
+    Column("status", String, nullable=False),
+    Column("resolution", Text),
+    Column("opened_at", DateTime(timezone=True), nullable=False),
+    Column("resolved_at", DateTime(timezone=True)),
+    CheckConstraint(
+        "status IN ('OPEN', 'MANDATE_HELD', 'MANDATE_FAILED')", name="dispute_status"
+    ),
+)
+
+escalations = Table(
+    "escalations",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("mandate_id", ForeignKey("mandates.id"), nullable=False),
+    Column("checkout_id", String, nullable=False),
+    Column("merchant_id", String, nullable=False),
+    Column("category", String, nullable=False),
+    Column("amount_minor_units", Integer, nullable=False),
+    Column("currency", String(3), nullable=False),
+    Column("scale", Integer, nullable=False),
+    Column("reason_code", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("agent_id", String),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("approval_jws", Text),
+    Column("decided_at", DateTime(timezone=True)),
+    CheckConstraint("status IN ('OPEN', 'APPROVED', 'DENIED')", name="escalation_status"),
+)
+
+payment_runtime_captures = Table(
+    "payment_runtime_captures",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("mandate_id", ForeignKey("mandates.id"), nullable=False),
+    Column("checkout_intent_id", ForeignKey("checkout_intents.id"), nullable=False),
+    Column("settlement_reference", String, nullable=False),
+    Column("checkout_mandate", Text, nullable=False),
+    Column("payment_mandate", Text, nullable=False),
+    Column("checkout_receipt", Text, nullable=False),
+    Column("payment_receipt", Text, nullable=False),
 )
 
 CORE_TABLE_NAMES = (
@@ -195,4 +250,7 @@ CORE_TABLE_NAMES = (
     "audit_events",
     "agent_profiles",
     "vault_tokens",
+    "disputes",
+    "escalations",
+    "payment_runtime_captures",
 )
