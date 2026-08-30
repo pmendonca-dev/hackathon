@@ -109,3 +109,31 @@ Assign disjoint protocol/core and payments/UI ownership boundaries with a commit
 **What we chose:** Laptop A owns UCP/AP2 protocol and checkout work, while Laptop B owns ACP, settlement/receipts/audit and web work; shared files change only through an explicit handoff commit.
 
 **Why:** The partition minimizes simultaneous edits to the same persistence and application files while allowing ACP, PSP, audit, and UI work to proceed independently of UCP checkout implementation. A committed API contract gives the UI a stable integration target without creating a second business authority.
+
+## Durable retry retention
+
+**Decision:** Retention boundary for durable idempotency records
+
+**Options considered (one per line):**
+
+Keep completed retries indefinitely
+Delete retries opportunistically without a persisted deadline
+Persist a retention deadline of at least 24 hours and clean up only after it expires
+
+**What we chose:** Persist `retained_until` for every idempotency record with a minimum 24-hour retention period.
+
+**Why:** A durable deadline preserves deterministic replay through process restarts while making deletion explicit and auditable instead of relying on memory or implicit database cleanup.
+
+## Shared mandate serialization
+
+**Decision:** Serialization boundary for capture and signed revocation
+
+**Options considered (one per line):**
+
+Rely only on SQLite's database-wide writer lock
+Use separate capture and revocation synchronization paths
+Persist and acquire one lock record per mandate inside the shared write transaction
+
+**What we chose:** Use one durable `mandate_locks` record per mandate, acquired by both capture and signed revocation in their `BEGIN IMMEDIATE` transactions.
+
+**Why:** The explicit shared resource documents and enforces the commit race boundary independently of the current SQLite implementation, so a revocation and a capture cannot make conflicting pre-commit decisions.
