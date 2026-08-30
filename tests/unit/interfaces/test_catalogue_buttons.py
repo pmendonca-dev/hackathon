@@ -46,11 +46,15 @@ def test_every_button_delivers_the_price_it_advertises(wish: views.Wish) -> None
 
 
 def test_no_button_exists_for_something_the_agent_cannot_be_asked_for() -> None:
-    """`parse_intent` only ever answers travel or lodging."""
+    """A button for a category `parse_intent` cannot produce is a dead button.
+
+    Asserted against the parser rather than against today's catalogue: what the
+    merchant sells is not this lane's business, but whether the agent can be asked
+    for it is.
+    """
+    reachable = {parse_intent(wish.instruction).category for wish in views.wishes(_offers())}
     offered = {wish.category for wish in views.wishes(_offers())}
-    catalogued = {item.category for item in CATALOG}
-    assert offered == {"travel", "lodging"}
-    assert catalogued - offered, "the catalogue has more than the agent can express"
+    assert offered <= reachable, f"no way to ask the agent for {offered - reachable}"
 
 
 def test_a_wish_slug_survives_a_round_trip() -> None:
