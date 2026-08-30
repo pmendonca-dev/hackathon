@@ -51,6 +51,16 @@ class SqliteMandateRepository:
         row = self._connection.execute(select(mandates).where(mandates.c.id == mandate_id)).mappings().one_or_none()
         return self._to_mandate(row) if row else None
 
+    def for_principal(self, principal_id: str) -> list[Mandate]:
+        """Every mandate one buyer holds. Scoped by construction: there is no query
+        here that answers "all mandates", because no caller is entitled to that."""
+        rows = self._connection.execute(
+            select(mandates)
+            .where(mandates.c.principal_id == principal_id)
+            .order_by(mandates.c.id)
+        ).mappings().all()
+        return [self._to_mandate(row) for row in rows]
+
     def for_authority_kid(self, kid: str) -> list[Mandate]:
         rows = self._connection.execute(
             select(mandates).join(revocation_authorities).where(revocation_authorities.c.kid == kid)

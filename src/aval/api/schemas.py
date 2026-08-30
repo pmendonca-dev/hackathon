@@ -138,3 +138,11 @@ class MandateView(BaseModel):
     expires_at: datetime
     policy_version: int
     revocation_epoch: int
+
+
+class MandateListView(BaseModel):
+    """The mandates of one principal. The scope is echoed back so a client cannot
+    mistake a listing for somebody else's inbox."""
+
+    principal_id: str
+    mandates: list[MandateView]

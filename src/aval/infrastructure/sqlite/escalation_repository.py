@@ -13,7 +13,7 @@ from sqlalchemy import Connection, select, update
 from aval.domain.entities import Escalation
 from aval.domain.enums import EscalationStatus
 from aval.domain.money import Money
-from aval.infrastructure.sqlite.models import escalations
+from aval.infrastructure.sqlite.models import escalations, mandates
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -78,6 +78,24 @@ class SqliteEscalationRepository:
             select(escalations)
             .where(
                 escalations.c.mandate_id == mandate_id,
+                escalations.c.status == EscalationStatus.OPEN.value,
+            )
+            .order_by(escalations.c.created_at)
+        ).mappings().all()
+        return [self._to_escalation(row) for row in rows]
+
+    def open_for_principal(self, principal_id: str) -> list[Escalation]:
+        """What is waiting on one person, across every mandate they hold.
+
+        The join is the access control: an escalation is reachable only through the
+        mandate that owns it, so a caller cannot read a decision waiting on somebody
+        else by asking for it in bulk.
+        """
+        rows = self._connection.execute(
+            select(escalations)
+            .join(mandates, mandates.c.id == escalations.c.mandate_id)
+            .where(
+                mandates.c.principal_id == principal_id,
                 escalations.c.status == EscalationStatus.OPEN.value,
             )
             .order_by(escalations.c.created_at)

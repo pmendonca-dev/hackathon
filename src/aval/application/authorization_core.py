@@ -669,6 +669,12 @@ class AuthorizationCore:
         with self._engine.connect() as connection:
             return SqliteEscalationRepository(connection).open_for_mandate(mandate_id)
 
+    def open_escalations_for_principal(self, principal_id: str) -> list[Escalation]:
+        """Everything waiting on one person. There is deliberately no unscoped variant:
+        a pending escalation names what somebody is about to buy."""
+        with self._engine.connect() as connection:
+            return SqliteEscalationRepository(connection).open_for_principal(principal_id)
+
     def _verified_approval(
         self, token: str, mandate: Mandate, *, kind: str = "approval"
     ) -> dict:
@@ -913,6 +919,25 @@ class AuthorizationCore:
             limit, _ = SqlitePolicyRepository(connection).active_limit_for(mandate_id, mandate.limit)
             spent = SqliteLedgerRepository(connection).spent_for(mandate_id, limit)
             return MandateSnapshot(mandate=mandate, limit=limit, spent=spent)
+
+    def snapshots_for_principal(self, principal_id: str) -> list[MandateSnapshot]:
+        """Every mandate one buyer holds, each already priced against its live limit.
+
+        Built one connection deep so a listing reads the same active limit and the same
+        spend a single read would — a judge who moves the limit sees the list move too.
+        """
+        with self._engine.connect() as connection:
+            policies = SqlitePolicyRepository(connection)
+            ledger = SqliteLedgerRepository(connection)
+            snapshots = []
+            for mandate in SqliteMandateRepository(connection).for_principal(principal_id):
+                limit, _ = policies.active_limit_for(mandate.id, mandate.limit)
+                snapshots.append(
+                    MandateSnapshot(
+                        mandate=mandate, limit=limit, spent=ledger.spent_for(mandate.id, limit)
+                    )
+                )
+            return snapshots
 
     def timeline_for(self, mandate_id: str) -> list[LedgerEntry]:
         with self._engine.connect() as connection:
