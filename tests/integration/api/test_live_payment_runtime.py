@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import secrets
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -30,6 +31,9 @@ def _signed_headers(
     signature_input = (
         'sig1=("@method" "@authority" "@path" "ucp-agent" "idempotency-key" '
         f'"content-digest" "content-type");keyid="{signing_kid}";alg="ES256"'
+        # The lane requires a freshness stamp and a nonce; a fresh nonce per call keeps
+        # a legitimate retry legitimate while a byte-identical replay is refused.
+        f';created={int(app.state.runtime.clock.now().timestamp())};nonce="{secrets.token_hex(8)}"'
     )
     request = SignedRequest(
         method=method, authority="merchant.aval.local", path=path,

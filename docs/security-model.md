@@ -148,6 +148,31 @@ Fronteiras de demonstração, assumidas conscientemente:
   aberta.
 - **Sem limitação de taxa.** Fora do escopo do case e irrelevante para as invariantes:
   nenhuma quantidade de tentativas produz uma compra que o mandato não permitia.
+- **Leitura por `mandate_id` é uma capability, não uma sessão.** `GET /mandates/{id}`,
+  `GET /ledger` e `GET /escalations?mandate_id=` respondem a quem apresentar o id, sem
+  autenticar. O id é 32 hex aleatórios, então conhecê-lo *é* a autorização — o mesmo
+  modelo de um link secreto. É fronteira assumida, e vale registrar o que a sustenta:
+  quem conhece o id de um mandato quase sempre é quem participou dele.
+
+  **A escolha por `principal_id` não se sustentava, e por isso não é mais aceita.** Um
+  `usr_tg_{chat_id}` ou `usr_marta` é um nome que qualquer um adivinha, não um segredo de
+  32 hex. As duas listagens escopadas por pessoa — `GET /mandates` e
+  `GET /escalations?principal_id=` — exigem hoje um JWS do titular, e respondem pela
+  interseção: os mandatos que *aquela chave* sustenta, verificados um a um contra a
+  autoridade registrada de cada mandato, exatamente como o kill switch decide seu
+  alcance. Uma chave que não sustenta nada recebe lista vazia, e não uma recusa — a
+  mesma resposta que um titular novo recebe antes de criar o primeiro mandato, de modo
+  que a rota não vira oráculo de quais pessoas existem.
+
+  O que isso corrige: o isolamento de **autoridade** entre jurados sempre existiu e é
+  testado — um jurado não revoga o mandato do outro. O de **visibilidade** não existia.
+  Numa sala com um bot só, adivinhar o chat id vizinho lia o mandato do outro, o limite e
+  o quanto já tinha gasto. `tests/integration/api/test_listing_api.py`
+- **A leitura de auditor de terceiro vive na faixa de protocolo, não nesta.**
+  `GET /audit/mandates/{id}` é autenticado por RFC 9421 e escopado por `can_read`, com
+  `auditor-key` própria: um auditor prova quem é sem nunca autorizar uma compra. O
+  `/ledger?view=auditor` desta faixa é a projeção de demonstração da mesma trilha.
+  Exigir assinatura *do titular* nele seria incoerente — um auditor não é o titular.
 
 ---
 

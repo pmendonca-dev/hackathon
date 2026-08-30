@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import secrets
+from datetime import UTC, datetime
 
 import pytest
 from cryptography.hazmat.primitives import hashes
@@ -13,7 +15,15 @@ from aval.adapters.ucp.http_signatures import (
     signature_base,
 )
 from aval.domain.entities import AgentIdentity
+from aval.security.http_signature import ReplayGuard
 from aval.security.key_custody import KeyCustodyService
+
+NOW = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
+
+
+def _verifier(identity: AgentIdentity) -> Rfc9421Verifier:
+    """A verifier wired the way the runtime wires one: a clock and a nonce memory."""
+    return Rfc9421Verifier(TrustedRegistry(identity), clock=lambda: NOW, seen=ReplayGuard())
 
 
 class TrustedRegistry:
@@ -36,6 +46,7 @@ def _valid_request(custody: KeyCustodyService, *, key_id: str = "agent-key") -> 
             "signature-input": (
                 'sig1=("@method" "@authority" "@path" "ucp-agent" '
                 f'"idempotency-key" "content-digest" "content-type");keyid="{key_id}";alg="es256"'
+                f';created={int(NOW.timestamp())};nonce="{secrets.token_hex(8)}"'
             ),
         },
         body=b'{"z":"Caf\xc3\xa9","a":1}',
@@ -67,7 +78,7 @@ def test_rejects_a_der_signature_even_when_its_ecdsa_math_is_valid() -> None:
     )
 
     with pytest.raises(UcpAuthenticationError, match="signature_invalid"):
-        Rfc9421Verifier(TrustedRegistry(identity)).verify(request)
+        _verifier(identity).verify(request)
 
 
 def test_rejects_an_unsigned_request_before_it_can_reach_checkout() -> None:
@@ -77,7 +88,7 @@ def test_rejects_an_unsigned_request_before_it_can_reach_checkout() -> None:
     request = _valid_request(custody).with_header("signature", "")
 
     with pytest.raises(UcpAuthenticationError, match="signature_missing"):
-        Rfc9421Verifier(TrustedRegistry(_identity(custody))).verify(request)
+        _verifier(_identity(custody)).verify(request)
 
 
 def test_rejects_a_profile_absent_from_the_local_trust_registry() -> None:
@@ -89,7 +100,7 @@ def test_rejects_a_profile_absent_from_the_local_trust_registry() -> None:
     )
 
     with pytest.raises(UcpAuthenticationError, match="profile_not_trusted"):
-        Rfc9421Verifier(TrustedRegistry(_identity(custody))).verify(request)
+        _verifier(_identity(custody)).verify(request)
 
 
 def test_rejects_a_key_that_is_not_published_by_the_trusted_profile() -> None:
@@ -100,7 +111,7 @@ def test_rejects_a_key_that_is_not_published_by_the_trusted_profile() -> None:
     request = _valid_request(custody, key_id="other-key")
 
     with pytest.raises(UcpAuthenticationError, match="key_not_found"):
-        Rfc9421Verifier(TrustedRegistry(_identity(custody))).verify(request)
+        _verifier(_identity(custody)).verify(request)
 
 
 def test_rejects_a_digest_created_from_reserialized_json_bytes() -> None:
@@ -115,4 +126,4 @@ def test_rejects_a_digest_created_from_reserialized_json_bytes() -> None:
     )
 
     with pytest.raises(UcpAuthenticationError, match="content_digest_invalid"):
-        Rfc9421Verifier(TrustedRegistry(_identity(custody))).verify(request)
+        _verifier(_identity(custody)).verify(request)

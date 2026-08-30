@@ -122,9 +122,18 @@ export function AvalProvider({
     setLoading(true);
     setError(null);
     try {
+      // Both principal-scoped listings are signed by the wallet: the id in the URL is a
+      // guessable name, and the key is what decides which mandates come back. Before the
+      // wallet exists there is nothing this page could be entitled to see anyway.
+      if (!wallet) {
+        setMandates([]);
+        setEscalations([]);
+        return;
+      }
+      const readToken = await signCompactJws({ principal_id: principalId }, wallet);
       const [listed, pending] = await Promise.all([
-        gateway.listMandates(principalId),
-        gateway.listEscalations(principalId),
+        gateway.listMandates(principalId, readToken),
+        gateway.listEscalations(principalId, readToken),
       ]);
       setMandates(listed.mandates);
       setEscalations(pending.escalations);
@@ -160,7 +169,10 @@ export function AvalProvider({
     } finally {
       setLoading(false);
     }
-  }, [gateway, principalId]);
+    // `wallet` belongs here: the listings are signed with it, so a reload captured
+    // before it existed would hold a null key and the page would stay empty for good.
+    // Depending on it is also what makes the first load happen the moment it is ready.
+  }, [gateway, principalId, wallet]);
 
   useEffect(() => {
     void reload();

@@ -112,6 +112,32 @@ class Harness:
             body["idempotency_key"] = idempotency_key
         return body
 
+    def read_token(self, principal_id: str = "usr_marta", *, kid: str | None = None) -> str:
+        """The holder's authorization to *see* their own listings.
+
+        Scoped by the key, so it answers for the mandates that key actually holds and
+        for nothing else — a principal id is a guessable name, never an entitlement.
+        """
+        return sign_compact_jws(
+            {"principal_id": principal_id}, self.custody, kid or self.HOLDER_KID
+        )
+
+    def list_mandates(self, principal_id: str = "usr_marta", **overrides: Any):
+        params = {
+            "principal_id": principal_id,
+            "authorization_jws": self.read_token(principal_id),
+        }
+        params.update(overrides)
+        return self.client.get("/mandates", params=params)
+
+    def list_escalations(self, principal_id: str = "usr_marta", **overrides: Any):
+        params = {
+            "principal_id": principal_id,
+            "authorization_jws": self.read_token(principal_id),
+        }
+        params.update(overrides)
+        return self.client.get("/escalations", params=params)
+
     def policy_version(self, mandate_id: str) -> int:
         return int(self.client.get(f"/mandates/{mandate_id}").json()["policy_version"])
 

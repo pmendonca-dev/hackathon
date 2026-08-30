@@ -53,8 +53,10 @@ const created = await gateway.createMandate({
 const mandateId = created.mandate_id;
 check('o navegador cria um mandato com a própria chave', Boolean(mandateId), mandateId);
 
-// 2 — the listing the sidebar reads.
-const listed = await gateway.listMandates(principalId);
+// 2 — the listing the sidebar reads. Signed by this browser's own key: the principal id
+// in the URL is a guessable name, so the key is what decides which mandates come back.
+const readToken = await signCompactJws({ principal_id: principalId }, wallet);
+const listed = await gateway.listMandates(principalId, readToken);
 check(
   'a listagem escopada devolve o mandato',
   listed.mandates.some((item) => item.mandate_id === mandateId),
@@ -84,7 +86,7 @@ check(
 );
 
 // 5 — the holder moves the live limit with a browser signature.
-const beforeMove = (await gateway.listMandates(principalId)).mandates
+const beforeMove = (await gateway.listMandates(principalId, readToken)).mandates
   .find((item) => item.mandate_id === mandateId);
 const signLimit = (minorUnits, policyVersion) => signCompactJws(
   {

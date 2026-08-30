@@ -55,7 +55,27 @@ from aval.infrastructure.sqlite.transaction import run_in_write_transaction
 # Only these three refusals are a question for a person. The others are answers.
 # A ceiling, a revocation, an expiry and a malformed amount are not negotiable, and
 # offering an approve button beside them would be a lie about what the mandate says.
-APPROVABLE_REASONS = frozenset({"merchant_out_of_scope", "category_not_allowed", "budget_exceeded"})
+# Every reason the ladder answers with AWAITING_HUMAN has to appear here, or the holder
+# taps Aprovar, the escalation closes as APPROVED, and the resumed capture is refused by
+# the very rung that opened it — a purchase that can never complete and can never be
+# retried. What is *not* approvable must be REJECTED on the ladder instead of escalated:
+# the ceiling, a mandate revocation, an expiry and a broken amount are refusals, and they
+# are deliberately absent from this set because they never reach it.
+APPROVABLE_REASONS = frozenset(
+    {
+        "merchant_out_of_scope",
+        "category_not_allowed",
+        "budget_exceeded",
+        # Authority over *how often*, the way the budget is authority over *how much*.
+        # A human may say yes to a fourth purchase.
+        "usage_limit_exceeded",
+        # `budget:zero` is the scope a holder picks when they want spending frozen but
+        # not the agent killed — so the holder who froze it is the one who may still
+        # wave a single purchase through. Revoking the mandate itself remains the hard
+        # stop, and it is refused, never escalated.
+        "budget_revoked",
+    }
+)
 
 ESCALATION_WINDOW = timedelta(hours=1)
 
@@ -411,6 +431,54 @@ class AuthorizationCore:
                 raise signature_failure
             raise ValueError("unknown revocation authority")
         run_in_write_transaction(self._engine, operation)
+
+    def mandates_readable_by(self, token: str, principal_id: str) -> list[str]:
+        """Which of this buyer's mandates the signer of `token` is entitled to see.
+
+        The reach is decided exactly the way a revocation's is — by verifying the
+        signature against each mandate's *own* registered holder authority — so a key
+        sees the mandates it could already have ended, and not one more. Holding a key
+        for one of a person's mandates never becomes sight of the rest of them.
+
+        A key that is an authority on nothing gets an empty list rather than a refusal.
+        That is deliberate: a distinct answer for "wrong key" and "no mandates yet"
+        would turn this into an oracle for which buyers exist, and it is also what lets
+        a holder open the page before they have created anything.
+
+        The token names the buyer it is being presented for, so it cannot be lifted from
+        one listing and replayed against another. It is not otherwise time-bound, and it
+        does not need to be: its entire reach is *the mandates this key already
+        controls*, so replaying it grants nothing the key does not already grant.
+        """
+        try:
+            encoded_header = token.split(".")[0]
+            header = json.loads(
+                base64.urlsafe_b64decode(encoded_header + "=" * (-len(encoded_header) % 4))
+            )
+            kid = header["kid"]
+        except (IndexError, KeyError, ValueError, json.JSONDecodeError) as error:
+            raise ValueError("malformed read authorization") from error
+
+        readable: list[str] = []
+        with self._engine.connect() as connection:
+            for mandate in SqliteMandateRepository(connection).for_authority_kid(kid):
+                if mandate.principal.id != principal_id:
+                    continue
+                for authority in mandate.authorities:
+                    if authority.kid != kid or authority.role is not RevocationRole.HOLDER:
+                        continue
+                    try:
+                        claims = verify_compact_jws(
+                            token, public_key_from_jwk(dict(authority.public_jwk))
+                        )
+                    except ValueError:
+                        continue
+                    # The token has to be about this buyer, or a listing signed for one
+                    # person would answer for another.
+                    if claims.get("principal_id") == principal_id:
+                        readable.append(mandate.id)
+                        break
+        return readable
 
     def submit_principal_revocation(self, token: str) -> list[str]:
         """End every mandate this key is an authority on, under one signature.
@@ -1214,7 +1282,7 @@ class AuthorizationCore:
             ), mandate
         if instrument_id is not None:
             cleared("instrument_not_revoked", instrument_id)
-        if budget_zero:
+        if budget_zero and "budget_revoked" not in approved_reasons:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
                 "budget_revoked",

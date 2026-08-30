@@ -213,7 +213,14 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
     )
     # One verifier for every protocol door. Payment and audit are agent traffic too, so
     # they answer the same question the checkout does: is the caller who it claims to be.
-    agent_verifier = Rfc9421Verifier(SqliteTrustedAgentRegistry(runtime.engine))
+    # The runtime's clock and the runtime's nonce memory, so a signature is exactly as
+    # fresh at this door as at the authorization one — and a nonce burned at either is
+    # burned at both.
+    agent_verifier = Rfc9421Verifier(
+        SqliteTrustedAgentRegistry(runtime.engine),
+        clock=runtime.clock.now,
+        seen=runtime.replay_guard,
+    )
 
     # RFC 9421 over UCP needs the unparsed bytes, which FastAPI would otherwise consume.
     app.add_middleware(RawBodyMiddleware)

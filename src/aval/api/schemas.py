@@ -140,7 +140,11 @@ class PurchaseRequest(BaseModel):
 
 class CaptureRequest(PurchaseRequest):
     idempotency_key: str = Field(min_length=1)
-    terms_hash: str | None = None
+    # There is deliberately no `terms_hash` here. The terms hash is what the merchant
+    # verifies a purchase against, so it may only ever be derived from the offer this
+    # edge verified — never asserted by the caller. A caller that could name it could
+    # mint a proof binding an offer whose nonce was never spent, and redeem the same
+    # signed offer as many times as it liked.
     # Which payment method is paying. A mandate that names one refuses any other, and
     # refuses a capture that presents none.
     instrument_id: str | None = None

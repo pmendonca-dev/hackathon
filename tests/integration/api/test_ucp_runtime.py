@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import secrets
 from datetime import UTC, datetime, timedelta
 
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
@@ -27,6 +28,7 @@ def _signed_headers(
     signature_input = (
         'sig1=("@method" "@authority" "@path" "ucp-agent" "idempotency-key" '
         '"content-digest" "content-type");keyid="agent-key";alg="ES256"'
+        f';created={int(app.state.runtime.clock.now().timestamp())};nonce="{secrets.token_hex(8)}"'
     )
     request = SignedRequest(
         method="POST",
@@ -196,9 +198,13 @@ def test_mounted_completion_requires_ap2_mandate_and_idempotency_key() -> None:
             "ucp-agent": 'profile="https://agent.aval.local/.well-known/ucp"',
             "content-digest": content_digest_sha256(body),
             "content-type": "application/json",
+            # Well-formed in every respect except the covered set: `idempotency-key` is
+            # missing, which is the one thing this test is about.
             "signature-input": (
                 'sig1=("@method" "@authority" "@path" "ucp-agent" "content-digest" '
                 '"content-type");keyid="agent-key";alg="ES256"'
+                f';created={int(app.state.runtime.clock.now().timestamp())}'
+                f';nonce="{secrets.token_hex(8)}"'
             ),
             "signature": "sig1=:AA==:",
         }

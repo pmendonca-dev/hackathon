@@ -289,9 +289,13 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 ## F. Riscos operacionais
 
 - [x] **Ambiente resolvido.** `pyproject.toml` agora aceita Python 3.12 e 3.13; a suíte
-  roda nesta máquina. **404 testes passando.**
-- [x] **Ambiente limpo verificado** — `scripts/smoke_demo.py` roda o case inteiro contra
-  um servidor HTTP real e passa. Rodar de novo a partir de um clone do zero antes do freeze.
+  roda nesta máquina. **432 testes passando.**
+- [x] **Ambiente limpo verificado, a partir de um clone do zero** — 30/08, contra o branch
+  do PR #14. `git clone` raso, `venv` nova, `pip install -e .`, `npm install`: 432 testes
+  Python, 23 do navegador, `smoke_demo.py` e `telegram_smoke.py` ALL GREEN contra um
+  servidor HTTP real, e a jornada do navegador 15/15. Nada de estado de execução vai no
+  repositório — `var/` e `.aval` não existem no clone, então a primeira execução de um
+  jurado é a mesma que esta.
 - [x] **LLM sem dependência de rede** — o proponente cai para regras em qualquer falha
   (sem chave, timeout, JSON inválido, SKU inventado), com teste para cada caso. A decisão
   de autorização nunca dependeu do modelo, e agora isso é demonstrável nos dois sentidos:
@@ -335,3 +339,69 @@ mudança de limite não avançava a versão de política, uma compra recusada pe
 ficava bloqueada para sempre, e a aprovação de escalação pedia uma segunda confirmação da
 mesma compra. Os dois primeiros vieram de testes; o terceiro só apareceu contra um
 servidor de verdade.
+
+---
+
+## G. Auditoria de 30/08 — cinco defeitos encontrados com a suíte verde
+
+A suíte passava e o smoke ao vivo passava. Estes cinco não apareciam em
+nenhum dos dois, porque cada teste exercitava o **caminho honesto** da funcionalidade que
+ele cobria. Todos têm agora teste de regressão que falha sem a correção.
+
+### G1 — a oferta assinada podia ser gasta infinitas vezes `[crítico]`
+
+`POST /capture` aceitava um campo `terms_hash` do chamador, e ele **vencia** o valor
+derivado da oferta que a borda tinha acabado de verificar. O ataque: enviar a compra
+**sem** `merchant_authorization` — de modo que o nonce da oferta nunca é queimado — e
+declarar o `terms_hash` daquela oferta à mão. O AVAL emitia uma prova de autorização
+vinculada a esses termos, e `POST /merchant/verify` **aceitava**, com os cinco checks
+verdes. A mesma passagem de $130 podia ser resgatada quantas vezes o orçamento
+aguentasse, e o `test_the_same_offer_cannot_be_spent_twice` continuava passando porque
+só testava o caminho honesto.
+
+O `terms_hash` é exatamente aquilo contra o que o merchant confere a compra, então só
+pode sair da oferta que esta borda verificou. O campo saiu do contrato:
+`src/aval/api/schemas.py`, `src/aval/api/purchase_flow.py`.
+`tests/integration/api/test_offer_single_use.py`
+
+### G2 — a escalação de frequência aprovava e não comprava
+
+`usage_limit_exceeded` escalava para aprovação humana, mas não estava em
+`APPROVABLE_REASONS`. O titular assinava *Aprovar*, a escalação fechava como `APPROVED`
+— e a captura retomada era recusada pelo mesmo degrau que a abriu. Não sobrava nada para
+retentar: uma compra morta com a tela dizendo que foi aprovada. É o bônus que o próprio
+enunciado nomeia (*"até 3× por mês"*), e a documentação já prometia que era aprovável.
+
+### G3 — o mesmo beco sem saída no orçamento zerado
+
+`budget_revoked` (escopo `budget:zero`) também devolvia `AWAITING_HUMAN` sem escape
+algum na escada. `budget:zero` é justamente o escopo que o titular escolhe quando quer
+**congelar** o gasto sem matar o agente, então quem congelou é quem pode liberar uma
+compra avulsa. Revogar o mandato inteiro segue sendo parada dura — recusado, nunca
+escalado. `tests/integration/api/test_escalation_reasons_are_approvable.py`
+
+### G4 — a faixa de protocolo não tinha defesa nenhuma contra replay `[protocolo]`
+
+`Rfc9421Verifier` não exigia `created` nem `nonce` — a regex do `Signature-Input`
+sequer os **permitia**. Uma assinatura que essa faixa emitiu autenticava para sempre:
+quem a lesse num log, num proxy ou numa captura podia reenviá-la intacta na semana
+seguinte. A faixa de autorização sempre exigiu os dois; esta não. Agora as duas
+respondem igual, contra o mesmo relógio e a mesma memória de nonces do runtime, e o
+verificador exige `clock` e `seen` como argumentos obrigatórios — uma defesa que se
+pode desligar esquecendo um parâmetro acaba desligada na implantação que importava.
+`tests/integration/api/test_protocol_lane_replay.py`
+
+### G5 — revogação com escopo aplicava e reportava falha
+
+`POST /mandates/{id}/revocations` julgava o resultado pelo **status do mandato**. Mas
+uma revogação com escopo — cartão cancelado, orçamento congelado — deixa o mandato
+`ACTIVE` de propósito: é o ponto inteiro dela. Toda revogação com escopo parecia então
+um token apontado para outro mandato, e a rota devolvia `403 revocation_mandate_mismatch`
+**depois de a revogação já estar comprometida**. A pior resposta possível: convida a
+retentar o que já aconteceu. A rota agora compara o mandato que o *token* nomeia com o
+da URL — que é a pergunta que ela sempre quis fazer. `tests/integration/api/test_protocol_revocation_scopes.py`
+
+> **O padrão dos cinco.** Nenhum é um erro de digitação; todos são um teste que exercita
+> o caminho honesto de uma funcionalidade e nunca o caminho torto ao lado. G1 e G4 são de
+> segurança, G2, G3 e G5 quebram na frente do jurado. Vale como método: para cada garantia
+> que o sistema anuncia, o teste tem que tentar **quebrá-la**, não confirmá-la.
