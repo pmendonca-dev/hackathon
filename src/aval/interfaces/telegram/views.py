@@ -35,6 +35,8 @@ CALLBACK_RECEIPT = "rec"
 CALLBACK_REVOKE_MENU = "rvk"
 CALLBACK_REVOKE_CONFIRM = "rvm"
 CALLBACK_DISPUTE = "dsp"
+CALLBACK_CARD_MENU = "crd"
+CALLBACK_CARD_CONFIRM = "crm"
 CALLBACK_CATALOGUE = "cat"
 CALLBACK_BUY = "buy"
 
@@ -49,6 +51,8 @@ _VERBS = frozenset(
         CALLBACK_DISPUTE,
         CALLBACK_CATALOGUE,
         CALLBACK_BUY,
+        CALLBACK_CARD_MENU,
+        CALLBACK_CARD_CONFIRM,
     }
 )
 
@@ -140,6 +144,10 @@ def _mandate_body(mandate: MandateView) -> str:
     ]
     if mandate.ceiling is not None:
         lines.append(f"Teto por compra: {format_money(mandate.ceiling)} — <i>ninguém atravessa</i>")
+    if mandate.instrument_label is not None:
+        # The fourth thing the mandate authorizes, next to the other three. The
+        # agent holds a token for it and never the number.
+        lines.append(f"Paga com: <b>{escape(mandate.instrument_label)}</b>")
     lines += [
         f"Pode comprar: {escape(', '.join(mandate.categories))} em {escape(', '.join(mandate.merchants))}",
         f"Vence em {days} dia(s) · política v{mandate.policy_version} · epoch {mandate.revocation_epoch}",
@@ -159,6 +167,12 @@ def _mandate_buttons(mandate: MandateView, *, primary: bool = False) -> tuple[Ro
         )
     )
     if mandate.status == "ACTIVE":
+        # Two different things end here, so they are two different buttons: the
+        # card stops the money, the revocation stops the authority.
+        if mandate.instrument_label is not None:
+            rows.append(
+                (("💳 Cancelar o cartão", f"{CALLBACK_CARD_MENU}:{mandate.id}"),)
+            )
         label = "🛑 Revogar a autoridade" if primary else "🛑 Revogar"
         rows.append(((label, f"{CALLBACK_REVOKE_MENU}:{mandate.id}"),))
     return tuple(rows)
@@ -246,6 +260,27 @@ def revoke_menu(mandate: MandateView) -> View:
         ),
         (
             (("🛑 Revogar agora", f"{CALLBACK_REVOKE_CONFIRM}:{mandate.id}"),),
+            (("← Voltar", f"{CALLBACK_MANDATE}:{mandate.id}"),),
+        ),
+    )
+
+
+def cancel_card_menu(mandate: MandateView) -> View:
+    """Ending the card is not ending the agent, and the screen has to say so."""
+    return View(
+        "\n".join(
+            [
+                f"💳 <b>Cancelar {escape(mandate.instrument_label or 'o cartão')}?</b>",
+                "",
+                "O <b>mandato continua ativo</b>: o agente segue podendo decidir,",
+                "mas fica sem com o que pagar. A próxima compra é recusada",
+                "por <code>instrument_revoked</code>, não por revogação.",
+                "",
+                "Compras já liquidadas não são desfeitas.",
+            ]
+        ),
+        (
+            (("💳 Cancelar o cartão", f"{CALLBACK_CARD_CONFIRM}:{mandate.id}"),),
             (("← Voltar", f"{CALLBACK_MANDATE}:{mandate.id}"),),
         ),
     )

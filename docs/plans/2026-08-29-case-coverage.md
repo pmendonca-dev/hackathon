@@ -17,7 +17,7 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 ## A. Obrigatório — o sistema deve permitir
 
 ### A1. Humano cria mandato verificável, sem expor o cartão
-🟡 Entidade `Mandate` completa e validada (`src/aval/domain/entities.py`).
+✅ Entidade `Mandate` completa e validada (`src/aval/domain/entities.py`).
 
 > **Corrigido em 29/08:** o mandato não dizia **o que** podia ser comprado. `Mandate.allowed_categories` agora é obrigatório (invariante de conjunto não vazio) e o núcleo escala `category_not_allowed`. Antes disso a categoria viajava assinada na oferta e era ignorada — mandato de voos autorizava hotel.
 
@@ -26,11 +26,25 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 - [x] `GET /mandates/{id}` — estado vivo com orçamento gasto e restante
 - [x] **Fluxo de criação no navegador** — `web/src/pages/HolderView.tsx`, assinado pela carteira local
 - [x] **Fluxo de criação no Telegram** — `/start` emite chave P-256 do chat e mandato em nome dela
-- [ ] `POST /vault/tokens` — token escopado por checkout
+- [x] **O mandato nomeia o meio de pagamento** — `Mandate.instrument`, migração
+  `0010_mandate_instrument`. O cartão é lido uma vez em `POST /mandates`, tokenizado na
+  borda e esquecido; o que sobrevive é um token que o agente apresenta e quatro dígitos
+  que a pessoa reconhece. Uma captura que apresenta outro instrumento — ou nenhum — é
+  recusada com `instrument_not_in_mandate`, antes da escada chegar ao dinheiro.
+  `tests/integration/api/test_mandate_instrument.py`
+- [x] **Cancelar o cartão sem revogar o mandato** — escopo `instrument:vt_…`, assinado
+  pelo titular. O mandato segue 🟢 ACTIVE, o orçamento fica onde estava, e a próxima
+  compra é recusada por `instrument_revoked`. Autoridade e pagamento são duas coisas,
+  então são duas revogações. Botão no Telegram, com tela de confirmação.
+- [ ] `POST /vault/tokens` — allowance escopada por checkout (existe em
+  `/agentic_commerce/delegate_payment`; não está no caminho do bot)
 
-> **Nenhum PAN existe no sistema.** O mandato nunca recebe dado de cartão e o agente
-> nunca vê um. O token escopado por checkout continua pendente, mas a propriedade que o
-> case pede — *sem entregar o cartão bruto* — já é verdadeira por construção.
+> **Nenhum PAN existe no sistema.** O número é lido em um único ponto — o corpo de
+> `POST /mandates` — tokenizado ali e descartado. Não é persistido, não é logado e não é
+> repassado: o mandato guarda `vt_…` e `•••• 4242`, e nenhum dos dois reconstrói um
+> cartão. O agente apresenta o token e nada mais, e o token não vale em outro mandato,
+> porque o núcleo recusa uma captura que não apresente o instrumento que este mandato
+> nomeia.
 
 > **Decidido:** `vault_tokens` não é cofre de cartão. O schema é `mandate_id + checkout_intent_id + merchant_id + max_amount + expires_at` — um credencial que só serve neste merchant, neste checkout, até este valor, até este horário. Não é que o cartão esteja guardado com segurança: **ele nunca existe no sistema**. Resposta mais forte ao case do que um cofre seria.
 

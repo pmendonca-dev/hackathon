@@ -124,7 +124,17 @@ class PurchasingAgent:
                 **credit,
             )
 
-        capture_body = {**purchase, "idempotency_key": f"cap_{checkout_id}"}
+        # The agent presents the mandate's own payment method. The token is worthless
+        # anywhere else — the core refuses a capture that names a different one, and the
+        # holder can cancel the card without touching the mandate — and it is not a PAN,
+        # so an agent that leaks it has leaked nothing that can pay.
+        snapshot = self._runtime.core.snapshot(mandate_id)
+        instrument = None if snapshot is None else snapshot.mandate.instrument
+        capture_body = {
+            **purchase,
+            "idempotency_key": f"cap_{checkout_id}",
+            "instrument_id": None if instrument is None else instrument.token,
+        }
         agent = self._signed_call("/capture", capture_body)
         result = capture_purchase(
             self._runtime, agent=agent, body=CaptureRequest(**capture_body)

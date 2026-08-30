@@ -58,6 +58,29 @@ class UsageLimit:
 
 
 @dataclass(frozen=True)
+class PaymentInstrument:
+    """The payment method the mandate names — the case's fourth mandate field.
+
+    `token` is the scoped credential the agent presents at capture. It is minted at the
+    edge from a card the holder typed and the PAN is dropped there, so nothing in the
+    mandate, the agent or the ledger can be replayed into a charge somewhere else.
+
+    `label` is the four digits a person needs to recognise which card they authorized.
+    It is deliberately not derived from the token: the agent should be able to name what
+    it is paying with, and be unable to reconstruct anything that pays.
+    """
+
+    token: str
+    label: str
+
+    def __post_init__(self) -> None:
+        if not self.token:
+            raise DomainError("payment instrument requires a token")
+        if not self.label:
+            raise DomainError("payment instrument requires a label")
+
+
+@dataclass(frozen=True)
 class Mandate:
     id: str
     principal: Principal
@@ -70,6 +93,9 @@ class Mandate:
     authorities: tuple[RevocationAuthority, ...]
     ceiling: Money | None = None
     usage_limit: UsageLimit | None = None
+    # None means the mandate names no payment method and accepts any, which is what
+    # every mandate written before instruments existed meant.
+    instrument: PaymentInstrument | None = None
     status: MandateStatus = MandateStatus.ACTIVE
 
     def __post_init__(self) -> None:

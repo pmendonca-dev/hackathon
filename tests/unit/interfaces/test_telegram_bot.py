@@ -127,7 +127,21 @@ class FakeAval:
             "revocation_epoch": 0,
             "_jwk": body["authorities"][0]["public_jwk"],
         }
-        return {"mandate_id": mandate_id, "policy_version": 1, "revocation_id": "rev_1"}
+        scope = None
+        card = (body.get("payment_method") or {}).get("card_number")
+        if card:
+            # Tokenized here the way the edge does it: the number does not survive
+            # the call, and what the mandate keeps is a token and four digits.
+            token = f"vt_{mandate_id}"
+            scope = f"instrument:{token}"
+            self.mandates[mandate_id]["instrument_label"] = f"•••• {card[-4:]}"
+            self.mandates[mandate_id]["_instrument_scope"] = scope
+        return {
+            "mandate_id": mandate_id,
+            "policy_version": 1,
+            "revocation_id": "rev_1",
+            "instrument_revocation_scope": scope,
+        }
 
     def _verify(self, mandate_id: str, token: str) -> dict[str, Any]:
         """Exactly what the core does: the holder's published key, or nothing."""
@@ -139,8 +153,17 @@ class FakeAval:
         claims = self._verify(mandate_id, body["token"])
         if claims.get("mandate_id") != mandate_id:
             return 400, {"reason_code": "revocation_mandate_mismatch"}
-        self.mandates[mandate_id]["status"] = "REVOKED"
-        self.mandates[mandate_id]["revocation_epoch"] = claims["epoch"]
+        mandate = self.mandates[mandate_id]
+        # Only a mandate-scoped revocation ends the mandate. An instrument scope
+        # withdraws the money and leaves the authority standing.
+        if claims.get("scope") == "mandate":
+            mandate["status"] = "REVOKED"
+        elif claims.get("scope") == mandate.get("_instrument_scope"):
+            mandate["instrument_label"] = None
+            mandate["_card_cancelled"] = True
+        else:
+            return 400, {"reason_code": "revocation_scope_not_allowed"}
+        mandate["revocation_epoch"] = claims["epoch"]
         return 200, {"revoked": True, "epoch": claims["epoch"]}
 
     def _replace_limit(self, mandate_id: str, body: dict[str, Any]):
@@ -174,6 +197,12 @@ class FakeAval:
 
     def _purchase(self, body: dict[str, Any]):
         mandate_id = body["mandate_id"]
+        if self.mandates[mandate_id].get("_card_cancelled"):
+            return 200, {
+                "outcome": "rejected",
+                "reason_code": "instrument_revoked",
+                "human_summary": "Instrumento revogado para este mandato.",
+            }
         if self.mandates[mandate_id]["status"] == "REVOKED":
             return 200, {
                 "outcome": "rejected",
@@ -755,3 +784,53 @@ def test_a_revoked_mandate_offers_no_way_to_buy(world) -> None:
 
     labels = [label for row in api.sent[0][1].buttons for label, _ in row]
     assert not any("comprar" in label.lower() for label in labels)
+
+
+def test_start_names_a_payment_method_the_holder_can_recognise(world) -> None:
+    """The case's fourth mandate field, on screen and never as a card number."""
+    bot, api, aval, _ = world
+
+    bot.handle_update(message("/start"))
+
+    assert "•••• 4242" in api.last_text
+    assert "4242424242424242" not in api.last_text
+
+
+def test_cancelling_the_card_is_signed_and_leaves_the_mandate_alive(world) -> None:
+    """Two brakes, not one. The card stops the money; the mandate keeps the authority.
+
+    A holder who loses a card should not have to end their agent to stop it being
+    charged, and the next purchase should say which of the two actually happened.
+    """
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    mandate_id = identities.get(MARTA).mandate_id
+
+    bot.handle_update(tap(f"{views.CALLBACK_CARD_MENU}:{mandate_id}"))
+    assert "mandato continua ativo" in api.last_text
+
+    bot.handle_update(tap(f"{views.CALLBACK_CARD_CONFIRM}:{mandate_id}"))
+
+    # Signed by the holder's own key, over this mandate and this scope.
+    claims = aval.verified_claims[-1]
+    assert claims["mandate_id"] == mandate_id
+    assert claims["scope"].startswith("instrument:vt_")
+    assert aval.mandates[mandate_id]["status"] == "ACTIVE", "the agent is still authorized"
+
+    bot.handle_update(message("/comprar um voo pra Córdoba"))
+    # `last_text` prefers the edited card left by the tap, so read what was sent.
+    assert "instrument_revoked" in api.sent[-1][1].text
+
+
+def test_a_chat_without_the_card_scope_refuses_rather_than_guessing_one(world) -> None:
+    """A guessed scope is a signature over the wrong thing, so it is never signed."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    mandate_id = identities.get(MARTA).mandate_id
+    identities.bind_mandate(MARTA, mandate_id, instrument_scope=None)
+    signed_before = len(aval.verified_claims)
+
+    bot.handle_update(tap(f"{views.CALLBACK_CARD_CONFIRM}:{mandate_id}"))
+
+    assert "escopo do cartão" in api.last_text
+    assert len(aval.verified_claims) == signed_before, "nothing was signed"
