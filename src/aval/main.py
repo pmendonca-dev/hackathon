@@ -42,6 +42,7 @@ from aval.api.routers.delegate_payment import create_delegate_payment_router
 from aval.api.routers.payment_capture import create_payment_capture_router
 from aval.api.routers.revocation import create_revocation_router
 from aval.api.routers.ui_sessions import create_ui_session_router, ui_local_http_enabled
+from aval.api.routers.ui_workspace import create_ui_workspace_router
 from aval.api.routers.ucp_checkout import create_ucp_checkout_router
 from aval.api.routers.ucp_discovery import create_ucp_discovery_router
 from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
@@ -56,6 +57,8 @@ from aval.application.services.payment_runtime import PaymentRuntime
 from aval.application.services.receipts import ReceiptService
 from aval.application.services.vault import VaultService
 from aval.application.services.ui_sessions import UiLocalCredentials, UiSessionService
+from aval.application.services.ui_operator_revocation import UiOperatorRevocationService
+from aval.application.services.ui_projections import UiProjectionService
 from aval.domain.entities import AgentIdentity, Mandate, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
@@ -82,6 +85,7 @@ PROTOCOL_KEY_IDS = (
     "issuer-key",
     "holder-key",
     "auditor-key",
+    "operator-key",
     "psp-key",
 )
 
@@ -134,6 +138,13 @@ def _seed_protocol_fixtures(runtime: AvalRuntime, clock: Callable[[], datetime])
                     kid="holder-key",
                     role=RevocationRole.HOLDER,
                     public_jwk=custody.public_jwk("holder-key"),
+                    allowed_scopes=frozenset({"mandate"}),
+                ),
+                RevocationAuthority(
+                    id="authority_operator_01",
+                    kid="operator-key",
+                    role=RevocationRole.OPERATOR,
+                    public_jwk=custody.public_jwk("operator-key"),
                     allowed_scopes=frozenset({"mandate"}),
                 ),
             ),
@@ -265,6 +276,27 @@ def _mount_browser_session_lane(app: FastAPI, runtime: AvalRuntime, clock: Calla
     )
     app.state.ui_sessions = sessions
     app.include_router(create_ui_session_router(sessions, secure_cookie=not ui_local_http_enabled()))
+    projections = UiProjectionService(
+        core=runtime.core,
+        disputes=DisputeService(
+            reader=SqliteDisputeEvidenceReader(runtime.engine),
+            checkout_receipt_verifier=lambda token: verify_compact_jws(
+                token, public_key_from_jwk(runtime.custody.public_jwk("merchant-key"))
+            ),
+            payment_receipt_verifier=lambda token: verify_compact_jws(
+                token, public_key_from_jwk(runtime.custody.public_jwk("psp-key"))
+            ),
+        ),
+    )
+    app.include_router(
+        create_ui_workspace_router(
+            sessions=sessions,
+            projections=projections,
+            operator_revocations=UiOperatorRevocationService(
+                core=runtime.core, custody=runtime.custody
+            ),
+        )
+    )
 
 
 def create_app(

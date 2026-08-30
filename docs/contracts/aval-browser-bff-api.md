@@ -101,17 +101,16 @@ Requires a valid session cookie. The returned projection is role-scoped:
     {
       "mandate_id":"mandate_01",
       "merchant_id":"merchant_01",
-      "status":"active",
-      "available_amount":500,
-      "currency":"BRL"
+      "status":"active"
     }
   ]
 }
 ```
 
-The projection omits raw AP2/merchant authorization evidence, receipt JWSs,
-AuthorizationProofs, card data, vault tokens, session values, CSRF values,
-credentials, and keys. A valid but unauthorized role receives
+Only the holder projection may include the holder's available amount and
+currency. Every projection omits raw AP2/merchant authorization evidence,
+receipt JWSs, AuthorizationProofs, card data, vault tokens, session values,
+CSRF values, credentials, and keys. A valid but unauthorized role receives
 `403 ui_role_not_authorized`.
 
 ## Audit and dispute projections

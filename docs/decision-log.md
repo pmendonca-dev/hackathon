@@ -18,6 +18,45 @@ inserting `0006` would create an Alembic identity conflict and make an existing
 database ambiguous. The new revision preserves the schema chain while adding
 only the server-side session table.
 
+## Browser projection scope for multi-merchant mandates
+
+**Decision:** Merchant access to a mandate whose shared timeline cannot be partitioned safely
+
+**Options considered (one per line):**
+
+Return the complete mandate timeline to every merchant named by the mandate
+Filter the current timeline heuristically by merchant fields
+Deny merchant audit and dispute reads unless the mandate has exactly that merchant scope
+
+**What we chose:** Deny merchant audit and dispute reads for multi-merchant
+mandates; merchant reads are allowed only when the mandate scope is exactly the
+merchant session's configured merchant.
+
+**Why:** Current durable audit and dispute reconstruction contains mandate-level
+facts and cannot prove that every event is attributable to one merchant. A
+heuristic filter could disclose another merchant's checkout or settlement
+facts, so the BFF fails closed until a future evidence model provides an
+authoritative merchant partition.
+
+## Browser operator revocation idempotency binding
+
+**Decision:** Idempotency fingerprint for a server-signed browser revocation
+
+**Options considered (one per line):**
+
+Use the fresh ES256 JWS bytes as the idempotency request hash
+Persist browser-side JWS material to replay the original signature
+Bind the BFF's separate idempotency scope to the canonical mandate action
+
+**What we chose:** Use a dedicated Core idempotency scope and a canonical hash
+of the mandate identifier plus the fixed operator-revocation action.
+
+**Why:** ES256 signing produces a new signature for the same semantic command,
+so hashing JWS bytes would turn a same-key browser retry into a mismatch.
+Persisting the raw JWS in a browser session would unnecessarily retain signing
+material. A distinct canonical action hash preserves the durable replay
+contract without exposing or depending on the JWS.
+
 ## Technical coverage objective
 
 **Decision:** Primary product objective for the hackathon solution
