@@ -47,27 +47,14 @@ from aval.api.routers.ucp_discovery import create_ucp_discovery_router
 from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
 from aval.adapters.ap2.receipts import Ap2ReceiptIssuer
 from aval.application.services.checkout import CheckoutService
-from aval.application.services.dispute import DisputeService
-from aval.application.services.payment_runtime import PaymentRuntime
-from aval.application.services.receipts import ReceiptService
 from aval.application.services.delegation import (
     CoreDelegationAuthorizer,
     DurableDelegationService,
 )
-from aval.application.services.vault import VaultService
-from aval.application.services.delegation import CoreDelegationAuthorizer, DurableDelegationService
-from aval.application.services.vault import VaultService
-from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
-from aval.adapters.settlement.mock_card_psp import MockCardPSP
+from aval.application.services.dispute import DisputeService
 from aval.application.services.payment_runtime import PaymentRuntime
 from aval.application.services.receipts import ReceiptService
-from aval.application.services.dispute import DisputeService
-from aval.adapters.ap2.receipts import Ap2ReceiptIssuer
-from aval.infrastructure.sqlite.dispute_evidence_reader import SqliteDisputeEvidenceReader
-from aval.security.jws import verify_compact_jws
-from aval.security.key_custody import public_key_from_jwk
-from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
-from aval.security.authorization_proof import AuthorizationProofService
+from aval.application.services.vault import VaultService
 from aval.domain.entities import AgentIdentity, Mandate, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
@@ -264,25 +251,31 @@ def create_app(
 ) -> FastAPI:
     """Build the whole system: authorization surfaces plus protocol ingress.
 
+    `database_path=None` means in memory, the same as `build_runtime` — a caller that
+    asked for no file must not silently get one, or a throwaway instance would leave
+    state behind and the next run would start from someone else's demo.
+
+    Both lanes are wired to `runtime.clock.now`, not to the raw `clock`. One process has
+    one clock: a demo clock advanced through `/admin/clock` has to expire a mandate at
+    the protocol door exactly when it expires at the authorization door.
+
     `custody` is accepted so a caller can restart against the same database and keep the
     keys it published — a verifier that trusted a key yesterday must still find it today.
     """
     runtime = build_runtime(
-        database_path=database_path or Path(".aval") / "runtime.sqlite3",
+        database_path=database_path,
         now_provider=clock,
         custody=custody,
         extra_key_ids=PROTOCOL_KEY_IDS,
     )
     app = create_authorization_app(runtime)
-    _seed_protocol_fixtures(runtime, clock)
-    _mount_protocol_lane(app, runtime, clock)
+    _seed_protocol_fixtures(runtime, runtime.clock.now)
+    _mount_protocol_lane(app, runtime, runtime.clock.now)
     return app
 
 
-_runtime = build_runtime(database_path=database_path(), extra_key_ids=PROTOCOL_KEY_IDS)
-app = create_authorization_app(_runtime)
-_seed_protocol_fixtures(_runtime, _runtime.clock.now)
-_mount_protocol_lane(app, _runtime, _runtime.clock.now)
+app = create_app(database_path=database_path())
+_runtime = app.state.runtime
 
 if not os.environ.get("AVAL_OPERATOR_TOKEN", "").strip():
     print(f"[aval] operator token for this process: {_runtime.operator_token}")

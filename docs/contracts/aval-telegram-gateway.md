@@ -116,7 +116,7 @@ Caminhos no dict `ENDPOINTS`, no topo de `gateway.py`. `GET /docs` na instância
 { "mandate_id": "mandate_...", "scope": "mandate", "reason": "...", "epoch": 2 }
 
 // mudar limite — PATCH /mandates/{id}/limit
-{ "mandate_id": "mandate_...", "limit_minor_units": 5000,
+{ "mandate_id": "mandate_...", "limit_minor_units": 5000, "policy_version": 1,
   "currency": "USD", "scale": 2 }
 ```
 

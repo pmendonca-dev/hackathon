@@ -26,11 +26,15 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 - [x] `GET /mandates/{id}` — estado vivo com orçamento gasto e restante
 - [x] **Fluxo de criação no navegador** — `web/src/pages/HolderView.tsx`, assinado pela carteira local
 - [x] **Fluxo de criação no Telegram** — `/start` emite chave P-256 do chat e mandato em nome dela
-- [ ] `POST /vault/tokens` — token escopado por checkout
+- [x] **Token escopado por checkout** — `POST /agentic_commerce/delegate_payment`
+  (forma ACP), autenticado por RFC 9421. Devolve um token opaco `vt_` e uma
+  *allowance* derivada do menor entre saldo vivo, teto e total do checkout, presa a
+  este merchant, este checkout e este horário. `DurableDelegationService` guarda a
+  idempotência; `OpaqueTestCredentialTokenizer` não retém PAN nenhum.
 
 > **Nenhum PAN existe no sistema.** O mandato nunca recebe dado de cartão e o agente
-> nunca vê um. O token escopado por checkout continua pendente, mas a propriedade que o
-> case pede — *sem entregar o cartão bruto* — já é verdadeira por construção.
+> nunca vê um. A propriedade que o case pede — *sem entregar o cartão bruto* — é
+> verdadeira por construção, e o token escopado existe na porta de protocolo.
 
 > **Decidido:** `vault_tokens` não é cofre de cartão. O schema é `mandate_id + checkout_intent_id + merchant_id + max_amount + expires_at` — um credencial que só serve neste merchant, neste checkout, até este valor, até este horário. Não é que o cartão esteja guardado com segurança: **ele nunca existe no sistema**. Resposta mais forte ao case do que um cofre seria.
 
@@ -262,7 +266,7 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 ## F. Riscos operacionais
 
 - [x] **Ambiente resolvido.** `pyproject.toml` agora aceita Python 3.12 e 3.13; a suíte
-  roda nesta máquina. **161 testes passando.**
+  roda nesta máquina. **383 testes passando.**
 - [x] **Ambiente limpo verificado** — `scripts/smoke_demo.py` roda o case inteiro contra
   um servidor HTTP real e passa. Rodar de novo a partir de um clone do zero antes do freeze.
 - [x] **LLM sem dependência de rede** — o proponente cai para regras em qualquer falha

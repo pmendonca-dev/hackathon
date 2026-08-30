@@ -6,7 +6,8 @@
 > a versão anterior** — ambas por segurança, ambas com teste:
 >
 > 1. **`PATCH /mandates/{id}/limit` agora exige `authorization_jws`** — JWS ES256 do
->    titular sobre `{mandate_id, limit_minor_units, currency, scale}`. Sem ele:
+>    titular sobre `{mandate_id, limit_minor_units, currency, scale, policy_version}`.
+>    `policy_version` é a versão substituída, e gasta o token. Sem ele:
 >    `403 limit_change_unsigned`. Antes, qualquer um que soubesse o `mandate_id`
 >    aumentava a autoridade de gasto sem prova nenhuma, enquanto **revogar** já exigia
 >    assinatura — a operação mais perigosa era a desprotegida.

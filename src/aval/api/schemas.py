@@ -89,8 +89,11 @@ class CreateMandateResponse(BaseModel):
 class ReplaceLimitRequest(BaseModel):
     limit: MoneyIn
     # Compact JWS ES256 signed by a holder authority of this mandate, over
-    # {mandate_id, limit_minor_units, currency, scale}. Required: moving the budget is
-    # moving spending authority, so it is proved by the holder, not by the operator.
+    # {mandate_id, limit_minor_units, currency, scale, policy_version}. Required: moving
+    # the budget is moving spending authority, so it is proved by the holder, not by the
+    # operator. `policy_version` is the version being superseded, and it is what makes
+    # the token single-use — a limit change is reversible, so a replayable one would let
+    # an old, higher limit be restored after the holder lowered it.
     authorization_jws: str | None = None
 
 

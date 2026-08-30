@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 
 from sqlalchemy import Engine
 
 from aval.application.authorization_core import AuthorizationCore, CaptureCommand, CaptureResult
 from aval.application.services.checkout import DEFAULT_CHECKOUT_CATEGORY
-from aval.domain.money import Money
 from aval.infrastructure.sqlite.vault_repository import SqliteVaultTokenRepository
 from aval.infrastructure.sqlite.payment_runtime_repository import (
     PersistedRuntimeCapture, SqlitePaymentRuntimeRepository,

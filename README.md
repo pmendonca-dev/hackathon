@@ -25,7 +25,7 @@ python -m venv .venv
 # source .venv/bin/activate && pip install -e .  # Linux/macOS
 
 .venv/Scripts/python.exe -m pip install pytest httpx uvicorn
-.venv/Scripts/python.exe -m pytest -q             # 331 testes
+.venv/Scripts/python.exe -m pytest -q             # 383 testes
 
 AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe -m uvicorn aval.main:app --port 8099
 ```
@@ -108,8 +108,11 @@ curl "localhost:8099/ledger?merchant_id=vuelaya&view=merchant"
 curl "localhost:8099/ledger?mandate_id=mandate_...&view=auditor"
 
 # 5. Um jurado muda o limite — vale na próxima decisão, sem restart.
-#    Exige JWS do titular sobre {mandate_id, limit_minor_units, currency, scale}:
+#    Exige JWS do titular sobre
+#    {mandate_id, limit_minor_units, currency, scale, policy_version}:
 #    mudar o orçamento é mudar autoridade de gasto, e isso é do dono do mandato.
+#    `policy_version` é a versão que está sendo substituída — é o que gasta o
+#    token. Sem isso, quem capturasse uma autorização antiga desfaria a redução.
 curl -X PATCH localhost:8099/mandates/mandate_.../limit -H 'content-type: application/json' \
   -d '{"limit": {"minor_units": 10000, "currency": "USD", "scale": 2},
        "authorization_jws": "<JWS ES256 assinado pela chave da Marta>"}'

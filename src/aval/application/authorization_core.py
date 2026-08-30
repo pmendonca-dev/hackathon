@@ -14,7 +14,6 @@ from sqlalchemy.pool import StaticPool
 from aval.application.ports import AuthorizationProofIssuer, SettlementAdapter
 from aval.domain.entities import (
     AgentIdentity,
-    AuditEvent,
     Dispute,
     Escalation,
     Mandate,
@@ -258,6 +257,13 @@ class AuthorizationCore:
         deliberately not accepted here — running the service is not the same as owning
         the mandate.
 
+        The payload also names the `policy_version` it supersedes, and that is what makes
+        it single-use. A revocation is irreversible, so replaying one changes nothing; a
+        limit change is *reversible*, so without a version binding a captured JWS for an
+        old, higher limit could be replayed to undo the holder lowering it — the exact
+        move the trial by fire asks a judge to make. Versions only go up, so a token
+        signed against version N is dead the moment version N+1 exists.
+
         `authorization_jws=None` is the in-process path used by the core's own tests and
         by trusted callers that have already established authority; every HTTP caller
         goes through the signed path.
@@ -283,6 +289,15 @@ class AuthorizationCore:
                 if signed_unit != (limit.minor_units, limit.currency, limit.scale):
                     raise ApprovalError(
                         403, "limit_change_amount_mismatch", "O limite assinado não confere."
+                    )
+                # The version the holder was looking at when they signed. Anything else
+                # is a token from before some other change — replaying it would move the
+                # budget back to a limit the holder has already left behind.
+                if claims.get("policy_version") != mandate.policy_version:
+                    raise ApprovalError(
+                        403,
+                        "limit_change_version_stale",
+                        "A autorização foi assinada sobre uma política anterior.",
                     )
             version = SqlitePolicyRepository(connection).replace_limit(mandate_id, limit)
             metadata = dict(mandate.revocation_metadata)

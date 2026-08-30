@@ -278,6 +278,9 @@ export function AvalProvider({
               limit_minor_units: minorUnits,
               currency: mandate.limit.currency,
               scale: mandate.limit.scale,
+              // The version this change supersedes. It is what stops the token being
+              // replayed later to restore a limit the holder has already lowered.
+              policy_version: mandate.policy_version,
             },
             holder,
           );

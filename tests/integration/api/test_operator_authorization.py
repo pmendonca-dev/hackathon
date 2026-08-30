@@ -141,6 +141,53 @@ def test_a_properly_signed_limit_change_still_works(harness):
     assert harness.client.get(f"/mandates/{mandate_id}").json()["limit"]["minor_units"] == 10000
 
 
+def test_an_old_limit_authorization_cannot_be_replayed(harness):
+    """A limit change is reversible, so its authorization has to be spent.
+
+    Revocation is irreversible, which is why replaying one is harmless. A budget can go
+    back up, so a token that stayed valid forever would let whoever captured it undo the
+    holder lowering the limit — the very move the trial by fire invites a judge to make.
+    """
+    mandate_id = harness.create_mandate()
+    stale = harness.limit_token(mandate_id, 100000)
+
+    assert harness.change_limit(mandate_id, 5000).status_code == 200
+
+    replayed = harness.client.patch(
+        f"/mandates/{mandate_id}/limit",
+        json={
+            "limit": {"minor_units": 100000, "currency": "USD", "scale": 2},
+            "authorization_jws": stale,
+        },
+    )
+
+    assert replayed.status_code == 403
+    assert replayed.json()["reason_code"] == "limit_change_version_stale"
+    assert harness.client.get(f"/mandates/{mandate_id}").json()["limit"]["minor_units"] == 5000
+
+
+def test_a_limit_authorization_that_names_no_version_is_refused(harness):
+    """An unversioned payload is the old, replayable shape. It is not accepted."""
+    mandate_id = harness.create_mandate()
+    token = sign_compact_jws(
+        {"mandate_id": mandate_id, "limit_minor_units": 100000, "currency": "USD", "scale": 2},
+        harness.custody,
+        harness.HOLDER_KID,
+    )
+
+    response = harness.client.patch(
+        f"/mandates/{mandate_id}/limit",
+        json={
+            "limit": {"minor_units": 100000, "currency": "USD", "scale": 2},
+            "authorization_jws": token,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["reason_code"] == "limit_change_version_stale"
+    assert harness.client.get(f"/mandates/{mandate_id}").json()["limit"]["minor_units"] == 20000
+
+
 def test_the_processor_switch_needs_the_operator_token(harness):
     assert harness.client.post("/admin/psp", json={"mode": "offline"}).status_code == 401
     assert harness.client.post("/reconcile").status_code == 401
