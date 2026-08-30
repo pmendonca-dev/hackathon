@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Gavel, LogOut, RefreshCw, ScrollText, Store, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -42,9 +42,15 @@ export function Shell({ children }: { children: ReactNode }) {
     : session
       ? views.filter(({ id }) => id === roleView[session.role])
       : [];
+  const mainContentRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (session) mainContentRef.current?.focus();
+  }, [session]);
 
   return (
     <div className="min-h-full bg-ink-950 text-fg lg:grid lg:grid-cols-[252px_minmax(0,1fr)]">
+      <a className="skip-link" href="#main-content">Pular para o conteúdo principal</a>
       <aside className="border-b border-line bg-ink-900 lg:sticky lg:top-0 lg:h-screen lg:border-r lg:border-b-0">
         <div className="flex items-center justify-between border-b border-line px-5 py-5">
           <div className="flex items-center gap-3">
@@ -113,7 +119,7 @@ export function Shell({ children }: { children: ReactNode }) {
             </div>
           </div>
         </header>
-        <main id="main-content">{children}</main>
+        <main id="main-content" ref={mainContentRef} tabIndex={-1}>{children}</main>
       </div>
     </div>
   );

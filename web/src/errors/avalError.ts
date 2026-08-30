@@ -29,13 +29,13 @@ const ERROR_COPY: Record<string, ErrorCopy> = {
   ui_session_required: {
     title: 'Sessão necessária',
     message: 'Uma sessão válida é necessária para acessar esta projeção.',
-    recovery: 'Entre novamente; nenhuma operação foi presumida pelo browser.',
+    recovery: 'A sessão local foi descartada. Entre novamente; nenhuma operação foi presumida pelo browser.',
     tone: 'deny',
   },
   csrf_invalid: {
     title: 'Mutação bloqueada',
     message: 'A proteção da sessão é inválida e a ação não foi executada.',
-    recovery: 'Encerre a sessão e entre novamente antes de outra ação.',
+    recovery: 'A sessão local foi descartada. Entre novamente antes de iniciar outra ação.',
     tone: 'deny',
   },
   ui_role_not_authorized: {

@@ -67,6 +67,16 @@ test('browser BFF session, role, audit, and idempotency failures have safe guida
   }
 });
 
+test('session recovery copy directs a fresh login without suggesting mutation replay', () => {
+  for (const [status, code] of [[401, 'ui_session_required'], [403, 'csrf_invalid']]) {
+    const presentation = presentAvalError({ status, code });
+    assert.match(presentation.recovery, /sessão local.*descartada/i);
+    assert.match(presentation.recovery, /entre novamente/i);
+    assert.doesNotMatch(presentation.recovery, /tente novamente|repita|reenvie/i);
+    assert.equal(presentation.action, 'none');
+  }
+});
+
 test('503, 409, and 422 prescribe safe and distinct next actions', () => {
   const unavailable = presentAvalError({ status: 503, code: 'revocation_unavailable' });
   assert.equal(unavailable.action, 'check-availability');

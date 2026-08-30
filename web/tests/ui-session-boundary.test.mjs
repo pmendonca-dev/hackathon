@@ -14,7 +14,8 @@ test('session and CSRF remain in React memory and operator UI submits intent onl
 
   assert.match(provider, /useState<UiSessionMaterial \| null>/);
   assert.match(provider, /setSession\(null\)/);
-  assert.match(provider, /apiGateway\.logout\(session\.csrfToken\)/);
+  assert.match(provider, /const csrfToken = session\.csrfToken/);
+  assert.match(provider, /apiGateway\.logout\(csrfToken\)/);
   assert.match(provider, /apiGateway\.revokeMandate\([\s\S]*session\.csrfToken/);
   assert.match(provider, /nextWorkspace\.role !== role/);
 
@@ -31,4 +32,24 @@ test('session and CSRF remain in React memory and operator UI submits intent onl
   ]) {
     assert.equal(productionUi.includes(forbidden), false, `${forbidden} reached the production UI boundary`);
   }
+});
+
+test('provider clears every protected projection on logout and reauthentication failures', () => {
+  const provider = readFileSync(join(root, 'src/state/AvalProvider.tsx'), 'utf8');
+
+  assert.match(provider, /sessionRecovery\(presentation\)/);
+  assert.match(provider, /const clearProtectedState = useCallback/);
+  for (const clear of [
+    'setSession(null)',
+    'setWorkspace(null)',
+    'setAudit(null)',
+    'setDispute(null)',
+    'setLastCommandReceipt(null)',
+    "setView('human')",
+  ]) {
+    assert.match(provider, new RegExp(clear.replace(/[()]/g, '\\$&')));
+  }
+  assert.match(provider, /const csrfToken = session\.csrfToken;[\s\S]*clearProtectedState\(\);[\s\S]*apiGateway\.logout\(csrfToken\)/);
+  assert.match(provider, /handleFailure\(reloadError/);
+  assert.match(provider, /handleFailure\(commandError/);
 });

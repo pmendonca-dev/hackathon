@@ -17,7 +17,7 @@ const DevelopmentMockWorkspace = import.meta.env.DEV
 
 function LoadingState({ message }: { message: string }) {
   return (
-    <div className="flex min-h-[70vh] items-center justify-center" role="status">
+    <div className="flex min-h-[70vh] items-center justify-center" role="status" aria-live="polite">
       <LoaderCircle className="animate-spin text-allow" size={24} aria-hidden="true" />
       <span className="ml-3 text-sm text-fg-mute">{message}</span>
     </div>
@@ -90,7 +90,7 @@ function Workspace() {
           {error ? (
             <RuntimeFailure error={error} compact onAction={() => void reload()} />
           ) : (
-            <div className="flex items-center gap-2 rounded-xl border border-line bg-ink-850 px-4 py-3 text-[12px] text-fg-mute" role="status">
+            <div className="flex items-center gap-2 rounded-xl border border-line bg-ink-850 px-4 py-3 text-[12px] text-fg-mute" role="status" aria-live="polite">
               <LoaderCircle className="animate-spin text-verify" size={14} aria-hidden="true" />
               Atualizando a projeção autorizada…
             </div>
