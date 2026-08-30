@@ -63,15 +63,17 @@ class UsageLimitOut(BaseModel):
 
 
 class PaymentMethodIn(BaseModel):
-    """A card the holder is authorizing, on its way to being forgotten.
+    """A card the holder already vaulted, named by its token and its last four digits.
 
-    The number is read once, tokenized at the edge and never persisted: the mandate
-    stores the token and the last four digits, and nothing downstream can reconstruct a
-    PAN from either. This is the one place in the system a card number legitimately
-    appears, which is why it appears nowhere else.
+    This used to take the number itself, tokenizing it at the edge. That was the one
+    place a PAN legitimately appeared — and one place is one more than this system
+    needs, now that the card is typed on the processor's own page and arrives here
+    already vaulted. There is no longer any request, anywhere, that carries a card
+    number: nothing can leak what nothing receives.
     """
 
-    card_number: str = Field(min_length=12, max_length=19)
+    token: str = Field(min_length=4, max_length=255)
+    label: str = Field(min_length=1, max_length=64)
 
 
 class CreateMandateRequest(BaseModel):
@@ -111,6 +113,55 @@ class ReplaceLimitRequest(BaseModel):
     # the token single-use — a limit change is reversible, so a replayable one would let
     # an old, higher limit be restored after the holder lowered it.
     authorization_jws: str | None = None
+
+
+class BindInstrumentRequest(BaseModel):
+    """A payment method the holder registered, arriving as a token and four digits.
+
+    There is no card number here on purpose. The number is typed into the processor's
+    own page and never reaches this service, so what a mandate can be handed is a
+    credential someone else already vaulted — which is also the only kind of credential
+    this endpoint could safely accept from an agent-facing surface.
+    """
+
+    token: str = Field(min_length=4, max_length=255)
+    label: str = Field(min_length=1, max_length=64)
+    # Compact JWS ES256 signed by a holder authority of this mandate, over
+    # {mandate_id, scope: "instrument", instrument_token, instrument_label, supersedes}.
+    # `supersedes` names the token bound right now, or null for a mandate with none:
+    # a compare-and-swap, so a captured binding dies the moment any other one lands.
+    authorization_jws: str | None = None
+
+
+class InstrumentSessionRequest(BaseModel):
+    """Ask the processor for a page where the holder types their card.
+
+    Signed for the same reason the binding is: this creates objects on our processor
+    account, and an endpoint anyone who guesses a mandate id can drive is an abuse
+    surface. The JWS is over {mandate_id, scope: "instrument_session"}.
+    """
+
+    authorization_jws: str | None = None
+    return_url: str | None = None
+
+
+class InstrumentSessionResponse(BaseModel):
+    session_id: str
+    url: str
+
+
+class InstrumentSessionStatusResponse(BaseModel):
+    """What the processor holds for a registration that may not be finished yet."""
+
+    ready: bool
+    token: str | None = None
+    label: str | None = None
+
+
+class BindInstrumentResponse(BaseModel):
+    instrument_label: str
+    instrument_revocation_scope: str
+    replaced_label: str | None = None
 
 
 class ReplaceLimitResponse(BaseModel):

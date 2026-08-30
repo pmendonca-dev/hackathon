@@ -6,12 +6,15 @@ import secrets
 from aval.application.services.vault import DelegatedPayment
 
 
-class OpaqueTestCredentialTokenizer:
-    """Produces non-redeemable local tokens and deliberately retains no PAN."""
+class OpaqueDelegationTokenMinter:
+    """Mints the unguessable handle one delegation is presented under.
 
-    def tokenize(self, card_number: str) -> str:
-        if not card_number.isascii() or not card_number.isdigit() or not 12 <= len(card_number) <= 19:
-            raise ValueError("test card number must contain 12 to 19 ASCII digits")
+    It takes no card, holds no card and could not leak one. What it produces is
+    meaningless on its own: the scope that makes it spendable lives in the vault
+    record, and the card it delegates lives on the mandate.
+    """
+
+    def mint(self) -> str:
         return f"vt_{secrets.token_urlsafe(18)}"
 
 

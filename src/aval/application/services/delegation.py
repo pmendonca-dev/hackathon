@@ -54,6 +54,7 @@ class CoreDelegationAuthorizer:
             merchant_id=merchant_id,
             checkout_id=checkout_id,
             expires_at=facts.expires_at,
+            instrument_token=facts.instrument_token,
         )
 
 
@@ -72,7 +73,7 @@ class DurableDelegationService:
         self._engine = engine
 
     def delegate(
-        self, *, mandate_id: str, checkout_id: str, merchant_id: str, card_number: str, idempotency_key: str
+        self, *, mandate_id: str, checkout_id: str, merchant_id: str, idempotency_key: str
     ) -> DelegationOutcome:
         request_hash = hashlib.sha256(json.dumps({
             "mandate_id": mandate_id, "checkout_id": checkout_id, "merchant_id": merchant_id,
@@ -90,7 +91,6 @@ class DurableDelegationService:
             try:
                 payment = self._vault.delegate(
                     mandate_id=mandate_id, checkout_id=checkout_id, merchant_id=merchant_id,
-                    card_number=card_number,
                 )
             except DelegationRejected as error:
                 outcome = DelegationOutcome(None, error.reason_code, False)

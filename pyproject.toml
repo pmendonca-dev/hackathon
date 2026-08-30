@@ -15,8 +15,9 @@ dependencies = [
 
 [project.optional-dependencies]
 # The agent runs on rules by default. Install this only to demonstrate a real
-# model proposing — and hallucinating — with the core still refusing it.
-llm = ["anthropic"]
+# model proposing — and hallucinating — with the core still refusing it, and a
+# real model conversing in Telegram until the mandate is fully described.
+llm = ["anthropic", "openai"]
 
 [dependency-groups]
 dev = [

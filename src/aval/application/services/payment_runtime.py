@@ -72,6 +72,16 @@ class PaymentRuntime:
             merchant_id=checkout.command.merchant_id, amount=checkout.command.total, now=self._clock(),
         ):
             return CaptureResult(False, "vault_token_scope_mismatch")
+        # A vault token and a mandate instrument are two different objects that happen
+        # to share a `vt_` prefix: the token is a one-checkout delegation, the
+        # instrument is the payment method the mandate names. Handing the token to the
+        # core as if it were the instrument only ever passed because the fixture mandate
+        # named none. The token has just been proved bound to this mandate, checkout,
+        # merchant and amount, so what it delegates is the mandate's own instrument —
+        # and that is what the core is told.
+        mandate = self._core.mandate(checkout.command.mandate_id)
+        if mandate is None or mandate.instrument is None:
+            return CaptureResult(False, "instrument_not_in_mandate")
         result = self._core.capture(CaptureCommand(
             # Every field comes from the stored checkout, never from the caller: a
             # request that named a different mandate, merchant, amount or category than
@@ -79,7 +89,7 @@ class PaymentRuntime:
             mandate_id=checkout.command.mandate_id, checkout_id=request.checkout_id,
             merchant_id=checkout.command.merchant_id, total=checkout.command.total,
             category=checkout.command.category,
-            idempotency_key=request.idempotency_key, instrument_id=request.token,
+            idempotency_key=request.idempotency_key, instrument_id=mandate.instrument.token,
             idempotency_fingerprint=self._capture_idempotency_fingerprint(request),
         ))
         if result.approved and result.reservation is not None and result.settlement_reference:

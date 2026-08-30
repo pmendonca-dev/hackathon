@@ -53,6 +53,7 @@ def test_the_buyer_cannot_name_the_terms_hash_and_spend_an_offer_twice(harness: 
             "category": offer["item"]["category"],
             "total": offer["total"],
             "idempotency_key": "cap_second",
+            "instrument_id": harness.instruments[mandate_id],
             "terms_hash": terms_hash_of(claims),
         }
     )
@@ -79,6 +80,7 @@ def test_a_purchase_that_carries_no_offer_is_not_verifiable_as_one(harness: Harn
             "category": offer["item"]["category"],
             "total": offer["total"],
             "idempotency_key": "cap_unbound",
+            "instrument_id": harness.instruments[mandate_id],
         }
     )
 

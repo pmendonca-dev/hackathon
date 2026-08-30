@@ -18,6 +18,7 @@ from aval.domain.entities import (
     Dispute,
     Escalation,
     Mandate,
+    PaymentInstrument,
     Reservation,
     Revocation,
 )
@@ -195,6 +196,10 @@ class LiveAuthorizationContext:
     mandate_ceiling: Money
     live_balance: Money
     expires_at: datetime
+    # The card this mandate names. A delegation is a delegation *of* something, and
+    # without it the ACP lane would be minting a token that stands for whatever card
+    # the caller felt like naming.
+    instrument_token: str | None = None
 
 
 @dataclass(frozen=True)
@@ -227,6 +232,16 @@ class AuthorizationCore:
             self._engine = engine
         self._settlement_adapter = settlement_adapter
         self._authorization_proof_issuer = authorization_proof_issuer
+
+    def attach_settlement_adapter(self, adapter: SettlementAdapter) -> None:
+        """Wire the processor after construction.
+
+        A real processor has to read the mandate to know which card it is charging, so
+        it needs the core that the core would otherwise need it. This breaks the cycle
+        at wiring time and nowhere else — the core still knows nothing about which
+        processor it got.
+        """
+        self._settlement_adapter = adapter
 
     def register_mandate(self, mandate: Mandate) -> None:
         def operation(connection) -> None:
@@ -392,6 +407,130 @@ class AuthorizationCore:
                 occurred_at=self._clock(),
             )
         run_in_write_transaction(self._engine, operation)
+
+    def require_holder(self, mandate_id: str, authorization_jws: str | None, *, scope: str) -> dict:
+        """Prove the caller holds this mandate, for an action that writes nothing here.
+
+        Registering a card opens a page and creates objects at the processor. Nothing
+        it does grants authority — the binding afterwards is signed separately — but an
+        endpoint that anyone who guesses a mandate id can drive is an abuse surface, so
+        the same key that will sign the binding has to ask for the page.
+        """
+        mandate = self.mandate(mandate_id)
+        if mandate is None:
+            raise ValueError("mandate not found")
+        if not authorization_jws:
+            raise ApprovalError(403, f"{scope}_unsigned", "Ação exige autorização assinada.")
+        claims = self._verified_approval(authorization_jws, mandate, kind=scope)
+        if claims.get("mandate_id") != mandate_id:
+            raise ApprovalError(
+                403, f"{scope}_mandate_mismatch", "A autorização não é deste mandato."
+            )
+        if claims.get("scope") != scope:
+            raise ApprovalError(
+                403, f"{scope}_scope_mismatch", "A autorização não é para esta ação."
+            )
+        return claims
+
+    def bind_instrument(
+        self,
+        mandate_id: str,
+        instrument: PaymentInstrument,
+        *,
+        authorization_jws: str | None = None,
+    ) -> PaymentInstrument | None:
+        """Name the payment method the holder registered. Returns the one it replaced.
+
+        A mandate is created before the person has a card — they are sent to the
+        processor's own page and come back with a token, never with a number. Binding
+        is what closes that gap, and it is holder authority: attaching a card decides
+        whose money an agent will spend, so it is proved by the holder's key exactly
+        the way moving the budget is. An operator credential is not accepted.
+
+        Replay is answered by compare-and-swap rather than by a version counter. The
+        payload names the instrument it supersedes — the token bound right now, or null
+        for a mandate that has none — so a captured binding is dead the moment any
+        other binding lands. Nothing here is coupled to `policy_version`, which is
+        minted by the policy store and must only ever move forward with it.
+
+        `authorization_jws=None` is the in-process path for the core's own tests; every
+        HTTP caller goes through the signed one.
+        """
+
+        def operation(connection) -> PaymentInstrument | None:
+            repository = SqliteMandateRepository(connection)
+            mandate = repository.get(mandate_id)
+            if mandate is None:
+                raise ValueError("mandate not found")
+            revoked = SqliteRevocationRepository(connection).has_scope(mandate_id, "mandate")
+            if revoked or mandate.status is MandateStatus.REVOKED:
+                # A card on a dead mandate is authority nobody can use and a screen that
+                # lies about being funded.
+                raise ApprovalError(409, "mandate_revoked", "Mandato revogado.")
+            previous = mandate.instrument
+            if authorization_jws is not None:
+                claims = self._verified_approval(
+                    authorization_jws, mandate, kind="instrument_binding"
+                )
+                if claims.get("mandate_id") != mandate_id:
+                    raise ApprovalError(
+                        403,
+                        "instrument_binding_mandate_mismatch",
+                        "A autorização não é deste mandato.",
+                    )
+                if claims.get("scope") != "instrument":
+                    raise ApprovalError(
+                        403,
+                        "instrument_binding_scope_mismatch",
+                        "A autorização não é sobre um meio de pagamento.",
+                    )
+                signed = (claims.get("instrument_token"), claims.get("instrument_label"))
+                if signed != (instrument.token, instrument.label):
+                    raise ApprovalError(
+                        403,
+                        "instrument_binding_token_mismatch",
+                        "O meio de pagamento assinado não confere.",
+                    )
+                if claims.get("supersedes") != (None if previous is None else previous.token):
+                    raise ApprovalError(
+                        403,
+                        "instrument_binding_stale",
+                        "A autorização foi assinada sobre outro meio de pagamento.",
+                    )
+            repository.put(replace(mandate, instrument=instrument))
+            # A holder who authorized a card is by construction allowed to cancel it.
+            # The scope is added here for the same reason it is added at creation: the
+            # token is not something the caller could have named in advance.
+            for authority in mandate.authorities:
+                if authority.role is RevocationRole.HOLDER:
+                    repository.upsert_authority(
+                        mandate_id,
+                        replace(
+                            authority,
+                            allowed_scopes=frozenset(authority.allowed_scopes)
+                            | {f"instrument:{instrument.token}"},
+                        ),
+                    )
+            SqliteAuditLedger(connection).append(
+                mandate_id=mandate_id,
+                event_type="mandate_instrument_bound",
+                human_summary=f"Meio de pagamento {instrument.label} vinculado ao mandato.",
+                actor=(
+                    f"principal:{mandate.principal.id}"
+                    if authorization_jws is not None
+                    else "operator:instrument_binding"
+                ),
+                # The label and never the token: the trail is read by people who are not
+                # entitled to present the credential it names.
+                detail={
+                    "instrument_label": instrument.label,
+                    "replaced_label": None if previous is None else previous.label,
+                },
+                occurred_at=self._clock(),
+            )
+            return previous
+
+        return run_in_write_transaction(self._engine, operation)
 
     def submit_signed_revocation(self, token: str) -> None:
         run_in_write_transaction(
@@ -1529,6 +1668,7 @@ class AuthorizationCore:
                 mandate_ceiling=mandate.limit,
                 live_balance=live_limit.subtract(spent),
                 expires_at=mandate.expires_at,
+                instrument_token=None if mandate.instrument is None else mandate.instrument.token,
             )
 
 
@@ -1654,18 +1794,28 @@ class AuthorizationCore:
         # pre-check above it is a preview: it deliberately does not spend the offer's
         # nonce either. Everything here is walked again at capture, so gating the rung
         # on the command that pays is not a hole — it is where the question is real.
-        if isinstance(command, CaptureCommand) and mandate.instrument is not None:
-            if command.instrument_id != mandate.instrument.token:
+        #
+        # A mandate that names no instrument used to skip this rung entirely, and so
+        # settled with no payment method at all. Against a mock processor that reads as
+        # harmless theatre; against a real one it is the difference between "there is no
+        # card on file" and "charged anyway". Authority to spend is not a payment
+        # method, and neither one implies the other.
+        if isinstance(command, CaptureCommand):
+            named = None if mandate.instrument is None else mandate.instrument.token
+            if named is None or command.instrument_id != named:
                 return self._reject(
                     "instrument_not_in_mandate",
                     "Meio de pagamento não é o que o mandato nomeia.",
                     stopped(
                         "instrument_in_mandate",
-                        "nenhum instrumento apresentado"
+                        "o mandato não nomeia meio de pagamento"
+                        if named is None
+                        else "nenhum instrumento apresentado"
                         if command.instrument_id is None
                         else "instrumento apresentado não é o do mandato",
                     ),
                 ), mandate
+            assert mandate.instrument is not None
             cleared("instrument_in_mandate", mandate.instrument.label)
         assert limit is not None
         if (command.total.currency, command.total.scale) != (limit.currency, limit.scale):
@@ -2001,8 +2151,13 @@ class AuthorizationCore:
             return True
         if scope.startswith("merchant:"):
             return bool(scope.removeprefix("merchant:"))
-        if scope.startswith("instrument:vt_"):
-            return len(scope) > len("instrument:vt_")
+        if scope.startswith("instrument:"):
+            # Any non-empty credential, whatever minted it. This used to require a `vt_`
+            # prefix — the demo tokenizer's own shape — which meant a card vaulted at a
+            # real processor could be named by a mandate and then never cancelled: the
+            # holder's revocation would be refused as malformed. What a payment
+            # credential looks like is the tokenizer's business, never the core's.
+            return bool(scope.removeprefix("instrument:"))
         return False
 
     @staticmethod

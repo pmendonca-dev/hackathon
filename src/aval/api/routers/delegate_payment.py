@@ -12,19 +12,21 @@ from aval.adapters.ucp.http_signatures import Rfc9421Verifier
 from aval.api.authentication import authenticate_rfc9421
 
 
-class CardCredentialInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    card_number: str
-
-
 class DelegatePaymentRequest(BaseModel):
+    """Ask to spend against a mandate, for one checkout.
+
+    There is no payment method here, and `extra="forbid"` means sending one is a 422
+    rather than a field quietly ignored. The agent used to supply a card number that
+    was vaulted without ever being compared to the mandate's own — so an agent could
+    delegate a card its holder never authorized. What pays is now read from the
+    mandate, which is the only place that ever knew.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     mandate_id: str
     checkout_session_id: str
     merchant_id: str
-    payment_method: CardCredentialInput
 
 
 class AllowanceResponse(BaseModel):
@@ -66,8 +68,7 @@ def create_delegate_payment_router(
             if isinstance(service, DurableDelegationService):
                 outcome = service.delegate(
                     mandate_id=request.mandate_id, checkout_id=request.checkout_session_id,
-                    merchant_id=request.merchant_id, card_number=request.payment_method.card_number,
-                    idempotency_key=idempotency_key,
+                    merchant_id=request.merchant_id, idempotency_key=idempotency_key,
                 )
                 if outcome.replayed and response is not None:
                     response.headers["Idempotent-Replayed"] = "true"
@@ -83,7 +84,7 @@ def create_delegate_payment_router(
             else:
                 delegated = service.delegate(
                     mandate_id=request.mandate_id, checkout_id=request.checkout_session_id,
-                    merchant_id=request.merchant_id, card_number=request.payment_method.card_number,
+                    merchant_id=request.merchant_id,
                 )
         except DelegationRejected as error:
             detail: object = {"code": error.reason_code} if isinstance(service, DurableDelegationService) else error.reason_code

@@ -7,7 +7,7 @@ from aval.application.authorization_core import (
     CaptureCommand,
     SettlementResult,
 )
-from aval.domain.entities import Mandate, Principal, RevocationAuthority
+from aval.domain.entities import Mandate, PaymentInstrument, Principal, RevocationAuthority
 from aval.domain.enums import DisputeStatus, RevocationRole
 from aval.domain.money import Money
 from aval.security.authorization_proof import AuthorizationProofService
@@ -41,6 +41,7 @@ def mandate() -> Mandate:
                 allowed_scopes=frozenset({"mandate"}),
             ),
         ),
+        instrument=PaymentInstrument("vt_test_instrument", "•••• 4242"),
     )
 
 
@@ -53,6 +54,7 @@ def capture_command(*, key: str, terms_hash: str | None = None) -> CaptureComman
         category="travel",
         idempotency_key=key,
         terms_hash=terms_hash,
+        instrument_id="vt_test_instrument",
     )
 
 
