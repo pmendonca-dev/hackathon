@@ -41,7 +41,7 @@ from aval.api.middleware.raw_body import RawBodyMiddleware
 from aval.api.routers.audit import create_audit_router
 from aval.api.routers.delegate_payment import create_delegate_payment_router
 from aval.api.routers.payment_capture import create_payment_capture_router
-from aval.api.routers.revocation import create_revocation_router
+from aval.api.routers.revocations import create_revocation_router
 from aval.api.routers.ui_sessions import create_ui_session_router, ui_local_http_enabled
 from aval.api.routers.ui_workspace import create_ui_workspace_router
 from aval.api.routers.ucp_checkout import create_ucp_checkout_router

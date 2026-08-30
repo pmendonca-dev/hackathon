@@ -628,9 +628,16 @@ def test_revocation_rejects_unknown_authority_and_path_mismatch(tmp_path) -> Non
             profile="https://holder.aval.local/.well-known/ucp", signing_kid="holder-key",
         )
 
-    assert unknown_response.status_code == 422
+    # 403, not 422. Both refusals are about *authority*: the caller is understood, and
+    # is not allowed. A key that is not an authority on this mandate, and a token aimed
+    # at another mandate, are answers to "may you", not "is this well formed".
+    #
+    # These read 422 while the coarser of the two revocation routers was the mounted one
+    # — it funnelled every core refusal into a single status. The router that survived
+    # carries the team's own code table, and that table already said 403.
+    assert unknown_response.status_code == 403
     assert unknown_response.json() == {"detail": {"code": "revocation_authority_unknown"}}
-    assert mismatch_response.status_code == 422
+    assert mismatch_response.status_code == 403
     assert mismatch_response.json() == {"detail": {"code": "revocation_mandate_mismatch"}}
 
 
