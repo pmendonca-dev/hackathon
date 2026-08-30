@@ -247,14 +247,27 @@ def build_runtime(
     # things in this system, and this is where that separation starts.
     agent_custody = KeyCustodyService()
     install(agent_custody, DEMO_AGENT_KID, domain="agent")
-    core.register_agent(
-        AgentIdentity(
-            id=DEMO_AGENT_ID,
-            profile_url=DEMO_AGENT_PROFILE_URL,
-            public_jwk=agent_custody.public_jwk(DEMO_AGENT_KID),
-            trusted=True,
+    # Publishing the agent's public key is how the edge recognises its signature, and
+    # the row is a copy of a key this process holds in memory. With `AVAL_CUSTODY_SEED`
+    # set every process derives the same key, so writing it is idempotent and safe.
+    #
+    # Without a seed the key above is freshly random, and writing it would replace the
+    # key some *other* process is still signing with — which is not a theoretical race:
+    # one throwaway script pointed at the demo database rotates the row, and the API
+    # serving the bot starts answering `signature_invalid` to every purchase, having
+    # changed nothing itself. So a seedless process that finds an agent already
+    # published leaves it alone. It cannot sign for that agent, but it was never going
+    # to; what it must not do is take the ability away from the process that can.
+    published = core.agent_for_kid(DEMO_AGENT_KID)
+    if resolve_custody_seed() is not None or published is None:
+        core.register_agent(
+            AgentIdentity(
+                id=DEMO_AGENT_ID,
+                profile_url=DEMO_AGENT_PROFILE_URL,
+                public_jwk=agent_custody.public_jwk(DEMO_AGENT_KID),
+                trusted=True,
+            )
         )
-    )
     return AvalRuntime(
         engine=engine,
         clock=clock,
