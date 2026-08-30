@@ -17,8 +17,7 @@ The database is a file by default so a restart does not erase the demo. Set
 gets when the team resets between runs.
 
 The operator surfaces (`/agents`, `/admin/psp`, `/reconcile`) need a token. Set
-`AVAL_OPERATOR_TOKEN`, or let one be minted and read it off the startup line: a default
-deployment starts closed rather than open.
+`AVAL_OPERATOR_TOKEN`; a default deployment starts closed rather than open.
 """
 
 from __future__ import annotations
@@ -30,6 +29,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
+from aval.api.browser_delivery import configured_web_dist_path, mount_browser_build
 from aval.adapters.ap2.mandates import ClosedCheckoutMandateVerifier
 from aval.adapters.ap2.merchant_authorization import (
     MerchantAuthorizationSigner,
@@ -41,7 +41,9 @@ from aval.api.middleware.raw_body import RawBodyMiddleware
 from aval.api.routers.audit import create_audit_router
 from aval.api.routers.delegate_payment import create_delegate_payment_router
 from aval.api.routers.payment_capture import create_payment_capture_router
-from aval.api.routers.revocations import create_revocation_router
+from aval.api.routers.revocation import create_revocation_router
+from aval.api.routers.ui_sessions import create_ui_session_router, ui_local_http_enabled
+from aval.api.routers.ui_workspace import create_ui_workspace_router
 from aval.api.routers.ucp_checkout import create_ucp_checkout_router
 from aval.api.routers.ucp_discovery import create_ucp_discovery_router
 from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
@@ -55,6 +57,9 @@ from aval.application.services.dispute import DisputeService
 from aval.application.services.payment_runtime import PaymentRuntime
 from aval.application.services.receipts import ReceiptService
 from aval.application.services.vault import VaultService
+from aval.application.services.ui_sessions import UiLocalCredentials, UiSessionService
+from aval.application.services.ui_operator_revocation import UiOperatorRevocationService
+from aval.application.services.ui_projections import UiProjectionService
 from aval.domain.entities import AgentIdentity, Mandate, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
@@ -81,6 +86,7 @@ PROTOCOL_KEY_IDS = (
     "issuer-key",
     "holder-key",
     "auditor-key",
+    "operator-key",
     "psp-key",
 )
 
@@ -97,11 +103,16 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def database_path() -> Path | None:
+def _configured_database_path() -> Path | None:
     configured = os.environ.get("AVAL_DATABASE_PATH", "var/aval.db").strip()
     if configured.lower() in ("", ":memory:"):
         return None
     return Path(configured)
+
+
+def database_path() -> Path | None:
+    """Public accessor kept for the ASGI entrypoint and deployment tooling."""
+    return _configured_database_path()
 
 
 def _seed_protocol_fixtures(runtime: AvalRuntime, clock: Callable[[], datetime]) -> None:
@@ -111,6 +122,17 @@ def _seed_protocol_fixtures(runtime: AvalRuntime, clock: Callable[[], datetime])
     them instead of duplicating them.
     """
     custody = runtime.custody
+    operator_authority = (
+        RevocationAuthority(
+            id="authority_operator_01",
+            kid="operator-key",
+            role=RevocationRole.OPERATOR,
+            public_jwk=custody.public_jwk("operator-key"),
+            allowed_scopes=frozenset({"mandate"}),
+        )
+        if custody.has("operator-key")
+        else None
+    )
     runtime.core.register_mandate(
         Mandate(
             id=SEED_MANDATE_ID,
@@ -130,9 +152,12 @@ def _seed_protocol_fixtures(runtime: AvalRuntime, clock: Callable[[], datetime])
                     public_jwk=custody.public_jwk("holder-key"),
                     allowed_scopes=frozenset({"mandate"}),
                 ),
+                *((operator_authority,) if operator_authority is not None else ()),
             ),
         )
     )
+    if operator_authority is not None:
+        runtime.core.configure_operator_revocation_authority(SEED_MANDATE_ID, operator_authority)
     identities = [
         AgentIdentity(
             id=identity_id,
@@ -171,6 +196,7 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
             clock=clock,
         ),
         clock=clock,
+        engine=runtime.engine,
     )
     # The scoped payment credential: the agent is handed a token that works at this
     # merchant, for this checkout, up to this amount — never a card.
@@ -246,8 +272,46 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
             can_read=lambda identity_id, mandate_id: payment_runtime.can_read_mandate(
                 identity_id=identity_id, mandate_id=mandate_id
             ),
+            mandate_exists=payment_runtime.mandate_exists,
         )
     )
+
+
+def _mount_browser_session_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[], datetime]) -> None:
+    """Mount the browser-only session boundary without changing agent authentication."""
+    sessions = UiSessionService(
+        engine=runtime.engine,
+        clock=clock,
+        credentials=UiLocalCredentials.from_environment(),
+    )
+    app.state.ui_sessions = sessions
+    app.include_router(create_ui_session_router(sessions, secure_cookie=not ui_local_http_enabled()))
+    projections = UiProjectionService(
+        core=runtime.core,
+        disputes=DisputeService(
+            reader=SqliteDisputeEvidenceReader(runtime.engine),
+            checkout_receipt_verifier=lambda token: verify_compact_jws(
+                token, public_key_from_jwk(runtime.custody.public_jwk("merchant-key"))
+            ),
+            payment_receipt_verifier=lambda token: verify_compact_jws(
+                token, public_key_from_jwk(runtime.custody.public_jwk("psp-key"))
+            ),
+        ),
+    )
+    app.include_router(
+        create_ui_workspace_router(
+            sessions=sessions,
+            projections=projections,
+            operator_revocations=UiOperatorRevocationService(
+                core=runtime.core, custody=runtime.custody
+            ),
+        )
+    )
+
+
+def _mount_browser_delivery_lane(app: FastAPI, web_dist_path: Path | None) -> None:
+    """Serve the built SPA last, after every BFF and agent route owns its path."""
+    mount_browser_build(app, build_directory=web_dist_path or configured_web_dist_path())
 
 
 def create_app(
@@ -255,6 +319,7 @@ def create_app(
     database_path: Path | None = None,
     clock: Callable[[], datetime] = _now,
     custody: KeyCustodyService | None = None,
+    web_dist_path: Path | None = None,
 ) -> FastAPI:
     """Build the whole system: authorization surfaces plus protocol ingress.
 
@@ -270,7 +335,7 @@ def create_app(
     keys it published — a verifier that trusted a key yesterday must still find it today.
     """
     runtime = build_runtime(
-        database_path=database_path,
+        database_path=database_path or _configured_database_path(),
         now_provider=clock,
         custody=custody,
         extra_key_ids=PROTOCOL_KEY_IDS,
@@ -278,11 +343,10 @@ def create_app(
     app = create_authorization_app(runtime)
     _seed_protocol_fixtures(runtime, runtime.clock.now)
     _mount_protocol_lane(app, runtime, runtime.clock.now)
+    _mount_browser_session_lane(app, runtime, runtime.clock.now)
+    _mount_browser_delivery_lane(app, web_dist_path)
     return app
 
 
 app = create_app(database_path=database_path())
 _runtime = app.state.runtime
-
-if not os.environ.get("AVAL_OPERATOR_TOKEN", "").strip():
-    print(f"[aval] operator token for this process: {_runtime.operator_token}")

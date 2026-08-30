@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from aval.adapters.ucp.http_signatures import Rfc9421Verifier, SignedRequest
 from aval.adapters.ucp.checkout_projection import project_ucp_checkout
@@ -13,7 +13,12 @@ from aval.domain.money import Money
 
 def _error(error: ValueError) -> HTTPException:
     code = str(error)
-    status = 403 if code in {"profile_not_trusted", "key_not_found"} else 422
+    status = (
+        503 if code == "idempotency_unavailable"
+        else 409 if code == "idempotency_in_flight"
+        else 403 if code in {"profile_not_trusted", "key_not_found"}
+        else 422
+    )
     return HTTPException(status_code=status, detail={"code": code})
 
 
@@ -61,17 +66,20 @@ def create_ucp_checkout_router(
             raise _error(error) from error
 
     @router.post("/{checkout_id}/complete")
-    async def complete_checkout(checkout_id: str, request: Request):
+    async def complete_checkout(checkout_id: str, request: Request, response: Response):
         authenticate(request)
         body = await request.json()
         try:
-            return service.complete(
+            result = service.complete(
                 checkout_id,
                 checkout_mandate=body.get("ap2", {}).get("checkout_mandate"),
                 audience=body["audience"],
                 nonce=body["nonce"],
                 idempotency_key=request.headers["idempotency-key"],
             )
+            if result.replayed:
+                response.headers["Idempotent-Replayed"] = "true"
+            return {"checkout_id": result.checkout_id, "status": result.status}
         except (KeyError, TypeError, ValueError) as error:
             raise _error(error) from error
 

@@ -12,7 +12,6 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from aval.api.errors import ApiError, api_error_response
@@ -66,21 +65,9 @@ def create_app(runtime: AvalRuntime | None = None) -> FastAPI:
     app.add_exception_handler(ApiError, api_error_response)
 
     @app.exception_handler(RequestValidationError)
-    def malformed_request(_: Request, error: RequestValidationError) -> JSONResponse:
-        """One shape for a malformed request, whichever door it arrived at.
-
-        The framework's default is a list of field errors under `detail`; the protocol
-        lane reads `detail.code`, so both are served: a machine-readable code and the
-        field detail underneath it.
-        """
-        return JSONResponse(
-            status_code=422,
-            content={
-                "detail": {"code": "request_invalid", "errors": jsonable_encoder(error.errors())},
-                "reason_code": "request_invalid",
-                "human_summary": "Requisição malformada.",
-            },
-        )
+    def malformed_request(_: Request, __: RequestValidationError) -> JSONResponse:
+        """Expose the same narrow, stable malformed-request envelope everywhere."""
+        return JSONResponse(status_code=422, content={"detail": {"code": "request_invalid"}})
 
     @app.exception_handler(DomainError)
     def domain_error(_: Request, error: DomainError) -> JSONResponse:
