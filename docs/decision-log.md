@@ -798,3 +798,17 @@ Add a forward-only compatibility migration that detects and restores the missing
 **What we chose:** Add a new forward-only migration that inspects `mandates`, adds nullable `max_uses` only when missing, and backfills existing rows with `NULL`; its downgrade leaves the repaired column in place.
 
 **Why:** `NULL` is the current domain representation of `Mandate.usage_limit is None`, so a mandate written before frequency limits has no implicit usage cap. Historical migrations and durable facts remain untouched, while a no-op downgrade avoids recreating a schema that the current demonstration runtime cannot boot.
+
+## Idempotency retention purge boundary
+
+**Decision:** Eligibility for explicit idempotency-record removal
+
+**Options considered (one per line):**
+
+Delete all records past `retained_until`, regardless of state
+Delete completed records only after a startup sweep
+Delete completed records only when an operator invokes maintenance at or after `retained_until`
+
+**What we chose:** The explicit maintenance operation deletes only `COMPLETED` records with `retained_until <= now` and returns only the count removed.
+
+**Why:** A completed record must remain available for the full replay window, while an `IN_FLIGHT` record protects an unfinished side effect indefinitely. A caller-supplied UTC cutoff makes the operation deterministic and prevents retention cleanup from becoming an implicit startup side effect.
