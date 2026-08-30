@@ -17,8 +17,7 @@ The database is a file by default so a restart does not erase the demo. Set
 gets when the team resets between runs.
 
 The operator surfaces (`/agents`, `/admin/psp`, `/reconcile`) need a token. Set
-`AVAL_OPERATOR_TOKEN`, or let one be minted and read it off the startup line: a default
-deployment starts closed rather than open.
+`AVAL_OPERATOR_TOKEN`; a default deployment starts closed rather than open.
 """
 
 from __future__ import annotations
@@ -288,6 +287,3 @@ def create_app(
 
 app = create_app(database_path=database_path())
 _runtime = app.state.runtime
-
-if not os.environ.get("AVAL_OPERATOR_TOKEN", "").strip():
-    print(f"[aval] operator token for this process: {_runtime.operator_token}")

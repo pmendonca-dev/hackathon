@@ -384,7 +384,6 @@ Rota sempre montada, protegida só pelo token de operador
 Rota montada sempre, recusando com 403 quando uma variável não está setada
 Rota não montada a menos que `AVAL_DEMO_TAMPER` esteja ligada
 
-<<<<<<< HEAD
 **O que escolhemos:** montagem condicional — sem a variável a rota não existe (404 de
 verdade, ausente do OpenAPI), e com ela ainda exige token de operador.
 
