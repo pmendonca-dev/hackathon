@@ -36,8 +36,14 @@ const environment = import.meta.env;
  * opened devtools on the demo page kept the processor switch, the clock and the price
  * knob forever. The console asks for it instead, once, and holds a session in memory.
  */
+/**
+ * Same origin unless someone names another one. The FastAPI process serves this build
+ * itself, so in a deployment the API is wherever the page came from — and a baked-in
+ * `http://127.0.0.1:8099` would send every judge's browser to *their own* laptop, where
+ * nothing is listening. The variable stays for `vite dev`, which does run on two ports.
+ */
 const DEFAULT_GATEWAY = new AuthorizationGateway({
-  baseUrl: environment.VITE_AVAL_API_BASE_URL ?? 'http://127.0.0.1:8099',
+  baseUrl: environment.VITE_AVAL_API_BASE_URL ?? '',
 });
 
 const DEFAULT_PRINCIPAL = environment.VITE_AVAL_PRINCIPAL_ID ?? 'usr_marta';

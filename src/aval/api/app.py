@@ -44,10 +44,18 @@ DEFAULT_ORIGINS = (
 
 
 def allowed_origins() -> list[str]:
-    """Vite and Next defaults, plus whatever `AVAL_ALLOWED_ORIGINS` names."""
+    """The dev defaults, or exactly what `AVAL_ALLOWED_ORIGINS` names — never both.
+
+    Appending to the defaults meant a deployment could not narrow them: a public
+    instance went on trusting `http://localhost:5173`, so any page a judge happened to
+    have running on that port could drive an API where several routes change what an
+    agent may spend. Naming origins is how a deployer says *these and no others*, and it
+    has to mean that. Unset, the dev defaults stay, because a clone with no configuration
+    still has to run `vite dev` against this process.
+    """
     configured = os.environ.get("AVAL_ALLOWED_ORIGINS", "").strip()
-    extra = [origin.strip() for origin in configured.split(",") if origin.strip()]
-    return [*DEFAULT_ORIGINS, *extra]
+    named = [origin.strip() for origin in configured.split(",") if origin.strip()]
+    return named or list(DEFAULT_ORIGINS)
 
 
 def create_app(runtime: AvalRuntime | None = None) -> FastAPI:

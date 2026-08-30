@@ -49,6 +49,23 @@ def resolve_operator_authority_seed() -> str | None:
     return value or None
 
 
+def resolve_custody_seed() -> str | None:
+    """The one secret that makes this instance's keys survive a restart.
+
+    Unset, every custody draws fresh keys — right for a clone with no configuration,
+    and wrong for anything left running. The database outlives the process: it holds the
+    agent's registered public key and the offers a merchant signed, so a second boot with
+    new private keys signs with something nothing on disk recognises, and every purchase
+    after it fails as `signature_invalid`.
+
+    It deliberately does **not** cover `operator-key`. That key's existence grants an
+    operator the authority to revoke a mandate, and an authority must be turned on by
+    the variable that names it, never acquired as a side effect of wanting stable keys.
+    """
+    value = os.environ.get("AVAL_CUSTODY_SEED", "").strip()
+    return value or None
+
+
 @dataclass(frozen=True)
 class AvalRuntime:
     engine: Engine
@@ -97,13 +114,23 @@ def build_runtime(
     metadata.create_all(engine)
     custody = custody or KeyCustodyService()
     operator_authority_seed = resolve_operator_authority_seed()
+    custody_seed = resolve_custody_seed()
+
+    def install(target: KeyCustodyService, key_id: str, *, domain: str) -> None:
+        """Seeded when the operator kept a seed, freshly drawn otherwise."""
+        if target.has(key_id):
+            return
+        if custody_seed is not None:
+            target.derive_es256(key_id, secret=custody_seed, domain=domain)
+        else:
+            target.generate_es256(key_id)
+
     for key_id in (PROOF_KID, *extra_key_ids):
         if key_id == "operator-key" and not custody.has(key_id):
             if operator_authority_seed is not None:
                 custody.derive_es256_from_secret(key_id, operator_authority_seed)
             continue
-        if not custody.has(key_id):
-            custody.generate_es256(key_id)
+        install(custody, key_id, domain="protocol")
     # One-use proofs, remembered in the database rather than in this process: a proof
     # spent before a restart must still be spent after one.
     def consume_proof_jti(jti: str) -> bool:
@@ -121,7 +148,7 @@ def build_runtime(
     # and neither can produce the other side of the exchange.
     merchant_custody = KeyCustodyService()
     for merchant_kid in MERCHANTS.values():
-        merchant_custody.generate_es256(merchant_kid)
+        install(merchant_custody, merchant_kid, domain="merchant")
     psp_control = PspControl()
 
     def verify_proof_for_settlement(proof: str, reservation) -> None:
@@ -150,7 +177,7 @@ def build_runtime(
     # The agent gets a key of its own. Agent identity and human identity are separate
     # things in this system, and this is where that separation starts.
     agent_custody = KeyCustodyService()
-    agent_custody.generate_es256(DEMO_AGENT_KID)
+    install(agent_custody, DEMO_AGENT_KID, domain="agent")
     core.register_agent(
         AgentIdentity(
             id=DEMO_AGENT_ID,

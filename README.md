@@ -34,15 +34,21 @@ AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe -m uvicorn aval.main:app
 chave, quem escolhe a oferta é um LLM — e nada mais no sistema muda:
 
 ```bash
-export AVAL_LLM_API_KEY=sk-...      # ou OPENAI_API_KEY
-export AVAL_LLM_MODEL=gpt-4.1-mini  # opcional
-export AVAL_LLM_BASE_URL=...        # opcional, qualquer API compatível
-export AVAL_LLM_TIMEOUT=6           # opcional; estourou, as regras assumem
+export AVAL_LLM_AGENT=1                # o time quer o modelo
+export ANTHROPIC_API_KEY=sk-ant-...    # ou ANTHROPIC_AUTH_TOKEN
+export AVAL_LLM_MODEL=...              # opcional
+export AVAL_LLM_TIMEOUT_SECONDS=8      # opcional; estourou, as regras assumem
 ```
 
+As duas primeiras são obrigatórias juntas: a flag diz que o time quer o modelo, a
+credencial diz que existe um alcançável. Faltando qualquer uma — ou com o pacote
+`anthropic` ausente — o agente volta às regras sozinho, e um clone limpo roda o case
+inteiro sem conta e sem rede.
+
 `AVAL_OPERATOR_TOKEN` protege as superfícies de operador (`/agents`, `/admin/psp`,
-`/reconcile`). Sem ele um token aleatório é sorteado e impresso na subida — a instância
-nasce fechada, não aberta.
+`/reconcile`). **Sem ele essas superfícies ficam fechadas** — nenhum token é sorteado, e
+uma credencial ausente recusa como uma credencial errada. A instância nasce fechada,
+não aberta.
 
 Documentação interativa da API em <http://127.0.0.1:8099/docs>.
 
@@ -56,8 +62,29 @@ O smoke percorre o case inteiro — mandato, compra, escalação com aprovação
 teto, revogação ao vivo, impostor, as três visões e uma disputa — e falha alto no
 primeiro passo que não se comportar. É o ensaio do *trial by fire*.
 
-O banco fica em `var/aval.db`. Para uma instância descartável:
-`AVAL_DATABASE_PATH=:memory:`.
+O banco fica em `var/aval.db`, e quem o constrói são as migrations:
+
+```bash
+AVAL_DATABASE_PATH=var/aval.db .venv/Scripts/python.exe -m alembic upgrade head
+```
+
+Rodar sem passar por elas *quase* funciona, e é pior por isso: o boot chama
+`metadata.create_all`, que cria tabelas que faltam e **nunca** faz `ALTER TABLE`, então
+um banco antigo fica sem as colunas que chegaram por migration e só quebra em uso. Para
+uma instância descartável: `AVAL_DATABASE_PATH=:memory:`.
+
+### Em produção
+
+```powershell
+.\scripts\production
+ew-secrets.ps1      # sorteia .env.production
+.\scripts\production\start-aval.ps1       # migrations, build, API e túnel HTTPS
+```
+
+Ver `docs/production-runbook.md`. A variável que faz a diferença entre uma demo e uma
+implantação é `AVAL_CUSTODY_SEED`: sem ela cada boot sorteia chaves novas enquanto o
+banco segue guardando a metade pública antiga, e toda compra depois de um restart morre
+com `signature_invalid`.
 
 ### O navegador
 
@@ -510,9 +537,14 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
 
 - **SQLite** com WAL, escritor único e `BEGIN IMMEDIATE`. Repositórios isolados atrás de
   portas para trocar por Postgres sem tocar no núcleo.
-- **Custódia de chave em memória.** Em produção seria HSM/KMS; a interface
-  (`KeyCustodyService`) já é a que um HSM implementaria — chaves nunca cruzam a fronteira
-  do serviço.
+- **Custódia de chave em memória, derivada de uma semente.** As chaves não são
+  guardadas em lugar nenhum: `AVAL_CUSTODY_SEED` as reproduz a cada boot, com separação
+  por domínio e por `kid`, então um restart encontra exatamente a chave que o banco já
+  confia e dois processos concordam sem compartilhar arquivo. Em produção de verdade a
+  semente vira HSM/KMS, e a interface (`KeyCustodyService`) já é a que um HSM
+  implementaria — chaves nunca cruzam a fronteira do serviço. Sem a semente, cada boot
+  sorteia: certo para um clone descartável, e a origem do único aviso em maiúsculas do
+  runbook antigo.
 - **Nonces em processo** (`ReplayGuard`). A proteção durável contra cobrança dupla é a
   idempotência no banco; esta é a camada barata na frente.
 - **PSP simulado**, controlável por `/admin/psp` — de propósito, para que a história de

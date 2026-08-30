@@ -1,9 +1,10 @@
-> ⚠️ **Um servidor só, e sem `--reload`.** Cada processo gera a chave do agente em
-> memória e regrava o perfil no banco compartilhado, então dois `uvicorn` na mesma
-> porta — ou um `--reload` recarregando no meio da demo — fazem o último a subir vencer
-> e o outro passar a assinar com uma chave que o banco não reconhece: todo `/comprar`
-> morre com `signature_invalid`. Antes do pitch: `netstat -ano | findstr 8099` e garanta
-> que só existe um.
+> **Um servidor só.** As chaves já não morrem com o processo — `AVAL_CUSTODY_SEED` as
+> reproduz, então um segundo processo deixou de invalidar o primeiro. O que continua
+> valendo é o SQLite: um escritor só, e dois `uvicorn` na mesma porta continuam sendo um
+> erro. `.\scripts\production\start-aval.ps1` recusa subir se a porta já estiver
+> escutando. Sem a semente, o aviso antigo volta inteiro: cada processo sorteia a chave
+> do agente, regrava o perfil no banco compartilhado, e todo `/comprar` morre com
+> `signature_invalid`.
 
 # Roteiro da demo ao vivo
 
@@ -12,12 +13,22 @@ olham; o Telegram é a superfície de bolso do titular. Nenhum dos dois decide n
 
 ## Subindo tudo
 
+Em produção, um comando só — ele faz migrations, build, túnel HTTPS e API:
+
 ```powershell
-uv run alembic upgrade head
+.\scripts\production\start-aval.ps1
+```
+
+Para desenvolvimento, com o servidor separado do Vite:
+
+```powershell
+$env:AVAL_DATABASE_PATH = "var/aval.db"
+.venv\Scripts\python.exe -m alembic upgrade head
 
 $env:AVAL_OPERATOR_TOKEN = "demo-token"
 $env:AVAL_DEMO_TAMPER    = "1"      # habilita a demonstração de adulteração da trilha
-uv run uvicorn aval.main:app --port 8099
+$env:AVAL_UI_LOCAL_HTTP  = "true"   # HTTP puro: afrouxa o cookie `Secure`
+.venv\Scripts\python.exe -m uvicorn aval.main:app --port 8099
 ```
 
 Em outro terminal:
@@ -52,11 +63,11 @@ $env:ANTHROPIC_API_KEY = "..."      # sem chave, ele volta às regras sozinho
 ## Verificação limpa
 
 ```powershell
-uv run pytest -q                    # 535 testes
-uv run python scripts/smoke_demo.py
+.venv\Scripts\python.exe -m pytest -q       # 593 testes
+.venv\Scripts\python.exe scripts/smoke_demo.py
 
 Set-Location web
-npm test                            # 35 testes
+npm test                            # 44 testes
 npm run build
 npm run lint
 ```
@@ -69,7 +80,7 @@ node --experimental-strip-types tests/live-browser-journey.mjs http://127.0.0.1:
 ```
 
 Ela usa a **mesma** classe de gateway e a **mesma** carteira WebCrypto que a página, e
-percorre 22 passos: criar mandato, comprar, ser recusado pelo teto, mudar limite
+percorre 29 passos: criar mandato, comprar, ser recusado pelo teto, mudar limite
 assinado, gastar essa autorização, conferir a cadeia, checar a projeção do merchant,
 abrir uma ordem permanente e vê-la disparar quando o preço cai, avançar o relógio,
 adulterar a trilha, revogar — e provar que a vigília não compra depois disso. Se ela

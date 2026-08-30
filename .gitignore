@@ -22,3 +22,6 @@ var/
 *.db
 *.db-wal
 *.db-shm
+
+.env.production
+var/secrets.generated
