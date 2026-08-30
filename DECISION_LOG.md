@@ -857,3 +857,25 @@ Associate reads with an in-memory session generation and ignore stale completion
 **What we chose:** The UI increments an in-memory session generation whenever protected state is cleared or a new login succeeds, and applies BFF projections only when the originating generation remains current.
 
 **Why:** A delayed response from an expired or logged-out session must not repopulate the next user's projection. The generation is transient browser control state, not an authority credential, and is never persisted or transmitted.
+
+## Real-offer Telegram MVP boundary
+
+**Decision:** Scope of the autonomous shopping demonstration
+
+**Options considered (one per line):**
+
+Keep the static travel catalogue and only improve presentation
+Use real-offer discovery and send the customer to each seller checkout
+Use real-offer discovery with a seller-specific external checkout integration
+Use real-offer discovery with Stripe test-mode settlement inside AVAL
+
+**What we chose:** Use Telegram to create a durable purchase watch, discover
+real public offers through OpenAI web search, and settle only through the
+existing Stripe adapter in test mode after AVAL authorization. The bot reports
+the real seller URL but does not claim to order at that seller.
+
+**Why:** This validates the intended autonomous flow—conversation, mandate,
+secure payment-method collection, monitoring, discovery, authorization, and
+settlement—within the available implementation window. A Stripe charge alone
+does not create an external merchant order, and adding unapproved seller APIs
+would make the demo misleading and exceed the scope.
