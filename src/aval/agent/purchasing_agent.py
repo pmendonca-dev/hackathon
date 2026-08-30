@@ -17,6 +17,7 @@ from typing import Any
 from uuid import uuid4
 
 from aval.agent.intent import PurchaseIntent, fold, parse_intent
+from aval.agent.llm_intent import IntentReader, build_intent_reader
 from aval.api.errors import ApiError
 from aval.api.purchase_flow import authorize_purchase, capture_purchase
 from aval.api.schemas import CaptureRequest, PurchaseRequest
@@ -75,10 +76,21 @@ def choose_offer(offers: list[dict[str, Any]], intent: PurchaseIntent) -> dict[s
 
 
 class PurchasingAgent:
-    def __init__(self, runtime: AvalRuntime, *, custody: KeyCustodyService, kid: str) -> None:
+    def __init__(
+        self,
+        runtime: AvalRuntime,
+        *,
+        custody: KeyCustodyService,
+        kid: str,
+        intent_reader: IntentReader | None = None,
+    ) -> None:
         self._runtime = runtime
         self._custody = custody
         self._kid = kid
+        # Rules by default; a real model only when the team turned one on. Either
+        # way the reader proposes and the core disposes — swapping it changes
+        # nothing about what may be bought, which is the whole architectural claim.
+        self._intent_reader = intent_reader or build_intent_reader()
 
     def _signed_call(self, path: str, body: dict[str, Any]):
         raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
@@ -96,7 +108,7 @@ class PurchasingAgent:
         )
 
     def run(self, *, mandate_id: str, instruction: str) -> AgentRun:
-        intent = parse_intent(instruction)
+        intent = self._intent_reader.read(instruction)
         offers = self._runtime.offers.catalog()
         offer = choose_offer(offers, intent)
         if offer is None:
