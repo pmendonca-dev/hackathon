@@ -44,6 +44,7 @@ export function MerchantDeskView() {
                     <span className="mono text-[10px] text-fg-mute">{formatDateTime(entry.occurred_at)}</span>
                   </div>
                   <p className="mt-1 text-[13px] leading-relaxed">{entry.human_summary}</p>
+                  <PairwiseHandle entry={entry} />
                 </li>
               ))}
             </ul>
@@ -98,5 +99,25 @@ export function MerchantDeskView() {
         </div>
       </Panel>
     </div>
+  );
+}
+
+/**
+ * The only name this seller has for this buyer, and the only one it is allowed to have.
+ *
+ * `HMAC(secret, mandate | merchant)`: stable at this shop, so a returning customer is
+ * recognisable, and different at every other shop, so two sellers comparing notes find
+ * nothing in common. Before this the merchant had no buyer handle at all — correct, and
+ * useless for the one thing a merchant legitimately wants.
+ */
+function PairwiseHandle({ entry }: { entry: { [key: string]: unknown } }) {
+  const detail = (entry.detail ?? {}) as Record<string, unknown>;
+  const handle = typeof detail.pairwise_id === 'string' ? detail.pairwise_id : null;
+  if (!handle) return null;
+
+  return (
+    <p className="mono mt-2 text-[10px] text-fg-faint">
+      comprador nesta loja · {handle}
+    </p>
   );
 }

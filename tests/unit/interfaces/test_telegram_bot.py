@@ -1087,3 +1087,26 @@ def test_the_mandate_card_says_what_the_agent_is_watching(world) -> None:
     bot.handle_update(message("/mandato"))
 
     assert "abaixo de $80" in api.sent[-1][1].text
+
+
+def test_a_payment_in_confirmation_is_neither_bought_nor_refused():
+    """Two words the bot must not use for a held purchase: comprado, recusado."""
+    from aval.interfaces.telegram.views import purchase_result
+    from aval.interfaces.telegram.gateway import MoneyView, PurchaseView
+
+    view = purchase_result(
+        PurchaseView(
+            outcome="in_doubt",
+            reason_code="settlement_unreachable",
+            human_summary="Compra autorizada e em confirmação.",
+            title="Voo GRU→COR",
+            amount=MoneyView(minor_units=13000, currency="USD", scale=2),
+            escalation_id=None,
+            reservation_id=None,
+            settlement_reference=None,
+        )
+    )
+
+    assert "confirmação" in view.text.lower()
+    assert "comprado" not in view.text.lower()
+    assert "recusado" not in view.text.lower()

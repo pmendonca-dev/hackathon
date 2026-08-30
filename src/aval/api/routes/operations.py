@@ -135,6 +135,7 @@ def list_disputes(request: Request, mandate_id: str) -> dict[str, Any]:
                 "resolved_at": None
                 if dispute.resolved_at is None
                 else dispute.resolved_at.isoformat(),
+                "liability": core.liability_for(dispute.reservation_id),
             }
             for dispute in core.disputes_for_mandate(mandate_id)
         ],
@@ -154,4 +155,20 @@ def resolve_dispute(request: Request, dispute_id: str) -> dict[str, Any]:
         "dispute_id": dispute.id,
         "status": dispute.status.value,
         "resolution": dispute.resolution,
+        # "Was this authorized?" and "who answers for it?" are different questions.
+        # The first is the status above; this is the second.
+        "liability": runtime_of(request).core.liability_for(dispute.reservation_id),
     }
+
+
+@router.get("/metrics")
+def read_metrics(request: Request) -> dict[str, Any]:
+    """The footer the pitch runs on: aggregates of the trail, plus edge instrumentation.
+
+    Unauthenticated on purpose. Everything here is a count or a duration for the whole
+    instance — no mandate, no principal, no merchant, no amount attributable to anyone.
+    The one money figure is `spend_outside_mandate`, which is an invariant that reads
+    zero rather than anybody's balance.
+    """
+    runtime = runtime_of(request)
+    return {**runtime.core.metrics_snapshot(), **runtime.metrics.snapshot()}

@@ -292,15 +292,72 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 | 6 | **Carteira no navegador** — chave P-256 não-extraível, o servidor nunca vê a metade privada | `holder-wallet.test.mjs` |
 | 7 | **Diff de privacidade** — as duas projeções do mesmo evento, lado a lado | `MerchantDeskView.tsx` |
 | 8 | **LLM real no agente** — alucinação demonstrável, recusada pelo núcleo | `test_llm_intent.py` |
+| 9 | **Terceiro estado do pagamento** — *em confirmação*: sem resposta não é recusa nem sucesso | `test_payment_in_doubt.py` |
+| 10 | **Veredito de responsabilidade** — quem paga, derivado da trilha a cada leitura | `test_dispute_liability.py` |
+| 11 | **Teto de reservas vivas** — griefing de orçamento, o ataque que não move um centavo | `test_reservation_griefing.py` |
+| 12 | **Rodapé ao vivo** — as afirmações do pitch lidas da própria trilha encadeada | `test_metrics.py` |
+| 13 | **Pseudônimo pareado** — cliente recorrente para o merchant, incorrelacionável entre lojas | `test_merchant_pairwise_identity.py` |
+
+---
+
+## H. Auditoria de 30/08 — o que a implementação dos diferenciais encontrou
+
+### H1 — a visão do merchant filtrava campos e nunca eventos `[privacidade]`
+
+`MERCHANT_VISIBLE_DETAIL` é lista branca desde sempre, e a doutrina está escrita no topo
+do arquivo. Mas a filtragem parava nos **campos**: todo evento com o `merchant_id` dele
+ia para o merchant, qualquer que fosse o evento. O buraco tinha exatamente a forma do
+filtro — `payment_in_doubt` carrega só campos que o merchant pode ler e ainda assim conta
+a ele que o dinheiro daquele comprador está incerto, que é fato sobre o processador do
+comprador e não sobre a venda. Agora existe `MERCHANT_VISIBLE_EVENTS`, e um vendedor é
+respondido sobre a venda de que participou e sobre nada mais que aconteceu com a pessoa.
+
+### H2 — `/agent/purchase` devolvia 502 para a pessoa `[demo]`
+
+A rota de máquina (`/capture`) está certa em devolver 502: um chamador automático precisa
+saber que não obteve resposta. Mas o bot e o navegador chamam `/agent/purchase`, e um
+`502` na tela de quem comprou é indistinguível de um bug — justamente na cena em que o
+jurado derruba o processador de propósito. Agora essa rota devolve `200` com
+`outcome: in_doubt`; o contrato de máquina não mudou.
+
+### H3 — o bot chamava de "Recusado" uma compra retida `[demo]`
+
+`purchase_result` tinha quatro saídas e o estado retido caía no `else`, que diz
+**⛔ Recusado**. Recusado e sem-resposta são fatos opostos sobre o orçamento — num, o
+dinheiro voltou; no outro, segue preso — e a única tela que o comprador de verdade lê
+tinha os dois fundidos.
+
+### H4 — congelar o orçamento era um ataque sem defesa `[segurança]`
+
+Cada captura sem resposta retém orçamento, e reter é o comportamento correto. Só que nada
+limitava **quantas** podiam estar vivas ao mesmo tempo: um agente com bug — ou hostil —
+zera a capacidade de compra da Marta em N chamadas, sem mover um centavo e sem disparar
+nenhum reason code. O próprio botão *derrubar o PSP* do console do jurado torna isso
+alcançável na demo. Agora há teto de reservas vivas, e ele **recusa** em vez de escalar:
+um humano apertando aprovar não destrava dinheiro que já está preso.
+
+### H5 — os dois contadores que o merchant não precisava ver `[privacidade]`
+
+`policy_version` e `revocation_epoch` andam com o mandato, não com a venda. Dois merchants
+comparando-os contra timestamps têm sinal de ligação — fraco, mas real — para o mesmo
+comprador, e eles não compram nada ao merchant: a prova assinada que ele verifica já
+carrega os dois. Saíram da projeção, e no lugar entrou o pseudônimo pareado, que é o que
+um vendedor legitimamente quer (reconhecer cliente recorrente) na única forma que não
+serve para correlacionar.
+
+> **O padrão dos cinco, de novo.** Três nasceram de perguntar *o que a pessoa vê quando
+> isto dá errado* em vez de *o código está correto*; dois de perguntar *o que dois
+> merchants conseguem fazer juntos*. Nenhum aparecia em teste verde, porque cada teste
+> exercitava o caminho honesto da funcionalidade que cobria.
 
 ---
 
 ## F. Riscos operacionais
 
 - [x] **Ambiente resolvido.** `pyproject.toml` agora aceita Python 3.12 e 3.13; a suíte
-  roda nesta máquina. **432 testes passando.**
+  roda nesta máquina. **478 testes passando.**
 - [x] **Ambiente limpo verificado, a partir de um clone do zero** — 30/08, contra o branch
-  do PR #14. `git clone` raso, `venv` nova, `pip install -e .`, `npm install`: 432 testes
+  do PR #14. `git clone` raso, `venv` nova, `pip install -e .`, `npm install`: 478 testes
   Python, 23 do navegador, `smoke_demo.py` e `telegram_smoke.py` ALL GREEN contra um
   servidor HTTP real, e a jornada do navegador 15/15. Nada de estado de execução vai no
   repositório — `var/` e `.aval` não existem no clone, então a primeira execução de um

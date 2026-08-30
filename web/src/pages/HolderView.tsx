@@ -200,6 +200,7 @@ export function HolderView() {
                     <span className="mono text-[10px] text-fg-mute">{formatDateTime(entry.occurred_at)}</span>
                   </div>
                   <p className="mt-1 text-[13px] leading-relaxed">{entry.human_summary}</p>
+                  <PaymentState entry={entry} />
                 </li>
               ))}
             </ul>
@@ -227,6 +228,33 @@ export function HolderView() {
         </Panel>
       </section>
     </div>
+  );
+}
+
+/**
+ * Authorized, in confirmation, settled — never two states where there are three.
+ *
+ * The middle one is the honest reading of a processor that did not answer: the budget
+ * is held and the outcome is unknown. Rounding it to "aprovado" would promise the buyer
+ * a purchase that may not exist; rounding it to "recusado" would tell them their money
+ * is free when it is not. So the screen says what is true and says it is unfinished.
+ */
+function PaymentState({ entry }: { entry: { [key: string]: unknown } }) {
+  const detail = (entry.detail ?? {}) as Record<string, unknown>;
+  const state = typeof detail.payment_state === 'string' ? detail.payment_state : null;
+  if (!state) return null;
+
+  const reading = {
+    settled: { tone: 'allow' as const, label: 'liquidado' },
+    declined: { tone: 'deny' as const, label: 'recusado pelo processador' },
+    in_doubt: { tone: 'hold' as const, label: 'pagamento em confirmação' },
+  }[state];
+  if (!reading) return null;
+
+  return (
+    <p className="mt-2">
+      <Badge tone={reading.tone}>{reading.label}</Badge>
+    </p>
   );
 }
 

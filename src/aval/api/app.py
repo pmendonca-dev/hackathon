@@ -8,6 +8,7 @@ package, it is in the wrong place.
 from __future__ import annotations
 
 import os
+from time import perf_counter
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -61,6 +62,21 @@ def create_app(runtime: AvalRuntime | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def time_decisions(request: Request, call_next):
+        """Time the two routes that decide, and leave every other path alone.
+
+        Wall clock and not the demo clock: this measures how long the code took, which
+        a judge advancing the mandate's validity must not be able to change.
+        """
+        started = perf_counter()
+        try:
+            return await call_next(request)
+        finally:
+            app.state.runtime.metrics.timed(
+                request.url.path, (perf_counter() - started) * 1000
+            )
 
     app.add_exception_handler(ApiError, api_error_response)
 

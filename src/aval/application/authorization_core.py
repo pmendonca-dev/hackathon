@@ -3,12 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
 import base64
 import hashlib
 import json
 from uuid import uuid4
 
-from sqlalchemy import Engine, create_engine, select
+from sqlalchemy import Engine, create_engine, func, select, update
 from sqlalchemy.pool import StaticPool
 
 from aval.application.ports import AuthorizationProofIssuer, SettlementAdapter
@@ -37,8 +38,10 @@ from aval.infrastructure.sqlite.models import (
     capture_attempts,
     checkout_intents,
     disputes,
+    escalations,
     metadata,
     reservations,
+    revocations,
 )
 from aval.infrastructure.sqlite.agent_repository import SqliteAgentProfileRepository
 from aval.infrastructure.sqlite.audit_ledger import LedgerEntry, SqliteAuditLedger, verify_chain
@@ -211,8 +214,10 @@ class AuthorizationCore:
         engine: Engine | None = None,
         settlement_adapter: SettlementAdapter | None = None,
         authorization_proof_issuer: AuthorizationProofIssuer | None = None,
+        max_live_reservations: int = 3,
     ) -> None:
         self._clock = clock
+        self._max_live_reservations = max_live_reservations
         if engine is None:
             self._engine = create_engine(
                 "sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -725,6 +730,7 @@ class AuthorizationCore:
             ).mappings().one_or_none()
             if row is None:
                 raise ValueError("dispute not found")
+            liability = self._liability_with(connection, row["reservation_id"])
             dispute = Dispute(
                 id=row["id"], mandate_id=row["mandate_id"], reservation_id=row["reservation_id"],
                 reason=row["reason"], opened_at=row["opened_at"], status=DisputeStatus(row["status"]),
@@ -770,6 +776,10 @@ class AuthorizationCore:
                     "reservation_id": resolved.reservation_id,
                     "status": resolved.status.value,
                     "resolution": resolved.resolution,
+                    # What the trail decided about *who answers*, recorded as of now.
+                    # The live verdict is always recomputed; this is the snapshot an
+                    # auditor reads to see what was concluded on the day.
+                    "liability": liability,
                 },
                 occurred_at=resolved.resolved_at,
             )
@@ -810,6 +820,202 @@ class AuthorizationCore:
             **extra,
         }
 
+    # No card network has published a binding chargeback rule for a dispute an agent
+    # started. The vocabulary the industry is converging on is *agent overreach* and
+    # *mandate repudiation*, and both are questions this trail can answer — so it
+    # answers them, in a fixed order, the way the authorization ladder does.
+    REPUDIATION_UNPROVEN_NOTE = (
+        "A criação do mandato não é assinada nesta implementação, e nenhum artefato "
+        "assinado pelo titular nomeia este mandato. A trilha prova que o agente ficou "
+        "dentro do mandato; não prova que a pessoa o criou."
+    )
+
+    #: Ledger event types, mapped to the three outcomes the core can reach. Reading the
+    #: panel off the trail means the panel cannot disagree with the trail.
+    #:
+    #: `purchase_authorized` is the preview at `/authorize`; `purchase_committed` is the
+    #: authorized outcome at `/capture`, which never writes the first. A purchase that
+    #: previews and then pays therefore counts two decisions, because the core made two —
+    #: and the second one re-walked the whole ladder rather than trusting the first.
+    DECISION_OUTCOMES = {
+        "purchase_authorized": "authorized",
+        "purchase_committed": "authorized",
+        "purchase_escalated": "awaiting_human",
+        "purchase_rejected": "rejected",
+    }
+
+    def metrics_snapshot(self) -> dict[str, Any]:
+        """Aggregates of the append-only trail, plus the one invariant worth a footer.
+
+        `spend_outside_mandate` is money held or settled with no authorization proof
+        bound to it. That is the same condition `liability_for` calls AGENT_OVERREACH,
+        deliberately: the number on the screen and the verdict in a dispute are one
+        definition, so they cannot drift apart and tell a judge two different stories.
+        """
+        decisions: dict[str, int] = {"authorized": 0, "awaiting_human": 0, "rejected": 0}
+        reasons: dict[str, int] = {}
+        payments = {"settled": 0, "declined": 0, "in_doubt": 0}
+        with self._engine.connect() as connection:
+            for entry in SqliteAuditLedger(connection).all_entries():
+                outcome = self.DECISION_OUTCOMES.get(entry.event_type)
+                if outcome is not None:
+                    decisions[outcome] += 1
+                    reason = entry.detail.get("reason_code")
+                    if isinstance(reason, str) and outcome != "authorized":
+                        reasons[reason] = reasons.get(reason, 0) + 1
+                if entry.event_type == "purchase_settled":
+                    payments["settled"] += 1
+                elif entry.event_type == "purchase_declined":
+                    payments["declined"] += 1
+                elif entry.event_type == "payment_in_doubt":
+                    payments["in_doubt"] += 1
+            unproven = connection.execute(
+                select(
+                    func.coalesce(func.sum(reservations.c.amount_minor_units), 0)
+                ).where(
+                    reservations.c.status.in_(
+                        (
+                            ReservationStatus.COMMITTED.value,
+                            ReservationStatus.SETTLED.value,
+                        )
+                    ),
+                    ~reservations.c.id.in_(select(authorization_proofs.c.reservation_id)),
+                )
+            ).scalar_one()
+        return {
+            "decisions": decisions,
+            "reasons": reasons,
+            "payments": payments,
+            "spend_outside_mandate": {
+                "minor_units": int(unproven),
+                "currency": "USD",
+                "scale": 2,
+            },
+        }
+
+    def liability_for(self, reservation_id: str) -> dict[str, Any]:
+        """Who answers for this purchase, derived from the trail every time it is asked.
+
+        Deliberately not stored. The evidence it reads is append-only, so recomputing
+        always lands on the same verdict — and a stored verdict that had drifted from
+        the evidence beneath it would be worse than no verdict at all.
+        """
+        with self._engine.connect() as connection:
+            return self._liability_with(connection, reservation_id)
+
+    def _liability_with(self, connection, reservation_id: str) -> dict[str, Any]:
+        """The same verdict, on a connection the caller already holds.
+
+        Resolution runs inside a write transaction, and opening a second connection
+        under it would read a stale snapshot of the very evidence being judged.
+        """
+        row = connection.execute(
+            select(reservations.c.mandate_id, reservations.c.status).where(
+                reservations.c.id == reservation_id
+            )
+        ).mappings().one_or_none()
+        if row is None:
+            return self._verdict(
+                "NO_CHARGE", "nobody", ["Nenhuma reserva com este identificador."], []
+            )
+        proof = connection.execute(
+            select(authorization_proofs.c.jti, authorization_proofs.c.signed_proof).where(
+                authorization_proofs.c.reservation_id == reservation_id
+            )
+        ).mappings().first()
+        signatures = self._holder_signatures(connection, row["mandate_id"])
+
+        charged = row["status"] in (
+            ReservationStatus.COMMITTED.value,
+            ReservationStatus.SETTLED.value,
+        )
+        if not charged:
+            return self._verdict(
+                "NO_CHARGE",
+                "nobody",
+                [f"A reserva terminou como {row['status']}; nenhum valor foi cobrado."],
+                signatures,
+            )
+        if proof is None:
+            # Money is held for a purchase this layer never issued a proof for. The
+            # merchant verified nothing and the mandate authorized nothing, so the loss
+            # sits with whoever operated the agent — not with the person who delegated.
+            return self._verdict(
+                "AGENT_OVERREACH",
+                "agent_operator",
+                [
+                    "Valor retido sem prova de autorização emitida por esta camada.",
+                    "Nenhuma decisão do núcleo vincula esta reserva.",
+                ],
+                signatures,
+            )
+        bound = self._proof_payload(proof["signed_proof"])
+        basis = [
+            "Prova {jti} vincula merchant {merchant}, valor {amount} e terms_hash {terms}.".format(
+                jti=proof["jti"],
+                merchant=bound.get("merchant_id"),
+                amount=bound.get("amount_minor_units"),
+                terms=bound.get("terms_hash"),
+            ),
+            f"Reserva {reservation_id} comprometida sob a política v{bound.get('policy_version')}.",
+        ]
+        basis.extend(
+            f"Assinatura do titular ({signature['kind']}) pela chave {signature['kid']}."
+            for signature in signatures
+        )
+        return self._verdict("HOLDER_LIABLE", "holder", basis, signatures)
+
+    @staticmethod
+    def _holder_signatures(connection, mandate_id: str) -> list[dict[str, str]]:
+        """Every artefact on this mandate that the holder's own key signed.
+
+        A person who says "I never created this mandate" is answered by their own
+        signature over its id — an approval, or a revocation. Nothing else here is
+        holder-signed, and pretending otherwise would be inventing evidence.
+        """
+        found: list[dict[str, str]] = []
+        for row in connection.execute(
+            select(escalations.c.approval_jws)
+            .where(
+                escalations.c.mandate_id == mandate_id,
+                escalations.c.approval_jws.is_not(None),
+            )
+            .order_by(escalations.c.decided_at)
+        ).mappings():
+            found.append(
+                {"kind": "escalation_approval", "kid": _jws_kid(row["approval_jws"])}
+            )
+        for row in connection.execute(
+            select(revocations.c.signed_jws, revocations.c.scope)
+            .where(revocations.c.mandate_id == mandate_id)
+            .order_by(revocations.c.revoked_at)
+        ).mappings():
+            found.append(
+                {"kind": f"revocation:{row['scope']}", "kid": _jws_kid(row["signed_jws"])}
+            )
+        return found
+
+    def _verdict(
+        self,
+        verdict: str,
+        liable_party: str,
+        basis: list[str],
+        signatures: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        refuted = bool(signatures)
+        return {
+            "verdict": verdict,
+            "liable_party": liable_party,
+            "basis": basis,
+            "holder_signatures": signatures,
+            "mandate_repudiation": "refuted" if refuted else "unproven",
+            "repudiation_note": (
+                "O titular assinou artefatos que nomeiam este mandato."
+                if refuted
+                else self.REPUDIATION_UNPROVEN_NOTE
+            ),
+        }
+
     def disputes_for_mandate(self, mandate_id: str) -> list[Dispute]:
         with self._engine.connect() as connection:
             rows = connection.execute(
@@ -839,7 +1045,11 @@ class AuthorizationCore:
                     capture_attempts.c.reservation_id,
                     capture_attempts.c.idempotency_key,
                 )
-                .where(capture_attempts.c.status == "PENDING")
+                # `PENDING` is an attempt that never reached the processor; `IN_DOUBT`
+                # is one that reached it and got no answer. Both are unresolved and
+                # both are this sweep's job — scanning only the first would strand
+                # every purchase the third state exists to describe.
+                .where(capture_attempts.c.status.in_(("PENDING", "IN_DOUBT")))
                 .order_by(capture_attempts.c.id)
             ).mappings().all()
 
@@ -930,6 +1140,7 @@ class AuthorizationCore:
                     "reason_code": result.reason_code,
                     "settlement_reference": result.settlement_reference,
                     "reconciled": True,
+                    "payment_state": "settled" if result.approved else "declined",
                 },
                 occurred_at=self._clock(),
             )
@@ -1492,6 +1703,26 @@ class AuthorizationCore:
             None if mandate.ceiling is None else f"teto {mandate.ceiling.minor_units}",
         )
         ledger = SqliteLedgerRepository(connection)
+        # Griefing, not overspending. Every rung above this one answers "you may not
+        # spend that"; this one answers an agent that never spends anything and still
+        # leaves the buyer unable to buy — each unanswered capture holds budget, and
+        # holding it is correct, so a loop reserves the whole mandate without moving a
+        # cent. It refuses rather than escalates: a human pressing approve does not
+        # unstick money that is already stuck, so there is no handle to sign and there
+        # must be no button to press. Reconciling is what frees a slot.
+        #
+        # It is not mandate authority either. The holder never asked for a griefing
+        # allowance; this protects them from their own agent, so it is a property of
+        # the layer and not a field the mandate grants.
+        live = ledger.live_reservations(mandate.id)
+        slot_detail = f"{live} reserva(s) viva(s) contra o teto de {self._max_live_reservations}"
+        if live >= self._max_live_reservations:
+            return self._reject(
+                "reservation_limit",
+                "Reservas em aberto demais neste mandato; reconcilie antes de comprar.",
+                stopped("reservation_slot_free", slot_detail),
+            ), mandate
+        cleared("reservation_slot_free", slot_detail)
         # Frequency sits between the ceiling and the budget on purpose. It is authority
         # over *how often*, the way the budget is authority over *how much*, so it is
         # approvable — a human may still say yes to a fourth purchase. The ceiling
@@ -1644,7 +1875,21 @@ class AuthorizationCore:
         if self._settlement_adapter is None:
             result = CaptureResult(True, "committed", reservation, authorization_proof=proof)
         else:
-            settlement = self._settlement_adapter.authorize(reservation, proof)
+            try:
+                settlement = self._settlement_adapter.authorize(reservation, proof)
+            except Exception:
+                # Unknown is a state, not an outcome. The budget stays held either way —
+                # that part was always right — but silence in the trail is what made a
+                # held purchase indistinguishable from a broken one on the buyer's
+                # screen. Name the state, then let the error surface as it did before.
+                self._record_payment_in_doubt(
+                    attempt_id=attempt_id,
+                    mandate_id=command.mandate_id,
+                    reservation=reservation,
+                    command=command,
+                    agent_id=agent_id,
+                )
+                raise
             final = reservation.settle() if settlement.approved else reservation.release()
             result = CaptureResult(
                 settlement.approved,
@@ -1679,11 +1924,56 @@ class AuthorizationCore:
                     "settlement_reference": result.settlement_reference,
                     # The capture vocabulary the checkout adapters read.
                     "capture_state": "capture.committed" if result.approved else "capture.declined",
+                    # The vocabulary a person reads. Three states, never two.
+                    "payment_state": "settled" if result.approved else "declined",
                 },
                 occurred_at=self._clock(),
             )
         run_in_write_transaction(self._engine, finish)
         return result
+
+    def _record_payment_in_doubt(
+        self,
+        *,
+        attempt_id: str,
+        mandate_id: str,
+        reservation: Reservation,
+        command: CaptureCommand,
+        agent_id: str | None,
+    ) -> None:
+        """Write the third state down, without touching the money.
+
+        The reservation stays `COMMITTED` and the idempotency claim stays in flight:
+        releasing either would be reading *no answer* as *no charge*, which is the one
+        mistake that double-spends a payment that actually settled on the other side.
+        """
+
+        def operation(connection) -> None:
+            connection.execute(
+                update(capture_attempts)
+                .where(capture_attempts.c.id == attempt_id)
+                .values(status="IN_DOUBT")
+            )
+            SqliteAuditLedger(connection).append(
+                mandate_id=mandate_id,
+                event_type="payment_in_doubt",
+                human_summary="Pagamento em confirmação: o processador não respondeu.",
+                actor="psp:demo",
+                detail={
+                    "agent_id": agent_id,
+                    "checkout_id": command.checkout_id,
+                    "merchant_id": command.merchant_id,
+                    "reservation_id": reservation.id,
+                    "amount_minor_units": command.total.minor_units,
+                    "currency": command.total.currency,
+                    "scale": command.total.scale,
+                    "reason_code": "settlement_unreachable",
+                    "payment_state": "in_doubt",
+                },
+                occurred_at=self._clock(),
+            )
+
+        run_in_write_transaction(self._engine, operation)
 
     @staticmethod
     def _serialize_result(result: CaptureResult) -> str:
@@ -1722,3 +2012,19 @@ class AuthorizationCore:
         return AuthorizationResult(
             AuthorizationDecision.REJECTED, reason_code, human_summary, trace=trace
         )
+
+
+def _jws_kid(token: str | None) -> str:
+    """The key id a compact JWS announces, read without verifying it.
+
+    Verification already happened when the signature was accepted and stored; this is
+    the ledger's own copy being labelled, not a credential being trusted.
+    """
+    if not token:
+        return "unknown"
+    try:
+        header = token.split(".")[0]
+        decoded = json.loads(base64.urlsafe_b64decode(header + "=" * (-len(header) % 4)))
+    except (ValueError, IndexError):
+        return "unknown"
+    return str(decoded.get("kid", "unknown"))

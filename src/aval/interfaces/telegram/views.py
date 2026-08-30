@@ -224,6 +224,16 @@ def purchase_result(result: PurchaseView) -> View:
             buttons = (
                 (("⚠️ Não reconheço esta compra", f"{CALLBACK_DISPUTE}:{result.reservation_id}"),),
             )
+    elif result.outcome == "in_doubt":
+        # The third state, and the reason it has to exist here too: this branch used to
+        # fall through to "Recusado", telling the person their money was free when it
+        # was in fact still held. Refused and unanswered are opposite facts about the
+        # budget, and the one screen a buyer actually reads had them merged.
+        head = f"🕓 <b>Em confirmação.</b>\n{what}{price}"
+        tail = (
+            "\nO processador ainda não respondeu. O orçamento segue retido "
+            "até a reconciliação — nada foi liberado e nada foi entregue."
+        )
     elif result.outcome == "awaiting_human":
         head = f"🟡 <b>Precisa de você.</b>\n{what}{price}"
         tail = "\nO agente parou aqui. Decida abaixo."

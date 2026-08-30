@@ -25,7 +25,7 @@ python -m venv .venv
 # source .venv/bin/activate && pip install -e .  # Linux/macOS
 
 .venv/Scripts/python.exe -m pip install pytest httpx uvicorn
-.venv/Scripts/python.exe -m pytest -q             # 432 testes
+.venv/Scripts/python.exe -m pytest -q             # 478 testes
 
 AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe -m uvicorn aval.main:app --port 8099
 ```
@@ -255,6 +255,33 @@ O navegador gera o próprio par P-256 com WebCrypto, `extractable: false`, e gua
 handle no IndexedDB — usável, nunca serializável. Não existe caminho de exportação no
 módulo, e há teste estrutural que falha se aparecer um.
 
+### 11. A disputa responde *quem paga*, não só *estava autorizado?*
+
+O enunciado faz quatro perguntas e a quarta é **quem responde pela disputa: o humano, o
+agente, o merchant?** Resolver para `MANDATE_HELD` responde outra — se havia autoridade.
+
+Nenhuma bandeira publicou até hoje regra vinculante de chargeback para disputa iniciada
+por agente, e o vocabulário que o mercado está formando é *agent overreach* e *mandate
+repudiation*. Os dois são perguntas que esta trilha sabe responder, então ela responde,
+em ordem fixa — do mesmo jeito que a escada de autorização:
+
+| veredito | derivado de | quem responde |
+|---|---|---|
+| `NO_CHARGE` | reserva liberada ou inexistente | ninguém: nada foi cobrado |
+| `AGENT_OVERREACH` | valor retido **sem** prova emitida por esta camada | o operador do agente |
+| `HOLDER_LIABLE` | prova válida sobre reserva comprometida | o titular |
+
+Cada veredito cita as linhas exatas que o sustentam, e o veredito **não é armazenado**:
+é recalculado da trilha a cada leitura. A evidência é append-only, então recalcular dá
+sempre a mesma resposta — e um veredito guardado que tivesse divergido da evidência
+embaixo dele seria pior do que nenhum.
+
+**O limite, declarado em vez de escondido:** a criação do mandato não é assinada nesta
+implementação. A trilha prova que o agente ficou dentro do mandato; ela **não** prova
+que a pessoa criou o mandato. Quando existe um artefato assinado pelo titular nomeando
+aquele mandato — uma aprovação de escalação, uma revogação — a repudiação fica `refuted`
+e o veredito diz por quê. Sem nenhum, ela fica `unproven`, com a razão escrita.
+
 ---
 
 ## Os casos feios, e o que o sistema faz
@@ -266,20 +293,36 @@ módulo, e há teste estrutural que falha se aparecer um.
 | mandato expirado | recusa; a validade é lida como instante real, não relógio local | `test_authorization_api.py` |
 | revogação ao vivo | relida **dentro** da transação de commit — sem janela de corrida | `test_revocation_commit_race.py` |
 | agente impostor | 6 formas de ataque, todas recusadas na borda | `test_agent_identity_api.py` |
-| disputa posterior | resolvida pela trilha: prova + reserva comprometida → `MANDATE_HELD` | `test_settlement_and_disputes_api.py` |
+| disputa posterior | resolvida pela trilha, **e com veredito de quem responde** | `test_dispute_liability.py` |
 | PSP não responde | **não é recusa**: orçamento retido, `502`, reconcilia depois | `test_settlement_and_disputes_api.py` |
 | cobrança dupla | idempotência durável; mesma chave e mesmo corpo devolve o original | `test_capture_idempotency.py` |
 | oferta reusada | nonce da oferta é gasto uma vez → `409 offer_replayed` | `test_merchant_api.py` |
 | frequência estourada | 4ª compra do mês escala; um cartão recusado não gasta um uso | `test_usage_frequency.py` |
 | trilha adulterada | a cadeia acusa a posição exata, sem ninguém precisar notar | `test_ledger_tamper_demo.py` |
 | agente sequestrado | uma assinatura encerra todos os mandatos daquela chave | `test_principal_kill_switch.py` |
+| **pagamento sem resposta** | vira estado, não erro: *em confirmação*, orçamento retido | `test_payment_in_doubt.py` |
+| **agente congela o orçamento** | teto de reservas vivas; recusa sem oferecer aprovação | `test_reservation_griefing.py` |
 
-### O timeout que não vira recusa
+### O timeout que não vira recusa — nem sucesso
 
-Se o processador não responde, a exceção sobe e a reserva **fica** `COMMITTED`: orçamento
-retido, attempt pendente, idempotência reivindicada. É o *fail-closed* certo — soltar o
-orçamento no timeout liberaria dinheiro de um pagamento que pode ter liquidado do outro
-lado. `POST /reconcile` é quem fecha esses casos quando o processador volta.
+Se o processador não responde, a reserva **fica** `COMMITTED`: orçamento retido, attempt
+`IN_DOUBT`, idempotência reivindicada. É o *fail-closed* certo — soltar o orçamento no
+timeout liberaria dinheiro de um pagamento que pode ter liquidado do outro lado.
+
+O que mudou é que isso agora **se lê**. O pagamento tem três estados, não dois:
+
+| estado | o que significa | o que a pessoa vê |
+|---|---|---|
+| `settled` | o processador aprovou | ✅ Comprado |
+| `declined` | o processador recusou | ⛔ Recusado — orçamento devolvido |
+| `in_doubt` | o processador **não respondeu** | 🕓 Em confirmação — orçamento retido |
+
+`/capture` continua devolvendo `502`, porque um chamador de máquina precisa saber que
+não obteve resposta. Mas `/agent/purchase` — a rota que o bot e o navegador usam —
+devolve `200` com `outcome: in_doubt`, porque dizer "erro 502" a uma pessoa sobre um
+pagamento que pode ter acontecido é exatamente a mentira que este estado remove.
+
+`POST /reconcile` é quem fecha esses casos quando o processador volta.
 
 ---
 
@@ -295,7 +338,26 @@ lado. `POST /reconcile` é quem fecha esses casos quando o processador volta.
 | reconciliar | `POST /reconcile` | token de operador |
 | **avançar o relógio** | `POST /admin/clock` | token de operador |
 | **adulterar a trilha** | `POST /admin/ledger/{id}/tamper` | token de operador + `AVAL_DEMO_TAMPER` |
+| **congelar o orçamento** | `POST /agent/purchase` × N com o PSP fora | teto de reservas vivas |
 | atacar em texto livre | `POST /agent/purchase` | ninguém: o núcleo recusa |
+
+E o rodapé do console lê tudo isso ao vivo, de `GET /metrics`:
+
+```
+decisões: 15 allow · 3 escalate · 3 deny       p99 da decisão: 1.2 ms
+recusados na borda: 1                          gasto autorizado fora do mandato: US$ 0,00
+```
+
+As contagens de decisão são **agregados da própria trilha encadeada** que o auditor lê,
+não um contador paralelo — um painel que somasse por conta própria poderia discordar da
+aba ao lado, e aí nenhum dos dois seria evidência. Só duas coisas são contadas em
+processo, porque a trilha não pode sabê-las: quanto tempo a decisão levou e as
+requisições recusadas na borda, que nunca chegaram a ser decisões.
+
+`gasto autorizado fora do mandato` é dinheiro retido ou liquidado **sem prova de
+autorização vinculada** — a mesma definição que a disputa resolve como
+`AGENT_OVERREACH`, de propósito: o número na tela e a arbitragem não podem contar duas
+histórias diferentes.
 
 Tudo isso está no navegador, em `web/`. O console trial-by-fire separa as duas colunas
 acima na tela, porque essa separação **é** a tese: quem opera a instância não move

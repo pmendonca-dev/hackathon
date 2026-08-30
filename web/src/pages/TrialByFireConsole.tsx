@@ -3,6 +3,7 @@ import { Clock, KeyRound, PlugZap, RefreshCcw, ShieldOff, Wallet } from 'lucide-
 
 import { useAval } from '../state/AvalContext.ts';
 import { Badge, Button, EmptyNotice, Panel } from '../components/ui.tsx';
+import { LiveFooter } from '../components/LiveFooter.tsx';
 import { formatDateTime } from '../utils/format.ts';
 
 /**
@@ -172,6 +173,8 @@ export function TrialByFireConsole() {
           </ul>
         )}
       </Panel>
+
+      <LiveFooter />
     </div>
   );
 }
