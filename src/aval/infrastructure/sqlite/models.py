@@ -5,6 +5,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     MetaData,
     String,
@@ -143,6 +144,27 @@ idempotency_records = Table(
     Column("retained_until", DateTime(timezone=True), nullable=False),
     CheckConstraint("state IN ('IN_FLIGHT', 'COMPLETED')", name="idempotency_state"),
     UniqueConstraint("scope", "idempotency_key", name="idempotency_scope_key"),
+)
+
+# Browser sessions are an authentication boundary, separate from Core authority.
+# Only hashes of the opaque cookie and CSRF bearer values are durable facts.
+browser_ui_sessions = Table(
+    "browser_ui_sessions",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("token_hash", String(64), nullable=False, unique=True),
+    Column("csrf_hash", String(64), nullable=False),
+    Column("role", String, nullable=False),
+    Column("merchant_id", String),
+    Column("issued_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("revoked_at", DateTime(timezone=True)),
+    Index(
+        "ix_browser_ui_sessions_active_lookup",
+        "token_hash",
+        "expires_at",
+        "revoked_at",
+    ),
 )
 
 mandate_locks = Table(

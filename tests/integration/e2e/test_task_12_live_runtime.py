@@ -556,18 +556,18 @@ def test_capture_replay_and_double_capture_never_create_a_second_settlement(tmp_
         ),
         "duplicate": (duplicate.status_code, duplicate.json()),
         "receipts": receipts.status_code,
-        "committed_events": sum(
-            event["event_type"] == "capture.committed" for event in timeline
+        "settled_events": sum(
+            event["event_type"] == "capture.settled" for event in timeline
         ),
     } == {
         "first": (201, "settled"),
         "replay": (201, "true", True),
         "duplicate": (
-            422,
-            {"detail": {"code": "authorization_proof_replayed"}},
+            409,
+            {"detail": {"code": "transaction_already_captured"}},
         ),
         "receipts": 200,
-        "committed_events": 1,
+        "settled_events": 1,
     }
 
 
@@ -706,7 +706,7 @@ def test_post_commit_revocation_blocks_future_purchase_without_rewriting_settlem
             dispute.status_code,
             bool(dispute.json()["post_commit_note"]),
             any(
-                event["event_type"].startswith("revocation.")
+                event["event_type"] == "mandate.revoked"
                 for event in dispute.json()["timeline"]
             ),
         ),

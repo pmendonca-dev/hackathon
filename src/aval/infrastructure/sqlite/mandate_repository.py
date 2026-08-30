@@ -63,6 +63,11 @@ class SqliteMandateRepository:
         row = self._connection.execute(select(mandates).where(mandates.c.id == mandate_id)).mappings().one_or_none()
         return self._to_mandate(row) if row else None
 
+    def all(self) -> list[Mandate]:
+        """Internal source for BFF role-scoped workspace projections."""
+        rows = self._connection.execute(select(mandates).order_by(mandates.c.id)).mappings()
+        return [self._to_mandate(row) for row in rows]
+
     def for_principal(self, principal_id: str) -> list[Mandate]:
         """Every mandate one buyer holds. Scoped by construction: there is no query
         here that answers "all mandates", because no caller is entitled to that."""
@@ -78,6 +83,28 @@ class SqliteMandateRepository:
             select(mandates).join(revocation_authorities).where(revocation_authorities.c.kid == kid)
         ).mappings()
         return [self._to_mandate(row) for row in rows]
+
+    def upsert_authority(self, mandate_id: str, authority: RevocationAuthority) -> None:
+        values = {
+            "mandate_id": mandate_id,
+            "role": authority.role.value,
+            "kid": authority.kid,
+            "public_jwk": json.dumps(dict(authority.public_jwk)),
+            "allowed_scope": json.dumps(sorted(authority.allowed_scopes)),
+        }
+        existing = self._connection.execute(
+            select(revocation_authorities.c.id).where(
+                revocation_authorities.c.id == authority.id
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            self._connection.execute(revocation_authorities.insert().values(id=authority.id, **values))
+            return
+        self._connection.execute(
+            update(revocation_authorities)
+            .where(revocation_authorities.c.id == authority.id)
+            .values(**values)
+        )
 
     def _to_mandate(self, row) -> Mandate:
         authority_rows = self._connection.execute(

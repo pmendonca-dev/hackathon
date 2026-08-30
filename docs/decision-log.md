@@ -1,5 +1,120 @@
 # Decision Log
 
+## Browser BFF session migration identity
+
+**Decision:** Alembic revision number for durable browser sessions
+
+**Options considered (one per line):**
+
+Reuse the plan's historical `0006_browser_ui_sessions` identifier
+Relabel the published browser-session revision after `0010_mandate_instrument`
+Keep the published browser-session revision and join it with an Alembic merge revision
+
+**What we chose:** Preserve `0009_browser_ui_sessions` and add
+`0011_merge_browser_ui_sessions` with both it and `0010_mandate_instrument` as
+parents.
+
+**Why:** Revisions through `0010_mandate_instrument` are already published runtime
+history on `main`, while databases initialized by the BFF branch already carry the
+browser-session revision identity. Relabeling it would orphan those databases and
+leaving the branch unmerged would make `alembic upgrade head` ambiguous. The merge
+revision creates one upgrade head while preserving both durable histories.
+
+## Browser projection scope for multi-merchant mandates
+
+**Decision:** Merchant access to a mandate whose shared timeline cannot be partitioned safely
+
+**Options considered (one per line):**
+
+Return the complete mandate timeline to every merchant named by the mandate
+Filter the current timeline heuristically by merchant fields
+Deny merchant audit and dispute reads unless the mandate has exactly that merchant scope
+
+**What we chose:** Deny merchant audit and dispute reads for multi-merchant
+mandates; merchant reads are allowed only when the mandate scope is exactly the
+merchant session's configured merchant.
+
+**Why:** Current durable audit and dispute reconstruction contains mandate-level
+facts and cannot prove that every event is attributable to one merchant. A
+heuristic filter could disclose another merchant's checkout or settlement
+facts, so the BFF fails closed until a future evidence model provides an
+authoritative merchant partition.
+
+## Browser workspace mandate source
+
+**Decision:** Scope of the Core mandate read used by browser workspace projections
+
+**Options considered (one per line):**
+
+Keep the Core limited to principal-scoped mandate reads and omit auditor and operator workspaces
+Expose a transport-level all-mandates endpoint for the browser
+Provide an internal Core read that the already-authenticated BFF filters into role-scoped projections
+
+**What we chose:** Provide the internal Core read and keep all role checks and redaction in the BFF projection service.
+
+**Why:** The published BFF contract grants auditors a redacted cross-merchant summary and operators mandate status, while merchant and holder projections remain narrower. The new read is not an HTTP surface and does not bypass the BFF session and role checks; exposing it through the agent APIs would weaken their RFC 9421 boundary.
+
+## Browser operator revocation idempotency binding
+
+**Decision:** Idempotency fingerprint for a server-signed browser revocation
+
+**Options considered (one per line):**
+
+Use the fresh ES256 JWS bytes as the idempotency request hash
+Persist browser-side JWS material to replay the original signature
+Bind the BFF's separate idempotency scope to the canonical mandate action
+
+**What we chose:** Use a dedicated Core idempotency scope and a canonical hash
+of the mandate identifier plus the fixed operator-revocation action.
+
+**Why:** ES256 signing produces a new signature for the same semantic command,
+so hashing JWS bytes would turn a same-key browser retry into a mismatch.
+Persisting the raw JWS in a browser session would unnecessarily retain signing
+material. A distinct canonical action hash preserves the durable replay
+contract without exposing or depending on the JWS.
+
+## Local operator authority key continuity
+
+**Decision:** Key lifetime for the local server-side browser revocation authority
+
+**Options considered (one per line):**
+
+Generate a new in-memory ES256 operator key on every runtime start
+Persist an unencrypted private key in the local SQLite database
+Derive the server authority deterministically from an explicit server-only environment seed
+
+**What we chose:** Derive the local demo operator authority deterministically
+inside `KeyCustodyService` from `AVAL_OPERATOR_AUTHORITY_SEED` and do not
+persist private key material in SQLite.
+
+**Why:** The mandate records the authority's public JWK. A newly generated key
+after restart cannot validate against that durable registration, which made the
+operator BFF return `revocation_invalid`. An explicit server-only seed produces
+the same public identity on each start while keeping the private key material
+inside KeyCustody and out of the database, browser, API responses, logs,
+exceptions, receipts, and audit summaries. Without that seed (or injected
+custody) the operator authority is disabled and the BFF fails closed.
+
+## Existing-mandate operator authority adoption
+
+**Decision:** Applying an explicit operator authority seed to an existing local runtime database
+
+**Options considered (one per line):**
+
+Leave pre-BFF and rotated-seed mandate authority registrations unchanged
+Rewrite the entire seeded mandate whenever the configured operator key changes
+Upsert only the named operator revocation authority through AuthorizationCore and append an audit event
+
+**What we chose:** Upsert only `authority_operator_01` through
+`AuthorizationCore` when an explicit server authority seed is configured,
+recording `operator_authority.configured` in the append-only ledger.
+
+**Why:** An existing mandate otherwise retains no operator authority or a JWK
+from an old seed, which makes its configured server operator unavailable. A
+full mandate rewrite could alter revocation, expiry, limits, or settlements.
+The narrow Core-owned authority update adopts or rotates only the explicitly
+configured server authority while preserving all existing authorization facts.
+
 ## Technical coverage objective
 
 **Decision:** Primary product objective for the hackathon solution
@@ -467,3 +582,128 @@ Um modelo real propõe errado de verdade e é recusado do mesmo jeito. O modelo 
 informado do limite, do teto nem do saldo**: além de desnecessário para ler uma frase,
 mandar o orçamento da compradora a um terceiro seria o vazamento que o resto do sistema
 evita, e um modelo com prompt injetado não tem número privado para repetir.
+
+## Checkout completion and settlement boundary
+
+**Decision:** Meaning of the UCP checkout completion status
+
+**Options considered (one per line):**
+
+Let checkout completion invoke the Core capture and PSP settlement
+Report a settled checkout before the payment-capture endpoint runs
+Verify AP2 completion and return a durable ready-for-capture state
+
+**What we chose:** Completion now verifies the canonical AP2 checkout and returns `ready_for_capture`; only `POST /payment-captures` may commit a reservation, call the PSP, settle, or issue receipts.
+
+**Why:** One status must have one lifecycle meaning. Separating evidence readiness from settlement prevents a checkout response from claiming a settled payment before the explicit capture boundary and preserves AuthorizationCore as the sole settlement authority.
+
+## Revocation audit before settlement
+
+**Decision:** Audit projection when a mandate is revoked before any capture
+
+**Options considered (one per line):**
+
+Hide the revocation timeline until a receipt exists
+Create a synthetic settlement receipt for the audit reader
+Return the append-only revocation timeline as incomplete evidence
+
+**What we chose:** The dispute reader exposes a mandate's recorded revocation events even when no capture exists, returning an inconclusive evidence chain rather than inventing payment facts.
+
+**Why:** A signed revocation is itself a durable authorization fact. It must be auditable immediately, while the absence of a reservation or receipt must remain explicit.
+
+## RFC 9421 idempotency component scope
+
+**Decision:** Signature components for operational reads
+
+**Options considered (one per line):**
+
+Require an idempotency key on every signed request
+Allow unsigned GET requests
+Require RFC 9421 on all routes while signing idempotency only for POST
+
+**What we chose:** Every route signs method, authority, path, profile, content digest, and content type; POST adds `Idempotency-Key`, while GET does not require it.
+
+**Why:** Reads still receive full identity and raw-body integrity protection without inventing an idempotency requirement for an operation that cannot mutate state. This matches the runtime contract's durable POST retry rule.
+
+## Settlement event naming
+
+**Decision:** Audit event emitted after a capture attempt
+
+**Options considered (one per line):**
+
+Record every approved capture as `capture.committed`
+Record every approved capture as `capture.settled`
+Distinguish a Core-only commit from a PSP-approved settlement
+
+**What we chose:** The Core emits `capture.committed` only when no settlement adapter runs, and emits `capture.settled` when the PSP returns an approved settlement reference.
+
+**Why:** The audit timeline must not erase the difference between a durable reservation commit and a completed settlement. This aligns the runtime receipt boundary and `status: settled` response with the underlying event.
+
+## Runtime database path consistency
+
+**Decision:** Default persistence used by the application factory
+
+**Options considered (one per line):**
+
+Use a hidden `.aval/runtime.sqlite3` only from the factory
+Let the factory and ASGI entrypoint independently select their defaults
+Use the configured `AVAL_DATABASE_PATH` in both entrypoints
+
+**What we chose:** `create_app()` now uses the same configured durable database path as the ASGI entrypoint whenever a caller does not explicitly supply one.
+
+**Why:** A restarted runtime must reopen the database that operators migrated and verified. Divergent implicit locations can leave one entrypoint on an obsolete schema and break durable authorization facts.
+
+## Browser-safe UI authentication boundary
+
+**Decision:** Authentication mechanism for live browser views and operator actions
+
+**Options considered (one per line):**
+
+Embed trusted RFC 9421 private keys in browser assets
+Treat an unsigned browser cookie as equivalent to an agent signature on existing APIs
+Add a same-origin session-authenticated BFF while preserving RFC 9421 for agent APIs
+
+**What we chose:** Add a same-origin BFF with server-side role sessions and CSRF protection for browser views and operator commands; retain RFC 9421 and raw-body verification for agent-facing APIs.
+
+**Why:** Browser assets cannot safely hold runtime signing keys, while an unsigned cookie does not satisfy the agent identity contract. A role-scoped BFF keeps private signing material in `KeyCustodyService`, applies the existing Core services without creating another policy authority, and enables an authenticated operator revocation without asking the browser to handle a JWS.
+
+## Browser CSRF material boundary
+
+**Decision:** Scope of the BFF CSRF value in the same-origin UI
+
+**Options considered (one per line):**
+
+Remove the published CSRF header and replace it with a different browser protocol
+Treat the CSRF value as a browser credential and persist it in a cookie or storage
+Keep the published one-time CSRF value only in transient browser memory for the required request header
+
+**What we chose:** Preserve the published `csrf_token` login response and `X-AVAL-CSRF` request header. The value is an anti-CSRF nonce, not an authority credential, and may exist only in the login response and transient browser memory; it must not enter static assets, URLs, cookies, storage, logs, exceptions, or projections.
+
+**Why:** The BFF contract explicitly requires the browser to send this value while keeping the session bearer cookie HttpOnly. Removing it would change the published API and break the UI handoff. Restricting its lifetime and locations retains the intended CSRF boundary without treating it as payment or signing authority.
+
+## Same-origin browser build delivery
+
+**Decision:** How the FastAPI runtime serves the browser production build
+
+**Options considered (one per line):**
+
+Keep Vite Preview as a second origin and configure CORS
+Add a reverse proxy that forwards browser requests to Vite Preview
+Serve the already-built `web/dist` bytes from FastAPI after all API routers are mounted
+
+**What we chose:** FastAPI serves `web/dist` directly. It reserves every documented API root before a final GET/HEAD-only SPA fallback, returns API JSON for unknown API paths, and returns `503 ui_build_unavailable` when the build directory or `index.html` is absent.
+
+**Why:** A direct static response keeps the SPA and BFF on one scheme, host, and port without inventing identity or relying on CORS. Reserving API namespaces prevents an unknown BFF or agent path from receiving `index.html`, while the explicit unavailable response avoids a simulated UI when a production build has not been made.
+
+## ASGI runtime dependency
+
+**Decision:** How the documented FastAPI server command is supplied after a clean project sync
+
+**Options considered (one per line):**
+
+Require operators to add Uvicorn with an ephemeral `uv run --with` flag
+Declare Uvicorn as a runtime dependency and resolve it in the committed lockfile
+
+**What we chose:** Declare Uvicorn as a direct runtime dependency and commit its resolved lockfile entries.
+
+**Why:** The published same-origin launch command is part of the application delivery path. A clean `uv sync` must make that command available without an operator adding an undeclared, unreviewed package at launch time.

@@ -47,7 +47,9 @@ def create_delegate_payment_router(
     router = APIRouter()
 
     def require_agent(request: Request) -> None:
-        authenticate_rfc9421(request, verifier)
+        identity = authenticate_rfc9421(request, verifier)
+        if verifier is not None and (identity is None or identity.id != "agent_01"):
+            raise HTTPException(status_code=403, detail={"code": "agent_not_authorized"})
 
     @router.post(
         "/agentic_commerce/delegate_payment",
@@ -70,7 +72,12 @@ def create_delegate_payment_router(
                 if outcome.replayed and response is not None:
                     response.headers["Idempotent-Replayed"] = "true"
                 if outcome.payment is None:
-                    status = 409 if outcome.reason_code == "idempotency_in_flight" else 422 if outcome.reason_code == "idempotency_key_reused" else 403
+                    status = (
+                        409 if outcome.reason_code == "idempotency_in_flight"
+                        else 422 if outcome.reason_code == "idempotency_key_reused"
+                        else 503 if outcome.reason_code in {"idempotency_unavailable", "revocation_unavailable"}
+                        else 403
+                    )
                     raise HTTPException(status_code=status, detail={"code": outcome.reason_code})
                 delegated = outcome.payment
             else:

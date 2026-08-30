@@ -7,7 +7,7 @@ import pytest
 from aval.adapters.ap2.merchant_authorization import MerchantAuthorizationSigner
 from aval.adapters.ucp.ap2_extension import AP2_MANDATE_CAPABILITY, UcpCheckoutError
 from aval.application.authorization_core import AuthorizationResult, CaptureResult
-from aval.application.services.checkout import CheckoutCommand, CheckoutService, InMemoryCheckoutStore
+from aval.application.services.checkout import CheckoutCommand, CheckoutCompletion, CheckoutService, InMemoryCheckoutStore
 from aval.domain.enums import AuthorizationDecision
 from aval.domain.money import Money
 from aval.security.key_custody import KeyCustodyService
@@ -55,8 +55,8 @@ def test_ap2_checkout_is_security_locked_and_returns_merchant_authorization() ->
         service.complete("chi_1", checkout_mandate=None, audience="merchant.example", nonce="nonce-1", idempotency_key="i1")
 
 
-def test_complete_checkout_delegates_stateful_capture_to_the_core() -> None:
-    """Catches an adapter-only completion that succeeds without invoking the AVAL commit path."""
+def test_complete_checkout_verifies_readiness_without_invoking_core_capture() -> None:
+    """Settlement must remain exclusive to payment capture, never checkout completion."""
     custody = KeyCustodyService()
     custody.generate_es256("merchant-key")
     core = CapturingCore()
@@ -72,5 +72,5 @@ def test_complete_checkout_delegates_stateful_capture_to_the_core() -> None:
 
     result = service.complete("chi_2", checkout_mandate=None, audience="merchant_1", nonce="unused", idempotency_key="i2")
 
-    assert result == CaptureResult(True, "committed")
-    assert core.idempotency_keys == ["i2"]
+    assert result == CheckoutCompletion("chi_2", "ready_for_capture")
+    assert core.idempotency_keys == []

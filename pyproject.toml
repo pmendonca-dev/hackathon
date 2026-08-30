@@ -10,6 +10,7 @@ dependencies = [
     "fastapi",
     "rfc8785>=0.1.4",
     "sqlalchemy",
+    "uvicorn",
 ]
 
 [project.optional-dependencies]
