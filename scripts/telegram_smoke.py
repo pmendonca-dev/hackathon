@@ -16,6 +16,7 @@ to AVAL is exercised here; everything Telegram does to the bot is not.
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 from datetime import timedelta
@@ -49,13 +50,16 @@ class Smoke:
 
         # /start — the chat mints its own P-256 key and a mandate in its own name.
         identity = self.store.enrol(CHAT_ID, "Marta Silva")
-        mandate_id = self.gateway.create_mandate(
+        # The card is typed once here and forgotten there: what survives is a token
+        # the agent may present and four digits the holder recognises.
+        mandate_id, instrument_scope = self.gateway.create_mandate(
             identity,
             merchants=["vuelaya"],
             categories=["travel"],
             limit=USD(20_000),
             ceiling=USD(50_000),
             valid_for=timedelta(days=7),
+            card_number="4242424242424242",
         )
         identity = self.store.bind_mandate(CHAT_ID, mandate_id)
         self.check("/start cria chave do chat e mandato", bool(mandate_id), mandate_id)
@@ -72,6 +76,15 @@ class Smoke:
             "a chave que assina é a do chat, não a do servidor",
             mandate is not None and self.store.public_jwk(identity)["kid"] == identity.kid,
             identity.kid,
+        )
+
+        self.check(
+            "o mandato nomeia o instrumento, e o cartao nao sobrevive",
+            mandate is not None
+            and mandate.instrument_label is not None
+            and "4242" in mandate.instrument_label
+            and "4242424242424242" not in json.dumps(mandate.__dict__, default=str),
+            mandate.instrument_label if mandate else "sem rotulo",
         )
 
         offers = self.gateway.catalogue()
@@ -156,7 +169,7 @@ class Smoke:
 
         # A second chat is a different holder, and cannot touch the first one.
         other = self.store.enrol(999_111, "Jurado 2")
-        other_mandate = self.gateway.create_mandate(
+        other_mandate, _ = self.gateway.create_mandate(
             other,
             merchants=["vuelaya"],
             categories=["travel"],

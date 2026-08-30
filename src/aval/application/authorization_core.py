@@ -930,6 +930,18 @@ class AuthorizationCore:
         escalation = run_in_write_transaction(self._engine, settle)
         if escalation.status is not EscalationStatus.APPROVED:
             return escalation, None
+        # The resumed capture has to present the instrument the mandate names, or the
+        # ladder refuses its own approval with `instrument_not_in_mandate` — the person
+        # taps Aprovar and the purchase dies anyway.
+        #
+        # Read live rather than frozen on purpose: if the holder cancelled the card
+        # while they were deciding, the `instrument_not_revoked` rung sits *above* this
+        # one and still refuses. Reading now cannot resurrect a cancelled card, and it
+        # keeps the escalation from carrying a copy of state the mandate already owns.
+        resumed = self.mandate(escalation.mandate_id)
+        instrument_id = (
+            None if resumed is None or resumed.instrument is None else resumed.instrument.token
+        )
         capture = self.capture(
             CaptureCommand(
                 mandate_id=escalation.mandate_id,
@@ -939,6 +951,7 @@ class AuthorizationCore:
                 category=escalation.category,
                 # Derived from the handle, so approving twice can never charge twice.
                 idempotency_key=f"esc_{escalation.id}",
+                instrument_id=instrument_id,
             ),
             agent_id=escalation.agent_id,
             # The signature named this handle, this merchant and this amount, so the

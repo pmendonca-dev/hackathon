@@ -168,3 +168,49 @@ def test_a_card_number_that_is_not_a_card_number_is_refused_at_the_edge(harness)
     )
 
     assert response.status_code == 422
+
+
+def approve(harness, mandate_id: str, escalation_id: str, amount: int):
+    """The holder's signed yes, in the shape the core checks it in."""
+    token = sign_compact_jws(
+        {
+            "decision_handle": escalation_id,
+            "mandate_id": mandate_id,
+            "decision": "approve",
+            "amount_minor_units": amount,
+        },
+        harness.custody,
+        harness.HOLDER_KID,
+    )
+    return harness.client.post(
+        f"/escalations/{escalation_id}/decision",
+        json={"decision": "approve", "approval_jws": token},
+    )
+
+
+def test_an_approved_escalation_completes_on_a_mandate_that_names_a_card(harness):
+    """Approving has to actually finish the purchase.
+
+    The resumed capture is rebuilt by the core, not resent by the agent, so it must
+    present the instrument the mandate names. Without that the ladder refuses the very
+    approval the holder just signed — and it refuses it on the mandate that *has* a
+    card, which is every mandate the bot creates. The escalation moment of the demo
+    dies exactly where the demo is.
+    """
+    mandate_id, scope = with_card(harness)
+    # A hotel under a travel-only mandate: out of category, so approvable — the offer
+    # is bought whole, with its own signature and its own total.
+    offer = offer_for(harness, "HT-COR-CENTRO")
+    body = harness.purchase_from_offer(mandate_id, offer, "cap_esc")
+    body["instrument_id"] = scope.removeprefix("instrument:")
+
+    escalated = harness.capture(body).json()
+    assert escalated["reason_code"] == "category_not_allowed", escalated
+    assert escalated["escalation_id"] is not None
+
+    decided = approve(
+        harness, mandate_id, escalated["escalation_id"], offer["total"]["minor_units"]
+    )
+
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["capture"]["approved"] is True, decided.text
