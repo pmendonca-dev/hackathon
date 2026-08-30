@@ -97,11 +97,16 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def database_path() -> Path | None:
+def _configured_database_path() -> Path | None:
     configured = os.environ.get("AVAL_DATABASE_PATH", "var/aval.db").strip()
     if configured.lower() in ("", ":memory:"):
         return None
     return Path(configured)
+
+
+def database_path() -> Path | None:
+    """Public accessor kept for the ASGI entrypoint and deployment tooling."""
+    return _configured_database_path()
 
 
 def _seed_protocol_fixtures(runtime: AvalRuntime, clock: Callable[[], datetime]) -> None:
@@ -270,7 +275,7 @@ def create_app(
     keys it published — a verifier that trusted a key yesterday must still find it today.
     """
     runtime = build_runtime(
-        database_path=database_path,
+        database_path=database_path or _configured_database_path(),
         now_provider=clock,
         custody=custody,
         extra_key_ids=PROTOCOL_KEY_IDS,

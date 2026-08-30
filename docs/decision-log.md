@@ -384,6 +384,7 @@ Rota sempre montada, protegida só pelo token de operador
 Rota montada sempre, recusando com 403 quando uma variável não está setada
 Rota não montada a menos que `AVAL_DEMO_TAMPER` esteja ligada
 
+<<<<<<< HEAD
 **O que escolhemos:** montagem condicional — sem a variável a rota não existe (404 de
 verdade, ausente do OpenAPI), e com ela ainda exige token de operador.
 
@@ -467,3 +468,73 @@ Um modelo real propõe errado de verdade e é recusado do mesmo jeito. O modelo 
 informado do limite, do teto nem do saldo**: além de desnecessário para ler uma frase,
 mandar o orçamento da compradora a um terceiro seria o vazamento que o resto do sistema
 evita, e um modelo com prompt injetado não tem número privado para repetir.
+
+## Checkout completion and settlement boundary
+
+**Decision:** Meaning of the UCP checkout completion status
+
+**Options considered (one per line):**
+
+Let checkout completion invoke the Core capture and PSP settlement
+Report a settled checkout before the payment-capture endpoint runs
+Verify AP2 completion and return a durable ready-for-capture state
+
+**What we chose:** Completion now verifies the canonical AP2 checkout and returns `ready_for_capture`; only `POST /payment-captures` may commit a reservation, call the PSP, settle, or issue receipts.
+
+**Why:** One status must have one lifecycle meaning. Separating evidence readiness from settlement prevents a checkout response from claiming a settled payment before the explicit capture boundary and preserves AuthorizationCore as the sole settlement authority.
+
+## Revocation audit before settlement
+
+**Decision:** Audit projection when a mandate is revoked before any capture
+
+**Options considered (one per line):**
+
+Hide the revocation timeline until a receipt exists
+Create a synthetic settlement receipt for the audit reader
+Return the append-only revocation timeline as incomplete evidence
+
+**What we chose:** The dispute reader exposes a mandate's recorded revocation events even when no capture exists, returning an inconclusive evidence chain rather than inventing payment facts.
+
+**Why:** A signed revocation is itself a durable authorization fact. It must be auditable immediately, while the absence of a reservation or receipt must remain explicit.
+
+## RFC 9421 idempotency component scope
+
+**Decision:** Signature components for operational reads
+
+**Options considered (one per line):**
+
+Require an idempotency key on every signed request
+Allow unsigned GET requests
+Require RFC 9421 on all routes while signing idempotency only for POST
+
+**What we chose:** Every route signs method, authority, path, profile, content digest, and content type; POST adds `Idempotency-Key`, while GET does not require it.
+
+**Why:** Reads still receive full identity and raw-body integrity protection without inventing an idempotency requirement for an operation that cannot mutate state. This matches the runtime contract's durable POST retry rule.
+
+## Settlement event naming
+
+**Decision:** Audit event emitted after a capture attempt
+
+**Options considered (one per line):**
+
+Record every approved capture as `capture.committed`
+Record every approved capture as `capture.settled`
+Distinguish a Core-only commit from a PSP-approved settlement
+
+**What we chose:** The Core emits `capture.committed` only when no settlement adapter runs, and emits `capture.settled` when the PSP returns an approved settlement reference.
+
+**Why:** The audit timeline must not erase the difference between a durable reservation commit and a completed settlement. This aligns the runtime receipt boundary and `status: settled` response with the underlying event.
+
+## Runtime database path consistency
+
+**Decision:** Default persistence used by the application factory
+
+**Options considered (one per line):**
+
+Use a hidden `.aval/runtime.sqlite3` only from the factory
+Let the factory and ASGI entrypoint independently select their defaults
+Use the configured `AVAL_DATABASE_PATH` in both entrypoints
+
+**What we chose:** `create_app()` now uses the same configured durable database path as the ASGI entrypoint whenever a caller does not explicitly supply one.
+
+**Why:** A restarted runtime must reopen the database that operators migrated and verified. Divergent implicit locations can leave one entrypoint on an obsolete schema and break durable authorization facts.

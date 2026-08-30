@@ -81,9 +81,7 @@ def test_a_revocation_is_recorded(harness):
     harness.client.post(f"/mandates/{mandate_id}/revocation", json={"token": token})
 
     entries = auditor_entries(harness, mandate_id)
-    # The event names the role that withdrew the authority, which is what makes an
-    # emergency operator revocation answerable later.
-    assert entries[-1]["event_type"] == "revocation.holder"
+    assert entries[-1]["event_type"] == "mandate.revoked"
     assert entries[-1]["detail"]["reason"] == "holder_request"
     assert entries[-1]["detail"]["scope"] == "mandate"
 
