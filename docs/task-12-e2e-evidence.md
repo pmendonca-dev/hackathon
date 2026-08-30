@@ -2,10 +2,88 @@
 
 ## Status
 
-**RED — 5 passed, 6 failed. Task 12 is not complete.** The tests exercise the
-real FastAPI composition from Laptop A commit
-`3191d3e647e52180fe2367bf0d1a2e3740ea2ad0`; they do not replace missing
-runtime behavior with browser state, fixtures, or direct Core calls.
+**RED — the corrected runtime matrix is green, but the final browser security
+gate is blocked.** Laptop A commit
+`2b1d6f9c66a84d3771ab1810f3729d1c4a04d589` passes all 11 public E2E scenarios,
+all 298 Python tests, and the five-scenario demo smoke. Task 12 is not declared
+green because the production browser graph still ships fixture token/proof
+values and no browser-safe RFC 9421 boundary exists.
+
+## Final validation on `2b1d6f9`
+
+- Laptop B rebased cleanly onto the exact Laptop A commit. The resulting UI
+  commit before this evidence update is
+  `488518c0d7bec390b2d2d4e6c7f21c4bf120a2d6`.
+- `uv run alembic upgrade head`: PASS.
+- `uv run pytest tests/integration/e2e -q`: PASS, 11/11.
+- `uv run pytest -q`: PASS, 298/298.
+- `uv run python scripts/demo_smoke.py`: PASS, 5/5.
+- `npm test`: PASS, 35/35.
+- `npm run build`: PASS.
+- `npm run lint`: PASS, zero warnings and errors.
+
+### Browser authentication boundary blocker
+
+The real Vite application ran at `http://127.0.0.1:4173` with mock mode false
+and the real FastAPI runtime at `http://127.0.0.1:8099`. The browser issued:
+
+```http
+GET /audit/mandates/mandate_01
+Origin: http://127.0.0.1:4173
+```
+
+It supplied no `UCP-Agent`, `Signature-Input`, or `Signature` header. The exact
+runtime response is:
+
+```http
+422
+Access-Control-Allow-Origin: <absent>
+
+{"detail":{"code":"ucp_agent_invalid"}}
+```
+
+`GET /audit/mandates/mandate_01/dispute` has the identical response. Because
+the cross-origin response is not browser-readable, the UI safely displays
+`runtime_unavailable`; it does not simulate success or bypass RFC 9421. This is
+an architecture blocker: the repository has no browser-safe authenticated read
+or command boundary. No proxy, embedded key, or signature bypass was added.
+
+The trial console also expects a signed revocation JWS to be pasted into the
+browser. That would place JWS material in browser state and still would not
+satisfy the outer RFC 9421 reader/command authentication requirement. The live
+trial must remain unavailable until a safe boundary is designed.
+
+### Browser and bundle confidentiality failure
+
+The production artifact `web/dist/assets/index-DFKxlXbg.js` contains two
+synthetic `vt_` values and four synthetic `proof_` values. They originate from
+`web/src/fixtures/mockAvalGateway.ts`, which is statically imported by the
+gateway factory. In the real development browser, the page asset inventory
+confirmed that `/src/fixtures/mockAvalGateway.ts` was loaded even with
+`VITE_AVAL_USE_MOCK=false`; the served module contains the same two token and
+four proof values.
+
+The live DOM and visible text contained zero private keys, vault tokens, proof
+values, or compact JWS values. Local storage, session storage, IndexedDB, and
+Cache Storage were empty; no input retained a value. The browser console had
+only Vite/React development messages and zero sensitive matches. A source scan
+found no `Signature-Input`, signature header synthesis, `UCP-Agent`, private
+key, WebCrypto signing, proxy, or authentication bypass in `web/src`.
+
+The runtime process separately prints one generated operator token to stdout
+at startup. Its value is intentionally omitted here. This is a runtime-console
+disclosure, distinct from the otherwise clean browser console.
+
+### Classification
+
+| Finding | Classification |
+|---|---|
+| Public E2E, replay, revocation, receipt, audit, and dispute behavior | PASS — corrected runtime |
+| Fixture token/proof values shipped in development and production browser graphs | UI defect |
+| No browser-safe RFC 9421 read/command boundary; direct cross-origin error unreadable | UI/architecture blocker |
+| Generated operator token printed to runtime stdout | Runtime defect |
+
+## Historical validation on `3191d3e`
 
 ## Validation boundary
 

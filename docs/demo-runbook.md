@@ -2,10 +2,16 @@
 
 ## Current gate
 
-Task 12 is red on Laptop A runtime commit `3191d3e`. Do not present the trial
-revocation as operational until the signed revocation route, the fail-closed
-503 mapping, and capture replay semantics pass the public E2E suite. See
-`docs/task-12-e2e-evidence.md` for exact requests and responses.
+The public runtime matrix is green on Laptop A commit `2b1d6f9`: migrations,
+11 public E2E scenarios, the 298-test Python suite, and the five-scenario demo
+smoke all pass. The browser security gate remains red for two separate reasons:
+the production bundle still contains synthetic vault-token/proof fixture
+values, and the repository publishes no browser-safe RFC 9421 signing/read
+boundary. See `docs/task-12-e2e-evidence.md` for the exact observations.
+
+Do not present the direct browser view as authenticated live evidence. The
+public E2E and demo smoke remain valid runtime evidence because they use signed
+HTTP clients and never bypass authentication.
 
 ## Clean verification
 
@@ -60,10 +66,17 @@ signing bridge, so a direct default browser session receives an unavailable or
 authentication error rather than simulated live data. Private runtime signing
 keys must not be embedded in Vite variables or shipped to the browser.
 
-## Trial-by-fire behavior while red
+The current Vite graph also statically imports the development fixture. Even
+with `VITE_AVAL_USE_MOCK=false`, the browser loads that module and the
+production bundle retains its synthetic `vt_` and `proof_` values. This must be
+removed from the production graph before the browser security gate can pass.
 
-- Signed revocation is shown as unavailable because the published route returns
-  404 on `3191d3e`.
+## Trial-by-fire behavior while the browser gate is red
+
+- Signed revocation is operational through an authenticated non-browser client,
+  but the browser must keep it unavailable until a safe signing boundary is
+  defined. Asking the operator to paste a JWS into the browser is not acceptable
+  evidence for the final browser gate.
 - Limit reduction, scope change, and budget-zero remain unavailable because no
   public administrative endpoints are defined for them.
 - No trial command may mutate browser-only state or display a fabricated

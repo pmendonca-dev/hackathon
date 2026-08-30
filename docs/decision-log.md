@@ -388,3 +388,23 @@ Use the configured `AVAL_DATABASE_PATH` in both entrypoints
 **What we chose:** `create_app()` now uses the same configured durable database path as the ASGI entrypoint whenever a caller does not explicitly supply one.
 
 **Why:** A restarted runtime must reopen the database that operators migrated and verified. Divergent implicit locations can leave one entrypoint on an obsolete schema and break durable authorization facts.
+
+## Browser authentication remains fail-closed
+
+**Decision:** Final UI validation without a published browser signing boundary
+
+**Options considered (one per line):**
+
+Embed an RFC 9421 private key in the Vite application
+Add an unsigned proxy or relax runtime signature verification
+Keep the direct browser unavailable and record an architecture blocker
+
+**What we chose:** Keep live browser reads and commands unavailable until a
+browser-safe authenticated boundary is explicitly designed. The final
+validation does not add a proxy, ship a key, or bypass RFC 9421.
+
+**Why:** The corrected runtime correctly rejects unsigned audit reads with
+`422 ucp_agent_invalid`. Converting that safe rejection into browser success
+would create a second trust boundary without an approved custody or identity
+model. The public signed E2E client remains the runtime evidence while the
+browser blocker is tracked separately.
