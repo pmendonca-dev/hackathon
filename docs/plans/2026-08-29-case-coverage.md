@@ -290,8 +290,12 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 
 - [x] **Ambiente resolvido.** `pyproject.toml` agora aceita Python 3.12 e 3.13; a suíte
   roda nesta máquina. **432 testes passando.**
-- [x] **Ambiente limpo verificado** — `scripts/smoke_demo.py` roda o case inteiro contra
-  um servidor HTTP real e passa. Rodar de novo a partir de um clone do zero antes do freeze.
+- [x] **Ambiente limpo verificado, a partir de um clone do zero** — 30/08, contra o branch
+  do PR #14. `git clone` raso, `venv` nova, `pip install -e .`, `npm install`: 432 testes
+  Python, 23 do navegador, `smoke_demo.py` e `telegram_smoke.py` ALL GREEN contra um
+  servidor HTTP real, e a jornada do navegador 15/15. Nada de estado de execução vai no
+  repositório — `var/` e `.aval` não existem no clone, então a primeira execução de um
+  jurado é a mesma que esta.
 - [x] **LLM sem dependência de rede** — o proponente cai para regras em qualquer falha
   (sem chave, timeout, JSON inválido, SKU inventado), com teste para cada caso. A decisão
   de autorização nunca dependeu do modelo, e agora isso é demonstrável nos dois sentidos:
