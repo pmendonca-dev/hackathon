@@ -1,12 +1,22 @@
 # Arquitetura do AVAL
 
-Entregável do Mission Control. O PDF que vai no formulário é
-[`architecture.pdf`](architecture.pdf), gerado deste arquivo — regenere depois de
-qualquer edição, para que a imagem enviada e o documento versionado não divirjam:
+Entregável do Mission Control, em três formas do **mesmo** conteúdo:
+
+| arquivo | para quem |
+| --- | --- |
+| [`architecture.pdf`](architecture.pdf) | o upload do formulário — 9 páginas A3, diagramas em vetor |
+| [`architecture.html`](architecture.html) | a fonte do PDF: a página desenhada, aberta direto no navegador |
+| este arquivo | leitura no GitHub, com os blocos Mermaid renderizados na página |
+
+O PDF sai da página, não deste arquivo — os diagramas dela são SVG desenhado à mão, e
+não o layout automático do Mermaid:
 
 ```bash
-uv run --with markdown python scripts/export_architecture.py
+uv run python scripts/export_architecture.py
 ```
+
+> Os dois primeiros andam juntos: uma mudança de arquitetura entra em
+> `architecture.html`, o comando acima regenera o PDF, e este arquivo acompanha.
 
 ---
 
