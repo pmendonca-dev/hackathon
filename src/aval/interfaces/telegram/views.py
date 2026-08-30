@@ -83,12 +83,25 @@ def parse_callback(data: str) -> tuple[str, str] | None:
     return verb, argument
 
 
-def welcome(*, chat_id: int, allowed: bool, mock_mode: bool) -> View:
+def welcome(*, chat_id: int, allowed: bool, mock_mode: bool, demo_mode: bool = False) -> View:
     lines = [
         "<b>AVAL</b> — autoridade de pagamento agêntico.",
         "",
         "Seu agente compra. Você mantém a autoridade: aprova, recusa e revoga por aqui.",
     ]
+    if demo_mode:
+        return View(
+            "\n".join(
+                lines
+                + [
+                    "",
+                    "🧪 <b>Demo aberta.</b> Você recebeu seus próprios mandatos de teste.",
+                    "Só você decide sobre eles — ninguém mais vê nem toca no seu estado.",
+                    "",
+                    "Use /ajuda para ver os comandos.",
+                ]
+            )
+        )
     if not allowed:
         lines += [
             "",
@@ -131,8 +144,8 @@ def chat_id_view(chat_id: int) -> View:
     return View(f"Este chat é <code>{chat_id}</code>.")
 
 
-def status(*, backend: str, mock_mode: bool, pending: int) -> View:
-    mode = "mock (fixtures)" if mock_mode else "backend AVAL"
+def status(*, backend: str, mock_mode: bool, pending: int, demo_mode: bool = False) -> View:
+    mode = "demo aberta (sandbox por pessoa)" if demo_mode else "mock (fixtures)" if mock_mode else "backend AVAL"
     return View(
         "\n".join(
             [

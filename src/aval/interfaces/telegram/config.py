@@ -16,6 +16,7 @@ class BotConfig:
     api_base_url: str | None
     api_token: str | None
     allowed_chat_ids: frozenset[int]
+    demo_mode: bool
     poll_timeout_seconds: int
     request_timeout_seconds: int
     escalation_poll_seconds: int
@@ -26,7 +27,8 @@ class BotConfig:
         return self.api_base_url is None
 
     def may_act(self, chat_id: int) -> bool:
-        return chat_id in self.allowed_chat_ids
+        """In demo mode everyone decides — but only inside their own sandbox."""
+        return self.demo_mode or chat_id in self.allowed_chat_ids
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "BotConfig":
@@ -34,11 +36,17 @@ class BotConfig:
         if not token:
             raise ConfigError("TELEGRAM_BOT_TOKEN is required")
         base_url = env.get("AVAL_API_BASE_URL", "").strip().rstrip("/") or None
+        demo_mode = env.get("TELEGRAM_DEMO_MODE", "").strip().lower() in {"1", "true", "yes"}
+        if demo_mode and base_url is not None:
+            # A sandbox per chat only exists in fixtures. Against a real backend
+            # this would hand every stranger authority over someone's mandate.
+            raise ConfigError("TELEGRAM_DEMO_MODE cannot be combined with AVAL_API_BASE_URL")
         return cls(
             token=token,
             api_base_url=base_url,
             api_token=env.get("AVAL_API_TOKEN", "").strip() or None,
             allowed_chat_ids=_chat_ids(env.get("TELEGRAM_ALLOWED_CHAT_IDS", "")),
+            demo_mode=demo_mode,
             poll_timeout_seconds=_positive_int(env, "TELEGRAM_POLL_TIMEOUT_SECONDS", 30),
             request_timeout_seconds=_positive_int(env, "AVAL_REQUEST_TIMEOUT_SECONDS", 10),
             escalation_poll_seconds=_positive_int(env, "AVAL_ESCALATION_POLL_SECONDS", 10),

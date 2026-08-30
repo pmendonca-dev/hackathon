@@ -328,3 +328,69 @@ def test_expiry_is_reported_in_whole_days() -> None:
     mandate = MockGateway(now=now).get_mandate("mnd_marta_02")
     assert mandate.expires_at - now == timedelta(days=6)
     assert "6 dia(s)" in views.mandate_detail(mandate, now=now).text
+
+
+# ── demo aberta: todo mundo decide, cada um no seu ───────────────────────────
+def demo_config() -> BotConfig:
+    return BotConfig.from_env({"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_DEMO_MODE": "1"})
+
+
+def test_demo_mode_refuses_to_open_a_real_backend() -> None:
+    with pytest.raises(ConfigError):
+        BotConfig.from_env(
+            {
+                "TELEGRAM_BOT_TOKEN": "t",
+                "TELEGRAM_DEMO_MODE": "1",
+                "AVAL_API_BASE_URL": "http://api.local",
+            }
+        )
+
+
+def test_demo_mode_lets_any_chat_decide() -> None:
+    config = demo_config()
+    assert config.may_act(INTRUDER_CHAT) is True
+    bot, api = make_bot(config=config)
+    bot.handle_update(message("/mandatos", chat_id=INTRUDER_CHAT))
+    assert "Mandatos" in api.sent[-1][1].text
+
+
+def test_each_chat_gets_its_own_state() -> None:
+    bot, api = make_bot(config=demo_config())
+    judge_a, judge_b = 111, 222
+
+    bot.handle_update(message("/start", chat_id=judge_a))
+    bot.handle_update(message("/start", chat_id=judge_b))
+    bot.handle_update(callback("rvm:mnd_marta_01", chat_id=judge_a))
+
+    api.sent.clear()
+    bot.handle_update(message("/mandato mnd_marta_01", chat_id=judge_a))
+    bot.handle_update(message("/mandato mnd_marta_01", chat_id=judge_b))
+    revoked_for_a, still_active_for_b = api.sent[0][1], api.sent[1][1]
+
+    assert "🔴" in revoked_for_a.text
+    assert "🟢" in still_active_for_b.text, "one judge must never move another judge's state"
+
+
+def test_push_reaches_each_judge_with_their_own_approvals() -> None:
+    bot, api = make_bot(config=demo_config())
+    judge_a, judge_b = 111, 222
+    bot.handle_update(message("/start", chat_id=judge_a))
+    bot.handle_update(message("/start", chat_id=judge_b))
+    api.sent.clear()
+
+    assert bot.push_pending_approvals() == 4  # duas escalações para cada juiz
+    assert sorted({chat for chat, _ in api.sent}) == [judge_a, judge_b]
+    assert bot.push_pending_approvals() == 0
+
+    bot.handle_update(callback("apr:esc_9f21", chat_id=judge_a))
+    api.sent.clear()
+    bot.handle_update(message("/aprovacoes", chat_id=judge_b))
+    assert any("Monitor" in view.text for _, view in api.sent), (
+        "judge B still owes a decision that judge A already made"
+    )
+
+
+def test_allowlist_still_rules_when_demo_mode_is_off() -> None:
+    bot, api = make_bot()
+    bot.handle_update(message("/mandatos", chat_id=INTRUDER_CHAT))
+    assert "não tem autoridade" in api.sent[-1][1].text
