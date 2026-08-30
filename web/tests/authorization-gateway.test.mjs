@@ -169,3 +169,69 @@ test('the footer carries no operator token, because it decides nothing', async (
 
   assert.equal(calls[0].headers['X-Aval-Operator'], undefined);
 });
+
+test('a standing order carries the same free text a person would have typed', async () => {
+  // The watch is the instruction kept for later, not a new kind of authority: it fires
+  // by calling the very same purchase path, so a revoked mandate refuses it identically.
+  const { gateway, calls } = gatewayWith([
+    { status: 201, body: { watch_id: 'wch_1', status: 'OPEN' } },
+  ]);
+
+  await gateway.registerWatch('mandate_1', 'compre um voo para Córdoba abaixo de $100');
+
+  assert.equal(calls[0].url, 'http://api.test/agent/watches');
+  assert.equal(calls[0].method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].body), {
+    mandate_id: 'mandate_1',
+    instruction: 'compre um voo para Córdoba abaixo de $100',
+  });
+});
+
+test('standing orders are read scoped to one mandate', async () => {
+  const { gateway, calls } = gatewayWith([{ status: 200, body: { watches: [] } }]);
+
+  await gateway.listWatches('mandate_1');
+
+  assert.equal(calls[0].url, 'http://api.test/agent/watches?mandate_id=mandate_1');
+  assert.equal(calls[0].method, 'GET');
+});
+
+test('a tick names the mandate whose watches are being tried', async () => {
+  const { gateway, calls } = gatewayWith([{ status: 200, body: { fired: [] } }]);
+
+  await gateway.tickWatches('mandate_1');
+
+  assert.equal(calls[0].url, 'http://api.test/agent/watches/tick');
+  assert.equal(calls[0].method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].body), { mandate_id: 'mandate_1' });
+});
+
+test('the page reads validity from the runtime clock, never from the browser', async () => {
+  // A judge who advances the demo clock a month would otherwise get an already-expired
+  // mandate from a form that dated itself off the laptop's wall clock.
+  const { gateway, calls } = gatewayWith([
+    { status: 200, body: { status: 'ok', now: '2026-09-29T12:00:00+00:00' } },
+  ]);
+
+  const now = await gateway.serverNow();
+
+  assert.equal(calls[0].url, 'http://api.test/health');
+  assert.equal(now, '2026-09-29T12:00:00+00:00');
+});
+
+test('dropping a catalogue price is an operator action, never a holder one', async () => {
+  // The standing order needs something that ends the waiting. Repricing sells nothing
+  // and authorizes nothing — it moves the catalogue, which is why it sits with the
+  // processor switch and not with the holder key.
+  const { gateway, calls } = gatewayWith(
+    [{ status: 200, body: { sku: 'FL-SAO-COR-0918', minor_units: 9000 } }],
+    { operatorToken: 'demo-token' },
+  );
+
+  await gateway.repriceOffer('FL-SAO-COR-0918', 9000);
+
+  assert.equal(calls[0].url, 'http://api.test/admin/catalog/price');
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].headers['X-Aval-Operator'], 'demo-token');
+  assert.deepEqual(JSON.parse(calls[0].body), { sku: 'FL-SAO-COR-0918', minor_units: 9000 });
+});

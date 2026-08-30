@@ -92,3 +92,23 @@ def test_the_clock_the_ledger_writes_with_moves_too(harness: Harness) -> None:
         "/ledger", params={"mandate_id": mandate_id, "view": "auditor"}
     ).json()["entries"]
     assert entries[-1]["occurred_at"].startswith("2026-08-29T13:00:00")
+
+
+def test_health_publishes_the_instant_mandates_are_read_against(harness: Harness) -> None:
+    """The mandate form needs the server's `now`, not the browser's.
+
+    A judge who advances the clock a month and then creates a mandate with a date the
+    browser computed from its own wall clock gets a mandate that is already expired —
+    and every creation after that is a 422 nobody asked for. The public health probe is
+    where the page reads the instant its dates have to beat. It is not a secret: the
+    trial-by-fire console already shows the offset, and a clock the judge moved is a
+    clock the judge knows about.
+    """
+    harness.client.post(
+        "/admin/clock", headers=harness.operator, json={"advance_seconds": 3600}
+    )
+
+    body = harness.client.get("/health").json()
+
+    assert body["status"] == "ok"
+    assert body["now"].startswith("2026-08-29T13:00:00")

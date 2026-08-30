@@ -44,11 +44,11 @@ $env:ANTHROPIC_API_KEY = "..."      # sem chave, ele volta às regras sozinho
 ## Verificação limpa
 
 ```powershell
-uv run pytest -q                    # 432 testes
+uv run pytest -q                    # 535 testes
 uv run python scripts/smoke_demo.py
 
 Set-Location web
-npm test                            # 32 testes
+npm test                            # 35 testes
 npm run build
 npm run lint
 ```
@@ -61,9 +61,11 @@ node --experimental-strip-types tests/live-browser-journey.mjs http://127.0.0.1:
 ```
 
 Ela usa a **mesma** classe de gateway e a **mesma** carteira WebCrypto que a página, e
-percorre 14 passos: criar mandato, comprar, ser recusado pelo teto, mudar limite
-assinado, conferir a cadeia, checar a projeção do merchant, avançar o relógio,
-adulterar a trilha e revogar. Se ela passa, o jurado consegue fazer tudo no navegador.
+percorre 22 passos: criar mandato, comprar, ser recusado pelo teto, mudar limite
+assinado, gastar essa autorização, conferir a cadeia, checar a projeção do merchant,
+abrir uma ordem permanente e vê-la disparar quando o preço cai, avançar o relógio,
+adulterar a trilha, revogar — e provar que a vigília não compra depois disso. Se ela
+passa, o jurado consegue fazer tudo no navegador.
 
 ## A demonstração, na ordem
 
@@ -88,22 +90,31 @@ adulterar a trilha e revogar. Se ela passa, o jurado consegue fazer tudo no nave
 6. **O jurado derruba o processador.** A compra fica em dúvida com o orçamento retido,
    `502`, e `Reconciliar` fecha depois. Timeout não é recusa.
 
-7. **O jurado avança o relógio** e vê o mandato expirar na frente dele. O relógio só
-   avança: rebobinar reviveria um mandato expirado, e isso seria um operador devolvendo
-   autoridade de gasto.
+7. **O agente compra sem ninguém pedir.** Digite *"compre um voo para Córdoba abaixo
+   de $100"*. Nada atende, e o agente **oferece** ficar vigiando — abrir uma ordem de
+   gasto permanente é decisão do titular, um toque. No console, `O preço caiu — e
+   agora?` derruba o voo para $90; em `Ordens permanentes`, `Tentar agora` e a vigília
+   dispara sozinha. É a única parte do sistema em que o comprador não é uma pessoa
+   apertando pagar. Vale mostrar depois da revogação também: a mesma vigília não
+   compra mais, porque disparar é chamar o mesmo mandato de sempre.
 
-8. **As três visões.** Titular, merchant e auditor. Na do merchant, o painel lado a
+8. **O jurado avança o relógio** e vê o mandato expirar na frente dele. O relógio só
+   avança: rebobinar reviveria um mandato expirado, e isso seria um operador devolvendo
+   autoridade de gasto. O formulário de criação se data pelo relógio do **servidor**,
+   então criar um mandato novo depois desse passo continua funcionando.
+
+9. **As três visões.** Titular, merchant e auditor. Na do merchant, o painel lado a
    lado mostra o mesmo evento nas duas projeções e a lista de campos retidos — que vem
    do servidor, não do navegador.
 
-9. **A trilha se defende.** Na visão do auditor, `Adulterar evento`. A linha continua
+10. **A trilha se defende.** Na visão do auditor, `Adulterar evento`. A linha continua
    bem formada e a cadeia acusa a posição exata. Não há botão que conserte.
 
-10. **A revogação.** Assinada no navegador, irreversível. A tentativa seguinte falha
+11. **A revogação.** Assinada no navegador, irreversível. A tentativa seguinte falha
     com `mandate_revoked`, e a escada para antes de qualquer checagem de dinheiro —
     mesmo para uma compra que também estouraria o teto.
 
-11. **O botão vermelho.** `Revogar tudo desta chave` encerra todos os mandatos que
+12. **O botão vermelho.** `Revogar tudo desta chave` encerra todos os mandatos que
     aquela chave sustenta, e nenhum outro.
 
 ## O que não fingimos

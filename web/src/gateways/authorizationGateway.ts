@@ -60,6 +60,27 @@ export interface AgentRun {
   evaluation_trace: EvaluationStep[];
 }
 
+/** A signed offer from the merchant. The price is what a standing order waits on. */
+export interface CatalogOffer {
+  offer_id: string;
+  merchant_id: string;
+  item: { sku: string; title: string; category: string };
+  total: Money;
+}
+
+/** A standing order the agent keeps trying after the person stopped typing. */
+export interface Watch {
+  watch_id: string;
+  mandate_id: string;
+  instruction: string;
+  status: string;
+  outcome: string | null;
+  settlement_reference: string | null;
+  created_at: string;
+  expires_at: string;
+  closed_at: string | null;
+}
+
 export interface Escalation {
   id: string;
   mandate_id: string;
@@ -242,8 +263,8 @@ export class AuthorizationGateway {
     return this.#request(`/ledger/verify?mandate_id=${encodeURIComponent(mandateId)}`);
   }
 
-  offers(): Promise<{ offers: Array<Record<string, unknown>> }> {
-    return this.#request('/merchant/offers');
+  offers(merchantId = 'vuelaya'): Promise<{ offers: CatalogOffer[] }> {
+    return this.#request(`/merchant/offers?merchant_id=${encodeURIComponent(merchantId)}`);
   }
 
   /**
@@ -271,6 +292,22 @@ export class AuthorizationGateway {
     return this.#request(`/disputes?mandate_id=${encodeURIComponent(mandateId)}`);
   }
 
+  /** The standing orders this mandate is carrying, open and closed. */
+  listWatches(mandateId: string): Promise<{ watches: Watch[] }> {
+    return this.#request(`/agent/watches?mandate_id=${encodeURIComponent(mandateId)}`);
+  }
+
+  /**
+   * The instant the runtime reads validity against — which is not the browser's.
+   *
+   * A judge may move the demo clock forward at any point, and a form that dated
+   * `expires_at` off this laptop would then create mandates that are already expired.
+   */
+  async serverNow(): Promise<string> {
+    const { now } = await this.#request<{ status: string; now: string }>('/health');
+    return now;
+  }
+
   // ---- acting ------------------------------------------------------------
 
   createMandate(payload: Record<string, unknown>): Promise<{
@@ -285,6 +322,29 @@ export class AuthorizationGateway {
     return this.#request('/agent/purchase', {
       method: 'POST',
       body: { mandate_id: mandateId, instruction },
+    });
+  }
+
+  /**
+   * A standing order: the same free text, kept for later.
+   *
+   * It carries no authority of its own. Firing means calling the very same purchase
+   * path, so a watch against a revoked mandate is refused exactly like a typed
+   * instruction would be — the autonomy is in *when* the agent acts, never in *what*
+   * it may do.
+   */
+  registerWatch(mandateId: string, instruction: string): Promise<Watch> {
+    return this.#request('/agent/watches', {
+      method: 'POST',
+      body: { mandate_id: mandateId, instruction },
+    });
+  }
+
+  /** Try every open watch on this mandate once. This is the agent acting unwatched. */
+  tickWatches(mandateId: string): Promise<{ fired: Array<Record<string, unknown>> }> {
+    return this.#request('/agent/watches/tick', {
+      method: 'POST',
+      body: { mandate_id: mandateId },
     });
   }
 
@@ -349,6 +409,20 @@ export class AuthorizationGateway {
 
   reconcile(): Promise<Record<string, number>> {
     return this.#request('/reconcile', { method: 'POST', operator: true });
+  }
+
+  /**
+   * Move a catalogue price so a standing order has something to fire on.
+   *
+   * It sits among the operator commands because it authorizes nothing: the watch it
+   * wakes still has to survive the same mandate the typed instruction would.
+   */
+  repriceOffer(sku: string, minorUnits: number): Promise<{ sku: string; minor_units: number }> {
+    return this.#request('/admin/catalog/price', {
+      method: 'POST',
+      body: { sku, minor_units: minorUnits },
+      operator: true,
+    });
   }
 
   /** Forward only. The runtime refuses a rewind; the browser does not pretend otherwise. */
