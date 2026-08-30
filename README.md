@@ -61,7 +61,8 @@ variáveis: uma diz que o time quer o modelo, a outra que existe um alcançável
 Defaultar para o outro lado faria um clone limpo depender de uma conta para rodar o case.
 
 ```bash
-uv sync --extra llm                      # instala o cliente `anthropic`
+uv sync --extra llm                              # instala `anthropic` e `openai`
+# .venv/Scripts/python.exe -m pip install -e ".[llm]"   # sem uv
 
 export AVAL_LLM_AGENT=1                  # obrigatória: liga o proponente por modelo
 export ANTHROPIC_API_KEY=sk-ant-...      # obrigatória (ou ANTHROPIC_AUTH_TOKEN)
@@ -72,6 +73,12 @@ export AVAL_LLM_TIMEOUT_SECONDS=8        # opcional; estourou, as regras assumem
 O bot do Telegram tem o par equivalente para a *conversa* que monta o mandato —
 `AVAL_TELEGRAM_LLM=1` mais `OPENAI_API_KEY`. Tudo está em [`.env.example`](.env.example),
 que é a lista completa e a que vale.
+
+> **O extra não é opcional quando as chaves estão postas.** Sem `anthropic` e `openai`
+> instalados, `build_proposer` e `build_talker` caem nas regras por dentro de um
+> `except` e **não dizem nada** — o log fica igual ao de quem nunca ligou o modelo. Se
+> as variáveis estão certas e mesmo assim tudo responde por regra, o pacote é a primeira
+> coisa a conferir: `python -c "import openai, anthropic"`.
 
 A **vigília** — a ordem permanente que compra sozinha quando o preço cai — só é
 avaliada quando alguém pede um tick. Por padrão quem pede é o bot do Telegram, no laço

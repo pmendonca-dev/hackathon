@@ -84,3 +84,27 @@ até do OpenAPI. Ligadas, ainda exigem o token de operador.
 
 **A porta 8099 já está escutando.** O script recusa subir um segundo processo. O SQLite
 tem um escritor só.
+
+## Os dois modelos
+
+O agente que **propõe a compra** (Anthropic) e a **conversa do bot** (OpenAI) são
+opcionais e independentes. Cada um precisa de duas variáveis, e as duas juntas:
+
+```
+AVAL_LLM_AGENT=1        + ANTHROPIC_API_KEY=...    # o agente escolhe a oferta
+AVAL_TELEGRAM_LLM=1     + OPENAI_API_KEY=...       # o bot conversa até o mandato ficar completo
+```
+
+Falta uma das duas e aquele lado volta às regras sozinho — de propósito, para que um
+clone limpo rode o case inteiro sem conta e sem rede.
+
+**Os pacotes precisam estar instalados:**
+
+```powershell
+.venv\Scripts\python.exe -m pip install -e ".[llm]"
+```
+
+Sem eles a volta às regras acontece dentro de um `except` e **não aparece em lugar
+nenhum** — nem no log. Uma chave correta com o pacote ausente é indistinguível de chave
+nenhuma, e é o jeito mais fácil de achar que o modelo está ligado quando não está.
+Conferir: `.venv\Scripts\python.exe -c "import openai, anthropic"`.
