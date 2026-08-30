@@ -1,5 +1,19 @@
 # Decision Log
 
+## Official visual identity registration
+
+**Decision:** How AVAL's existing frontend visual language is governed and documented
+
+**Options considered (one per line):**
+
+Leave the current CSS conventions implicit and undocumented
+Introduce a separate visual palette or typography system while writing the guide
+Register the existing `web/src/index.css` tokens and interface patterns as the official identity
+
+**What we chose:** Register the existing editorial workspace system as the official visual identity, with `web/src/index.css` as the token source of truth.
+
+**Why:** The live UI already uses a coherent paper-and-ink surface system, semantic decision colors, and display/sans/mono roles. A new palette or typeface would be a redesign outside this task and could obscure authorization meaning. Documenting the current system makes future UI work consistent while preserving the accessibility and safe-projection boundaries already implemented.
+
 ## Browser BFF session migration identity
 
 **Decision:** Alembic revision number for durable browser sessions
