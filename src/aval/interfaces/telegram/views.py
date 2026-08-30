@@ -17,6 +17,7 @@ import unicodedata
 
 from aval.interfaces.telegram.gateway import (
     AgentProfileView,
+    CardSessionView,
     ChainView,
     DisputeView,
     EscalationView,
@@ -703,6 +704,7 @@ def help_text() -> View:
                 "/catalogo — o que está à venda",
                 "/aprovacoes — compras aguardando você",
                 "/extrato — recibos e trilha auditável",
+                "/cartao — cadastra o cartão que paga (na página do processador)",
                 "/limite &lt;valor&gt; — muda o orçamento (assinado por você)",
                 "/novo &lt;regra&gt; — refaz o mandato: <i>/novo hotel até 300 por 7 dias, 2x</i>",
                 "/revogar — encerra a autoridade do agente",
@@ -730,7 +732,6 @@ class MandateSpec:
     limit: MoneyView
     valid_for_days: int
     max_uses: int | None
-    with_card: bool
 
 
 _CATEGORY_WORDS = {
@@ -742,7 +743,7 @@ _USES = re.compile(r"(\d{1,2})\s*(?:x|vez|vezes|compras?|times?)")
 
 
 def parse_mandate_spec(raw: str, *, defaults) -> MandateSpec | None:
-    """Read `hospedagem até 300 por 7 dias, 2x, sem cartão`.
+    """Read `hospedagem até 300 por 7 dias, 2x`.
 
     Deliberately forgiving and deliberately partial: whatever the sentence does not
     say falls back to the configured default, so a person can change one thing
@@ -778,7 +779,6 @@ def parse_mandate_spec(raw: str, *, defaults) -> MandateSpec | None:
         or MoneyView(defaults.limit_minor_units, defaults.currency, defaults.scale),
         valid_for_days=int(days.group(1)) if days else defaults.valid_for.days,
         max_uses=int(uses.group(1)) if uses else defaults.max_uses,
-        with_card="sem cartao" not in folded and "sem cartão" not in text,
     )
 
 
@@ -797,17 +797,66 @@ def new_mandate_preview(spec: MandateSpec, current: MandateView | None) -> View:
         f"Frequência: <b>{spec.max_uses}</b> compra(s) na janela"
         if spec.max_uses
         else "Frequência: <b>sem limite de vezes</b>",
-        f"Método: <b>{'cartão de teste tokenizado' if spec.with_card else 'nenhum — não paga nada'}</b>",
+        "Método: <b>nenhum ainda</b> — cadastre em /cartao",
     ]
     if current is not None and current.status == "ACTIVE":
         lines += [
             "",
             f"⚠️ Isto <b>revoga</b> o mandato em vigor (<code>{escape(current.id[:20])}</code>) "
-            "e emite outro. As compras já liquidadas continuam válidas.",
+            "e emite outro. As compras já liquidadas continuam válidas — mas o cartão "
+            "não vem junto: o mandato novo nasce sem meio de pagamento.",
         ]
     return View(
         "\n".join(lines),
         ((("✅ Emitir este mandato", f"{CALLBACK_NEW_CONFIRM}:{(current.id if current else '_')}"),),),
+    )
+
+
+def card_form(session: CardSessionView) -> View:
+    """The link to the processor's own page, and why it is a link and not a question.
+
+    Saying where the number goes is not decoration. A person who understands that the
+    card is typed at the processor knows what to check before typing it, and a bot
+    that asked for the number in the chat would deserve the answer it got.
+    """
+    return View(
+        "\n".join(
+            [
+                "💳 <b>Cadastrar o cartão</b>",
+                "",
+                "Abra o link e digite o cartão <b>na página do processador</b>.",
+                "O número não passa por este chat, nem por mim, nem fica salvo aqui.",
+                "",
+                f'<a href="{escape(session.url)}">👉 Abrir a página segura</a>',
+                "",
+                "<i>Quando terminar, volte aqui e mande /cartao de novo — eu confiro "
+                "e vinculo ao seu mandato, assinado com a sua chave.</i>",
+            ]
+        )
+    )
+
+
+def card_pending() -> View:
+    return View(
+        "⏳ Ainda não vi um cartão cadastrado nessa página.\n"
+        "<i>Termine o cadastro e mande /cartao de novo.</i>"
+    )
+
+
+def card_bound(label: str, *, replaced: bool) -> View:
+    headline = "Cartão trocado" if replaced else "Cartão cadastrado"
+    return View(
+        "\n".join(
+            [
+                f"✅ <b>{headline}</b> — {escape(label)}",
+                "",
+                "O mandato agora tem com o que pagar. O agente apresenta esse cartão",
+                "e nada mais: ele nunca viu o número, e nem eu.",
+                "",
+                "<i>Você pode cancelar só o cartão a qualquer momento em /mandato, "
+                "sem encerrar o agente.</i>",
+            ]
+        )
     )
 
 

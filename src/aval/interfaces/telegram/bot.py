@@ -150,6 +150,10 @@ class Bot:
         # memory. A restart forgets it and the person types the sentence again —
         # which beats issuing a mandate from words the bot can no longer show them.
         self._pending_spec: dict[int, views.MandateSpec] = {}
+        # ponytail: the card page each chat has open, in memory. A restart forgets it
+        # and /cartao opens a new one — the card itself is safe at the processor either
+        # way, so the worst a restart costs is one abandoned form.
+        self._card_session: dict[int, str] = {}
 
     # ── updates ────────────────────────────────────────────────────────────
     def dispatch(self, update: Mapping[str, Any]) -> None:
@@ -264,6 +268,8 @@ class Bot:
             return self._purchase(identity, argument)
         if command == "/limite":
             return (self._replace_limit(identity, argument),)
+        if command == "/cartao" or command == "/cartão":
+            return self._register_card(identity, mandate)
         if command == "/novo":
             return (self._describe_mandate(identity, mandate, argument),)
         return (views.help_text(),)
@@ -287,7 +293,10 @@ class Bot:
                 else MoneyView(defaults.ceiling_minor_units, defaults.currency, defaults.scale)
             ),
             valid_for=defaults.valid_for,
-            card_number=defaults.card_number,
+            # No card. A mandate is authority to spend, and the means of payment is
+            # the person's to provide — /cartao is where they do. Emitting one from the
+            # environment was the system deciding, on their behalf, what pays.
+            card_number=None,
             max_uses=defaults.max_uses,
             usage_window=defaults.usage_window,
         )
@@ -347,6 +356,54 @@ class Bot:
             screens.append(views.receipt(self._gateway.receipt(identity.mandate_id)))
         return tuple(screens)
 
+    def _register_card(
+        self, identity: ChatIdentity, mandate: "MandateView"
+    ) -> Sequence[View]:
+        """Hand out the processor's card form, or pick up the card left on it.
+
+        One command does both halves because the person only has one thing in mind.
+        The first /cartao opens the page; the next one asks the processor whether a
+        card is sitting there, and binds it if so.
+        """
+        assert identity.mandate_id is not None
+        session_id = self._card_session.get(identity.chat_id)
+        if session_id is not None:
+            card = self._gateway.read_card_session(identity, identity.mandate_id, session_id)
+            if card is None:
+                return (views.card_pending(),)
+            token, label = card
+            self._gateway.bind_instrument(
+                identity,
+                identity.mandate_id,
+                token=token,
+                label=label,
+                # The card bound right now, from the revocation scope the bot was told
+                # once. The API never serves the token back — a client that could read
+                # it could present it — so this is the only place that holds it. A bot
+                # that does not have it signs `None` and the core refuses the binding
+                # as stale, which is the right way to fail.
+                supersedes=(
+                    None
+                    if identity.instrument_scope is None
+                    else identity.instrument_scope.removeprefix("instrument:")
+                ),
+            )
+            # Remember the new scope, or the next card change cannot be signed and this
+            # card cannot be cancelled.
+            self._identities.bind_mandate(
+                identity.chat_id, identity.mandate_id, instrument_scope=f"instrument:{token}"
+            )
+            self._card_session.pop(identity.chat_id, None)
+            replaced = mandate.instrument_label is not None
+            refreshed = self._gateway.mandate(identity.mandate_id)
+            screens: list[View] = [views.card_bound(label, replaced=replaced)]
+            if refreshed is not None:
+                screens.append(views.mandate_card(refreshed))
+            return tuple(screens)
+        session = self._gateway.open_card_session(identity, identity.mandate_id)
+        self._card_session[identity.chat_id] = session.session_id
+        return (views.card_form(session),)
+
     def _describe_mandate(
         self, identity: ChatIdentity, current: "MandateView", argument: str
     ) -> View:
@@ -396,7 +453,7 @@ class Bot:
                 else MoneyView(defaults.ceiling_minor_units, defaults.currency, defaults.scale)
             ),
             valid_for=timedelta(days=spec.valid_for_days),
-            card_number=defaults.card_number if spec.with_card else None,
+            card_number=None,
             max_uses=spec.max_uses,
             usage_window=defaults.usage_window,
         )

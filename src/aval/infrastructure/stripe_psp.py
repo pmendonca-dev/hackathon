@@ -166,6 +166,78 @@ class StripePspAdapter:
             raise PspUnreachable("o cartão do mandato não está vinculado a um cliente")
         return str(customer)
 
+    # ── card registration ──────────────────────────────────────────────────
+    def create_setup_session(self, mandate_id: str, *, return_url: str) -> dict[str, str]:
+        """Open a page where the person types their card, at Stripe and not here.
+
+        This is the whole reason a card can be real. The number goes into Stripe's own
+        form; what comes back to us is a `pm_...`. A chat is the worst possible place
+        to type a PAN — it would live in Telegram's servers, in the message history on
+        every logged-in device, in our polling response and in the process log — and no
+        amount of care afterwards takes it back out of those.
+
+        The mandate travels in the session's metadata, so the session can later be
+        proved to belong to the mandate it claims.
+        """
+        # Named explicitly rather than left to `customer_creation`, because an
+        # off-session charge needs a customer and "Stripe will probably make one" is
+        # not a thing to find out at settlement time. A mandate replacing its card
+        # keeps the customer it already has, so one person is one customer.
+        status, payload = self._call(
+            "/checkout/sessions",
+            {
+                "mode": "setup",
+                "currency": "usd",
+                "payment_method_types[0]": "card",
+                "customer": self._customer_for(mandate_id),
+                "success_url": return_url,
+                "cancel_url": return_url,
+                "metadata[mandate_id]": mandate_id,
+            },
+        )
+        if status != 200:
+            raise PspUnreachable("a Stripe não abriu a página de cadastro")
+        return {"session_id": str(payload["id"]), "url": str(payload["url"])}
+
+    def _customer_for(self, mandate_id: str) -> str:
+        mandate = self._mandate_for(mandate_id)
+        if mandate is not None and mandate.instrument is not None:
+            try:
+                return self._customer_of(mandate.instrument.token)
+            except PspUnreachable:
+                # The card it names is gone from Stripe. A new customer is the right
+                # answer; refusing to register a replacement would be worse.
+                pass
+        status, payload = self._call(
+            "/customers", {"metadata[mandate_id]": mandate_id}
+        )
+        if status != 200:
+            raise PspUnreachable("a Stripe não criou o cliente do mandato")
+        return str(payload["id"])
+
+    def read_setup_session(self, session_id: str, *, mandate_id: str) -> dict[str, str] | None:
+        """The card the person registered, or None while they have not finished.
+
+        Returns nothing for a session belonging to another mandate. A session id is
+        unguessable, but "unguessable" is not an authorization, and the caller asked
+        about *this* mandate.
+        """
+        status, session = self._call(f"/checkout/sessions/{session_id}", None)
+        if status != 200:
+            raise PspUnreachable("a Stripe não devolveu a sessão de cadastro")
+        if (session.get("metadata") or {}).get("mandate_id") != mandate_id:
+            return None
+        setup_intent = session.get("setup_intent")
+        if session.get("status") != "complete" or not setup_intent:
+            return None
+        status, intent = self._call(f"/setup_intents/{setup_intent}", None)
+        payment_method = intent.get("payment_method") if status == 200 else None
+        if not payment_method:
+            return None
+        status, card = self._call(f"/payment_methods/{payment_method}", None)
+        last4 = ((card.get("card") or {}).get("last4") or "????") if status == 200 else "????"
+        return {"token": str(payment_method), "label": f"•••• {last4}"}
+
     # ── revocation ─────────────────────────────────────────────────────────
     def detach(self, payment_method: str) -> bool:
         """Let go of the card at Stripe when the holder cancels it here.

@@ -18,6 +18,9 @@ from aval.application.authorization_core import ApprovalError
 from aval.api.schemas import (
     BindInstrumentRequest,
     BindInstrumentResponse,
+    InstrumentSessionRequest,
+    InstrumentSessionResponse,
+    InstrumentSessionStatusResponse,
     CreateMandateRequest,
     CreateMandateResponse,
     ReplaceLimitRequest,
@@ -199,6 +202,81 @@ def replace_limit(request: Request, mandate_id: str, body: ReplaceLimitRequest) 
         policy_version=mandate.policy_version,
         epoch=int(mandate.revocation_metadata.get("epoch", 0)),
     )
+
+
+# Where Stripe sends the person after they finish. It is a landing page and nothing
+# more — the card never comes back through it, and the bot learns what happened by
+# asking Stripe, not by being redirected.
+DEFAULT_RETURN_URL = "https://aval.local/cartao-cadastrado"
+
+
+def _card_registration(request: Request):
+    """The processor that can host a card form, or a refusal that says why.
+
+    The demo processor cannot: it has no page, and inventing one would mean a card
+    that is registered here and worthless everywhere else.
+    """
+    psp = runtime_of(request).psp
+    if not hasattr(psp, "create_setup_session"):
+        raise ApiError(
+            409,
+            "card_registration_unavailable",
+            "Cadastro de cartão exige um processador real (AVAL_PSP=stripe).",
+        )
+    return psp
+
+
+@router.post("/mandates/{mandate_id}/instrument/session", response_model=InstrumentSessionResponse)
+def open_instrument_session(
+    request: Request, mandate_id: str, body: InstrumentSessionRequest
+) -> InstrumentSessionResponse:
+    """Open the processor's own card form for this mandate.
+
+    The number is typed at Stripe and never reaches this service. That is not a
+    nicety: a card number that touched a chat would live in the message history on
+    every logged-in device, in our polling responses and in the process log, and no
+    care afterwards takes it back out of those.
+    """
+    runtime = runtime_of(request)
+    psp = _card_registration(request)
+    try:
+        runtime.core.require_holder(
+            mandate_id, body.authorization_jws, scope="instrument_session"
+        )
+    except ApprovalError as error:
+        raise ApiError(error.status_code, error.reason_code, error.human_summary) from error
+    except ValueError as error:
+        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.") from error
+    session = psp.create_setup_session(
+        mandate_id, return_url=body.return_url or DEFAULT_RETURN_URL
+    )
+    return InstrumentSessionResponse(**session)
+
+
+@router.get(
+    "/mandates/{mandate_id}/instrument/session/{session_id}",
+    response_model=InstrumentSessionStatusResponse,
+)
+def read_instrument_session(
+    request: Request, mandate_id: str, session_id: str, authorization_jws: str | None = None
+) -> InstrumentSessionStatusResponse:
+    """The card the person registered, once they have finished registering it.
+
+    Answering nothing while the page is still open is the normal case, not an error:
+    the caller is watching a human fill in a form.
+    """
+    runtime = runtime_of(request)
+    psp = _card_registration(request)
+    try:
+        runtime.core.require_holder(mandate_id, authorization_jws, scope="instrument_session")
+    except ApprovalError as error:
+        raise ApiError(error.status_code, error.reason_code, error.human_summary) from error
+    except ValueError as error:
+        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.") from error
+    card = psp.read_setup_session(session_id, mandate_id=mandate_id)
+    if card is None:
+        return InstrumentSessionStatusResponse(ready=False)
+    return InstrumentSessionStatusResponse(ready=True, **card)
 
 
 @router.post("/mandates/{mandate_id}/instrument", response_model=BindInstrumentResponse)

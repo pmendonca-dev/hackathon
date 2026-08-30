@@ -399,6 +399,30 @@ class AuthorizationCore:
             )
         run_in_write_transaction(self._engine, operation)
 
+    def require_holder(self, mandate_id: str, authorization_jws: str | None, *, scope: str) -> dict:
+        """Prove the caller holds this mandate, for an action that writes nothing here.
+
+        Registering a card opens a page and creates objects at the processor. Nothing
+        it does grants authority — the binding afterwards is signed separately — but an
+        endpoint that anyone who guesses a mandate id can drive is an abuse surface, so
+        the same key that will sign the binding has to ask for the page.
+        """
+        mandate = self.mandate(mandate_id)
+        if mandate is None:
+            raise ValueError("mandate not found")
+        if not authorization_jws:
+            raise ApprovalError(403, f"{scope}_unsigned", "Ação exige autorização assinada.")
+        claims = self._verified_approval(authorization_jws, mandate, kind=scope)
+        if claims.get("mandate_id") != mandate_id:
+            raise ApprovalError(
+                403, f"{scope}_mandate_mismatch", "A autorização não é deste mandato."
+            )
+        if claims.get("scope") != scope:
+            raise ApprovalError(
+                403, f"{scope}_scope_mismatch", "A autorização não é para esta ação."
+            )
+        return claims
+
     def bind_instrument(
         self,
         mandate_id: str,

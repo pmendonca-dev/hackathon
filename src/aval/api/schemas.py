@@ -131,6 +131,31 @@ class BindInstrumentRequest(BaseModel):
     authorization_jws: str | None = None
 
 
+class InstrumentSessionRequest(BaseModel):
+    """Ask the processor for a page where the holder types their card.
+
+    Signed for the same reason the binding is: this creates objects on our processor
+    account, and an endpoint anyone who guesses a mandate id can drive is an abuse
+    surface. The JWS is over {mandate_id, scope: "instrument_session"}.
+    """
+
+    authorization_jws: str | None = None
+    return_url: str | None = None
+
+
+class InstrumentSessionResponse(BaseModel):
+    session_id: str
+    url: str
+
+
+class InstrumentSessionStatusResponse(BaseModel):
+    """What the processor holds for a registration that may not be finished yet."""
+
+    ready: bool
+    token: str | None = None
+    label: str | None = None
+
+
 class BindInstrumentResponse(BaseModel):
     instrument_label: str
     instrument_revocation_scope: str

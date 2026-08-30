@@ -39,6 +39,10 @@ class FakeAval:
         self.disputes: list[dict[str, Any]] = []
         # What the trail answers when a purchase is denied, and whether the chain
         # still hashes. Both are knobs because both are what a judge comes to break.
+        self.card_sessions: list[str] = []
+        self.bindings: list[dict[str, Any]] = []
+        self.card_ready = False
+        self.card_token = "pm_test_1"
         self.dispute_status = "MANDATE_HELD"
         self.chain_intact = True
         self.watches: dict[str, dict[str, Any]] = {}
@@ -88,6 +92,31 @@ class FakeAval:
             }
         if route == "/mandates" and method == "POST":
             return 201, self._create_mandate(body)
+        if route.endswith("/instrument/session") and method == "POST":
+            mandate_id = route.split("/")[2]
+            self.card_sessions.append(mandate_id)
+            return 200, {"session_id": "cs_test_1", "url": "https://checkout.stripe.test/cs_test_1"}
+        if "/instrument/session/" in route and method == "GET":
+            if not self.card_ready:
+                return 200, {"ready": False}
+            return 200, {"ready": True, "token": self.card_token, "label": "•••• 4242"}
+        if route.endswith("/instrument") and method == "POST":
+            mandate_id = route.split("/")[2]
+            mandate = self.mandates[mandate_id]
+            # The real endpoint refuses an unsigned binding, so the fake verifies too:
+            # a bot that stopped signing would otherwise pass every test here.
+            claims = self._verify(mandate_id, body["authorization_jws"])
+            if claims.get("supersedes") != (
+                (mandate.get("_instrument_scope") or "").removeprefix("instrument:") or None
+            ):
+                return 403, {"reason_code": "instrument_binding_stale"}
+            self.bindings.append(body)
+            mandate["instrument_label"] = body["label"]
+            mandate["_instrument_scope"] = f"instrument:{body['token']}"
+            return 200, {
+                "instrument_label": body["label"],
+                "instrument_revocation_scope": f"instrument:{body['token']}",
+            }
         if route.startswith("/mandates/") and route.endswith("/revocation"):
             return self._revoke(route.split("/")[2], body)
         if route.startswith("/mandates/") and route.endswith("/limit"):
@@ -908,14 +937,78 @@ def test_a_revoked_mandate_offers_no_way_to_buy(world) -> None:
     assert not any("comprar" in label.lower() for label in labels)
 
 
-def test_start_names_a_payment_method_the_holder_can_recognise(world) -> None:
-    """The case's fourth mandate field, on screen and never as a card number."""
+def test_start_issues_a_mandate_that_cannot_pay_for_anything_yet(world) -> None:
+    """The case's fourth field is the person's to fill, and it starts empty.
+
+    A mandate born naming a card out of the environment is the system deciding, on
+    somebody's behalf, whose money the agent spends. It has authority and no means.
+    """
     bot, api, aval, _ = world
 
     bot.handle_update(message("/start"))
 
+    created = next(body for route, body in aval.received if route == "POST /mandates")
+    assert "payment_method" not in created
+    assert "••••" not in api.last_text
+
+
+def test_the_card_is_typed_at_the_processor_and_never_in_the_chat(world) -> None:
+    """A number typed here would live in Telegram's servers, the history on every
+    logged-in device, the polling response and the log. No care afterwards removes it."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(message("/cartao"))
+
+    assert aval.card_sessions == [identities.get(MARTA).mandate_id]
+    assert "checkout.stripe.test" in api.last_text
+    assert "não passa por este chat" in api.last_text
+
+
+def test_an_unfinished_registration_binds_nothing(world) -> None:
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/cartao"))
+
+    bot.handle_update(message("/cartao"))
+
+    assert aval.bindings == []
+    assert "Ainda não vi um cartão" in api.last_text
+
+
+def test_the_registered_card_is_bound_with_the_holders_own_signature(world) -> None:
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/cartao"))
+    aval.card_ready = True
+
+    bot.handle_update(message("/cartao"))
+
+    binding = aval.bindings[-1]
+    assert binding["token"] == "pm_test_1"
+    claims = aval.verified_claims[-1]
+    assert claims["scope"] == "instrument"
+    assert claims["instrument_token"] == "pm_test_1"
+    # First card on this mandate: it supersedes nothing, and saying so is what makes
+    # the next binding's compare-and-swap meaningful.
+    assert claims["supersedes"] is None
     assert "•••• 4242" in api.last_text
-    assert "4242424242424242" not in api.last_text
+
+
+def test_replacing_a_card_names_the_one_it_supersedes(world) -> None:
+    """Compare-and-swap: without the predecessor, a captured binding could be replayed."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/cartao"))
+    aval.card_ready = True
+    bot.handle_update(message("/cartao"))
+
+    aval.card_token = "pm_test_2"
+    bot.handle_update(message("/cartao"))
+    bot.handle_update(message("/cartao"))
+
+    claims = aval.verified_claims[-1]
+    assert (claims["instrument_token"], claims["supersedes"]) == ("pm_test_2", "pm_test_1")
 
 
 def test_cancelling_the_card_is_signed_and_leaves_the_mandate_alive(world) -> None:
@@ -927,6 +1020,9 @@ def test_cancelling_the_card_is_signed_and_leaves_the_mandate_alive(world) -> No
     bot, api, aval, identities = world
     bot.handle_update(message("/start"))
     mandate_id = identities.get(MARTA).mandate_id
+    bot.handle_update(message("/cartao"))
+    aval.card_ready = True
+    bot.handle_update(message("/cartao"))
 
     bot.handle_update(tap(f"{views.CALLBACK_CARD_MENU}:{mandate_id}"))
     assert "mandato continua ativo" in api.last_text
@@ -936,7 +1032,7 @@ def test_cancelling_the_card_is_signed_and_leaves_the_mandate_alive(world) -> No
     # Signed by the holder's own key, over this mandate and this scope.
     claims = aval.verified_claims[-1]
     assert claims["mandate_id"] == mandate_id
-    assert claims["scope"].startswith("instrument:vt_")
+    assert claims["scope"] == "instrument:pm_test_1"
     assert aval.mandates[mandate_id]["status"] == "ACTIVE", "the agent is still authorized"
 
     bot.handle_update(message("/comprar um voo pra Córdoba"))
@@ -1311,7 +1407,6 @@ def test_the_spec_reads_what_how_much_and_until_when(world) -> None:
     assert spec.limit.minor_units == 30_000
     assert spec.valid_for_days == 7
     assert spec.max_uses == 2
-    assert spec.with_card is True
 
 
 def test_an_empty_spec_is_refused_rather_than_defaulted(world) -> None:
@@ -1324,12 +1419,11 @@ def test_what_the_sentence_omits_falls_back_to_the_default(world) -> None:
     bot, _, _, _ = world
     defaults = bot._config.mandate_defaults
 
-    spec = views.parse_mandate_spec("voo, sem cartão", defaults=defaults)
+    spec = views.parse_mandate_spec("voo", defaults=defaults)
 
     assert spec.categories == ("travel",)
     assert spec.limit.minor_units == defaults.limit_minor_units
     assert spec.valid_for_days == defaults.valid_for.days
-    assert spec.with_card is False
 
 
 def test_a_new_mandate_is_previewed_before_anything_is_issued(world) -> None:
@@ -1351,7 +1445,7 @@ def test_confirming_revokes_the_old_mandate_and_issues_the_described_one(world) 
     bot, api, aval, identities = world
     bot.handle_update(message("/start"))
     first = identities.get(MARTA).mandate_id
-    bot.handle_update(message("/novo hotel até 300 por 7 dias, 2x, sem cartão"))
+    bot.handle_update(message("/novo hotel até 300 por 7 dias, 2x"))
 
     bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
 
@@ -1362,7 +1456,8 @@ def test_confirming_revokes_the_old_mandate_and_issues_the_described_one(world) 
     assert issued["allowed_categories"] == ["lodging"]
     assert issued["limit"]["minor_units"] == 30_000
     assert issued["usage_limit"]["max_uses"] == 2
-    # "sem cartão" is a payment method too: a mandate that authorizes nothing to pay.
+    # A new mandate is authority and nothing else: the card is registered separately,
+    # and does not follow the person from the mandate they just replaced.
     assert issued.get("instrument_label") is None
 
 

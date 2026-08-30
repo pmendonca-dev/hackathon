@@ -121,6 +121,14 @@ class LedgerEntryView:
 
 
 @dataclass(frozen=True)
+class CardSessionView:
+    """A card registration in progress: a page to open, and an id to watch."""
+
+    session_id: str
+    url: str
+
+
+@dataclass(frozen=True)
 class AgentProfileView:
     """Who the agent is, as an identity of its own.
 
@@ -182,6 +190,9 @@ ENDPOINTS = {
     "watch_tick": "/agent/watches/tick",
     "offers": "/merchant/offers",
     "agent_profile": "/agent/profile",
+    "card_session": "/mandates/{mandate_id}/instrument/session",
+    "card_session_read": "/mandates/{mandate_id}/instrument/session/{session_id}",
+    "instrument": "/mandates/{mandate_id}/instrument",
     "disputes": "/disputes",
     "dispute_resolution": "/disputes/{dispute_id}/resolution",
     "ledger_verify": "/ledger/verify",
@@ -392,6 +403,73 @@ class AvalGateway:
             return "Compra aprovada e liquidada."
         # An approval is not a bypass: the core re-checks everything on resume.
         return f"Aprovação registrada, mas a compra não passou: {capture.get('reason_code', 'desconhecido')}."
+
+    # ── card registration ──────────────────────────────────────────────────
+    def open_card_session(self, identity: ChatIdentity, mandate_id: str) -> CardSessionView:
+        """Ask AVAL for the processor's own card form. The bot never sees a number."""
+        payload = self._call(
+            "POST",
+            ENDPOINTS["card_session"].format(mandate_id=mandate_id),
+            body={
+                "authorization_jws": self._identities.sign(
+                    identity, {"mandate_id": mandate_id, "scope": "instrument_session"}
+                )
+            },
+        )
+        return CardSessionView(str(payload["session_id"]), str(payload["url"]))
+
+    def read_card_session(
+        self, identity: ChatIdentity, mandate_id: str, session_id: str
+    ) -> tuple[str, str] | None:
+        """The registered card as (token, label), or None while the form is still open."""
+        payload = self._call(
+            "GET",
+            ENDPOINTS["card_session_read"].format(
+                mandate_id=mandate_id, session_id=session_id
+            ),
+            query={
+                "authorization_jws": self._identities.sign(
+                    identity, {"mandate_id": mandate_id, "scope": "instrument_session"}
+                )
+            },
+        )
+        if not payload.get("ready"):
+            return None
+        return str(payload["token"]), str(payload["label"])
+
+    def bind_instrument(
+        self,
+        identity: ChatIdentity,
+        mandate_id: str,
+        *,
+        token: str,
+        label: str,
+        supersedes: str | None,
+    ) -> str:
+        """Name the registered card on the mandate, signed by the person who registered it.
+
+        `supersedes` is the compare-and-swap: it names the card bound right now, so a
+        captured binding cannot be replayed to bring back a card already replaced.
+        """
+        payload = self._call(
+            "POST",
+            ENDPOINTS["instrument"].format(mandate_id=mandate_id),
+            body={
+                "token": token,
+                "label": label,
+                "authorization_jws": self._identities.sign(
+                    identity,
+                    {
+                        "mandate_id": mandate_id,
+                        "scope": "instrument",
+                        "instrument_token": token,
+                        "instrument_label": label,
+                        "supersedes": supersedes,
+                    },
+                ),
+            },
+        )
+        return str(payload["instrument_label"])
 
     def open_dispute(self, reservation_id: str, reason: str) -> DisputeView:
         """A later denial, answered by the trail rather than by trust.
