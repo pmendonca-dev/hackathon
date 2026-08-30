@@ -57,6 +57,10 @@ def purchase(request: Request, body: AgentPurchaseRequest) -> dict[str, Any]:
         "settlement_reference": run.settlement_reference,
         "authorization_proof": run.authorization_proof,
         "offers_considered": run.considered,
+        # Who proposed, and the reason it gave. The core never read either.
+        "proposed_by": run.proposed_by,
+        "rationale": run.rationale,
+        "alternatives": [{"sku": sku, "reason": reason} for sku, reason in run.alternatives],
         # The same ladder /authorize publishes. This is the surface a judge attacks
         # in free text, so it is the one that most needs to explain itself.
         "evaluation_trace": [step.as_dict() for step in run.trace],

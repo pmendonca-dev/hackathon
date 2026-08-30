@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from aval.api.errors import ApiError
-from aval.merchant.catalog import MERCHANT_KID
+from aval.merchant.catalog import MERCHANTS
 from aval.merchant.offers import terms_hash_of
 from aval.security.jcs import canonicalize
 from aval.security.jws import verify_compact_jws
@@ -37,12 +37,7 @@ def bind_offer(
     scale: int,
     spend_nonce: bool,
 ) -> BoundOffer:
-    try:
-        claims = verify_compact_jws(
-            token, runtime.merchant_custody.verifying_key(MERCHANT_KID)
-        )
-    except ValueError as error:
-        raise ApiError(401, "offer_signature_invalid", "Oferta não assinada pelo merchant.") from error
+    claims = _verified_offer(token, runtime)
 
     now = runtime.clock.now()
     try:
@@ -82,8 +77,22 @@ def bind_offer(
 
 def offer_claims(token: str, runtime: AvalRuntime) -> dict:
     """Read a merchant offer for verification purposes only."""
+    return _verified_offer(token, runtime)
+
+
+def _verified_offer(token: str, runtime: AvalRuntime) -> dict:
+    """Verify an offer against the key of the seller it says it comes from.
+
+    The merchant named in the unverified header only *selects* a candidate key; it
+    never grants anything. An offer that claims one seller and was signed by another
+    fails here, which is the same check as before with more than one seller in the room.
+    """
+    named = unverified_offer_claims(token) or {}
+    kid = MERCHANTS.get(str(named.get("merchant_id", "")))
+    if kid is None:
+        raise ApiError(401, "offer_signature_invalid", "Oferta de vendedor desconhecido.")
     try:
-        return verify_compact_jws(token, runtime.merchant_custody.verifying_key(MERCHANT_KID))
+        return verify_compact_jws(token, runtime.merchant_custody.verifying_key(kid))
     except ValueError as error:
         raise ApiError(401, "offer_signature_invalid", "Oferta não assinada pelo merchant.") from error
 
