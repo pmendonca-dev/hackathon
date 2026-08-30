@@ -45,6 +45,13 @@ Local browser credentials are explicit environment configuration:
 - `AVAL_UI_AUDITOR_CREDENTIAL`
 - `AVAL_UI_OPERATOR_CREDENTIAL`
 
+`AVAL_OPERATOR_AUTHORITY_SEED` is a distinct, server-only local configuration
+value that enables deterministic KeyCustody signing for browser operator
+revocations across restarts. It is never a browser credential and is never
+stored, returned, logged, or included in an exception. If it is absent, the
+operator login may still succeed but the revocation action fails closed with
+`503 revocation_unavailable`.
+
 A role without an explicit configured credential cannot log in. There is no
 generated or printed fallback credential. Invalid credentials return
 `401 ui_login_invalid` without revealing whether that role is configured.
@@ -122,8 +129,9 @@ CSRF values, credentials, and keys. A valid but unauthorized role receives
 Both endpoints require a valid browser session. `merchant` can read only the
 projection for its configured merchant; `holder` and `auditor` can read their
 authorized mandate projection. `operator` is not granted audit or dispute
-read access. The results are append-only, human-readable summaries and never
-return raw evidence or payment credentials.
+read access. The results are append-only, human-readable summaries from a
+closed BFF vocabulary; they never reflect raw ledger prose, evidence, or
+payment credentials.
 
 Unknown mandates return `404 mandate_not_found`; an inaccessible mandate
 returns `403 ui_role_not_authorized`; durable evidence failures return `503

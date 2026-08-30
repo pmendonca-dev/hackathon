@@ -79,6 +79,28 @@ class SqliteMandateRepository:
         ).mappings()
         return [self._to_mandate(row) for row in rows]
 
+    def upsert_authority(self, mandate_id: str, authority: RevocationAuthority) -> None:
+        values = {
+            "mandate_id": mandate_id,
+            "role": authority.role.value,
+            "kid": authority.kid,
+            "public_jwk": json.dumps(dict(authority.public_jwk)),
+            "allowed_scope": json.dumps(sorted(authority.allowed_scopes)),
+        }
+        existing = self._connection.execute(
+            select(revocation_authorities.c.id).where(
+                revocation_authorities.c.id == authority.id
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            self._connection.execute(revocation_authorities.insert().values(id=authority.id, **values))
+            return
+        self._connection.execute(
+            update(revocation_authorities)
+            .where(revocation_authorities.c.id == authority.id)
+            .values(**values)
+        )
+
     def _to_mandate(self, row) -> Mandate:
         authority_rows = self._connection.execute(
             select(revocation_authorities).where(revocation_authorities.c.mandate_id == row["id"])

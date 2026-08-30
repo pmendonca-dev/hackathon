@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from aval.domain.entities import Mandate, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
+from aval.application.authorization_core import CaptureCommand
 from aval.main import create_app
 
 
@@ -76,6 +77,34 @@ def test_holder_and_auditor_read_allowed_projection_without_sensitive_evidence(m
     rendered = f"{holder.text}{auditor.text}"
     for forbidden in ("vt_", "proof_", "eyJ", "private_key", "csrf_token", "signed_revocation"):
         assert forbidden not in rendered
+
+
+def test_audit_projection_never_reflects_untrusted_ledger_human_summary(monkeypatch, tmp_path) -> None:
+    client, app = _client(monkeypatch, tmp_path)
+    pan = "4242424242424242"
+    capture = app.state.runtime.core.capture(
+        CaptureCommand(
+            mandate_id="mandate_01",
+            checkout_id="checkout_sensitive_reason",
+            merchant_id="merchant_01",
+            total=Money(100, "BRL", 2),
+            category="travel",
+            idempotency_key="capture_sensitive_reason",
+        )
+    )
+    assert capture.reservation is not None
+    app.state.runtime.core.open_dispute(
+        reservation_id=capture.reservation.id,
+        reason=f"reason-{pan}-vt_leak-eyJ.leak",
+    )
+    _login(client, "auditor")
+
+    response = client.get("/ui-api/v1/mandates/mandate_01/audit")
+
+    assert response.status_code == 200
+    assert pan not in response.text
+    assert "vt_leak" not in response.text
+    assert "eyJ.leak" not in response.text
 
 
 def test_workspace_and_agent_audit_keep_browser_and_agent_boundaries_separate(monkeypatch, tmp_path) -> None:

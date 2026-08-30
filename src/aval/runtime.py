@@ -41,6 +41,12 @@ def resolve_operator_token() -> str:
     return os.environ.get("AVAL_OPERATOR_TOKEN", "").strip()
 
 
+def resolve_operator_authority_seed() -> str | None:
+    """The explicit server-only seed for the browser operator authority, if enabled."""
+    value = os.environ.get("AVAL_OPERATOR_AUTHORITY_SEED", "").strip()
+    return value or None
+
+
 @dataclass(frozen=True)
 class AvalRuntime:
     engine: Engine
@@ -86,7 +92,12 @@ def build_runtime(
     # place, which is what main's own entrypoint did before this was factored out.
     metadata.create_all(engine)
     custody = custody or KeyCustodyService()
+    operator_authority_seed = resolve_operator_authority_seed()
     for key_id in (PROOF_KID, *extra_key_ids):
+        if key_id == "operator-key" and not custody.has(key_id):
+            if operator_authority_seed is not None:
+                custody.derive_es256_from_secret(key_id, operator_authority_seed)
+            continue
         if not custody.has(key_id):
             custody.generate_es256(key_id)
     # One-use proofs, remembered in the database rather than in this process: a proof

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from aval.security.ecdsa import sign_es256_raw
+
+
+P256_ORDER = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 
 
 def _b64url(value: bytes) -> str:
@@ -39,6 +44,18 @@ class KeyCustodyService:
         if not kid or kid in self._keys:
             raise ValueError("kid must be new and non-empty")
         self._keys[kid] = ec.generate_private_key(ec.SECP256R1())
+
+    def derive_es256_from_secret(self, kid: str, secret: str) -> None:
+        """Install an explicit server-only deterministic demo authority key."""
+        if not kid or kid in self._keys or not secret:
+            raise ValueError("kid and secret must be new and non-empty")
+        material = hmac.new(
+            b"AVAL operator authority ES256 v1",
+            secret.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        private_value = (int.from_bytes(material, "big") % (P256_ORDER - 1)) + 1
+        self._keys[kid] = ec.derive_private_key(private_value, ec.SECP256R1())
 
     def has(self, kid: str) -> bool:
         return kid in self._keys

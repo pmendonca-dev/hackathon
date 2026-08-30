@@ -253,6 +253,31 @@ class AuthorizationCore:
 
         run_in_write_transaction(self._engine, operation)
 
+    def configure_operator_revocation_authority(self, mandate_id: str, authority: RevocationAuthority) -> None:
+        """Apply explicit server operator-key configuration without rewriting a mandate."""
+        if authority.role is not RevocationRole.OPERATOR or authority.allowed_scopes != frozenset({"mandate"}):
+            raise ValueError("invalid operator revocation authority")
+
+        def operation(connection) -> None:
+            mandates = SqliteMandateRepository(connection)
+            mandate = mandates.get(mandate_id)
+            if mandate is None:
+                raise ValueError("mandate not found")
+            current = next((item for item in mandate.authorities if item.id == authority.id), None)
+            if current == authority:
+                return
+            mandates.upsert_authority(mandate.id, authority)
+            SqliteAuditLedger(connection).append(
+                mandate_id=mandate.id,
+                event_type="operator_authority.configured",
+                human_summary="Operator revocation authority configured.",
+                actor="system:key_custody",
+                detail={"authority_role": authority.role.value},
+                occurred_at=self._clock(),
+            )
+
+        run_in_write_transaction(self._engine, operation)
+
     def register_agent(self, identity: AgentIdentity) -> None:
         run_in_write_transaction(
             self._engine, lambda connection: SqliteAgentProfileRepository(connection).put(identity)

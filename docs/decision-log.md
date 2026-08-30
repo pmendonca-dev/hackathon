@@ -57,6 +57,48 @@ Persisting the raw JWS in a browser session would unnecessarily retain signing
 material. A distinct canonical action hash preserves the durable replay
 contract without exposing or depending on the JWS.
 
+## Local operator authority key continuity
+
+**Decision:** Key lifetime for the local server-side browser revocation authority
+
+**Options considered (one per line):**
+
+Generate a new in-memory ES256 operator key on every runtime start
+Persist an unencrypted private key in the local SQLite database
+Derive the server authority deterministically from an explicit server-only environment seed
+
+**What we chose:** Derive the local demo operator authority deterministically
+inside `KeyCustodyService` from `AVAL_OPERATOR_AUTHORITY_SEED` and do not
+persist private key material in SQLite.
+
+**Why:** The mandate records the authority's public JWK. A newly generated key
+after restart cannot validate against that durable registration, which made the
+operator BFF return `revocation_invalid`. An explicit server-only seed produces
+the same public identity on each start while keeping the private key material
+inside KeyCustody and out of the database, browser, API responses, logs,
+exceptions, receipts, and audit summaries. Without that seed (or injected
+custody) the operator authority is disabled and the BFF fails closed.
+
+## Existing-mandate operator authority adoption
+
+**Decision:** Applying an explicit operator authority seed to an existing local runtime database
+
+**Options considered (one per line):**
+
+Leave pre-BFF and rotated-seed mandate authority registrations unchanged
+Rewrite the entire seeded mandate whenever the configured operator key changes
+Upsert only the named operator revocation authority through AuthorizationCore and append an audit event
+
+**What we chose:** Upsert only `authority_operator_01` through
+`AuthorizationCore` when an explicit server authority seed is configured,
+recording `operator_authority.configured` in the append-only ledger.
+
+**Why:** An existing mandate otherwise retains no operator authority or a JWK
+from an old seed, which makes its configured server operator unavailable. A
+full mandate rewrite could alter revocation, expiry, limits, or settlements.
+The narrow Core-owned authority update adopts or rotates only the explicitly
+configured server authority while preserving all existing authorization facts.
+
 ## Technical coverage objective
 
 **Decision:** Primary product objective for the hackathon solution

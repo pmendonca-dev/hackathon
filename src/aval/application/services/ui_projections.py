@@ -11,6 +11,19 @@ from aval.domain.entities import Mandate
 
 HOLDER_PRINCIPAL_ID = "principal_01"
 
+# Ledger summaries can contain display names or third-party supplied text. Browser
+# output uses this closed vocabulary instead of reflecting those stored strings.
+SAFE_EVENT_SUMMARIES = {
+    "mandate_registered": "Mandate registered.",
+    "mandate.revoked": "Mandate revoked.",
+    "purchase_authorized": "Purchase authorized.",
+    "purchase_committed": "Purchase committed.",
+    "purchase_settled": "Payment settled.",
+    "purchase_declined": "Payment declined.",
+    "dispute_opened": "Dispute opened.",
+    "dispute_resolved": "Dispute resolved.",
+}
+
 
 @dataclass(frozen=True)
 class UiProjectionError(Exception):
@@ -113,7 +126,6 @@ class UiProjectionService:
             "revocation_epoch",
             "settlement_reference",
             "scope",
-            "reason",
             "authority_role",
             "status",
         }
@@ -124,7 +136,7 @@ class UiProjectionService:
         }
         result: dict[str, object] = {
             "event_type": entry.event_type,
-            "human_summary": entry.human_summary,
+            "human_summary": SAFE_EVENT_SUMMARIES.get(entry.event_type, "Recorded audit event."),
             "occurred_at": entry.occurred_at.isoformat(),
             "detail": detail,
         }

@@ -121,6 +121,17 @@ def _seed_protocol_fixtures(runtime: AvalRuntime, clock: Callable[[], datetime])
     them instead of duplicating them.
     """
     custody = runtime.custody
+    operator_authority = (
+        RevocationAuthority(
+            id="authority_operator_01",
+            kid="operator-key",
+            role=RevocationRole.OPERATOR,
+            public_jwk=custody.public_jwk("operator-key"),
+            allowed_scopes=frozenset({"mandate"}),
+        )
+        if custody.has("operator-key")
+        else None
+    )
     runtime.core.register_mandate(
         Mandate(
             id=SEED_MANDATE_ID,
@@ -140,16 +151,12 @@ def _seed_protocol_fixtures(runtime: AvalRuntime, clock: Callable[[], datetime])
                     public_jwk=custody.public_jwk("holder-key"),
                     allowed_scopes=frozenset({"mandate"}),
                 ),
-                RevocationAuthority(
-                    id="authority_operator_01",
-                    kid="operator-key",
-                    role=RevocationRole.OPERATOR,
-                    public_jwk=custody.public_jwk("operator-key"),
-                    allowed_scopes=frozenset({"mandate"}),
-                ),
+                *((operator_authority,) if operator_authority is not None else ()),
             ),
         )
     )
+    if operator_authority is not None:
+        runtime.core.configure_operator_revocation_authority(SEED_MANDATE_ID, operator_authority)
     identities = [
         AgentIdentity(
             id=identity_id,
