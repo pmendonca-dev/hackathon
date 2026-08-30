@@ -33,25 +33,24 @@ FORBIDDEN_REASONS = frozenset(
         "mandate_not_found",
         "mandate_ceiling",
         "merchant_out_of_scope",
+        "merchant_revoked",
         "category_not_allowed",
         "budget_exceeded",
         "budget_revoked",
         "instrument_revoked",
+        "policy_denied",
         "settlement_declined",
     }
 )
 
 
-# The core says `transaction_already_captured`; this protocol calls the same fact an
-# already-spent authorization. Translating here keeps each vocabulary intact.
-PROTOCOL_REASONS = {"transaction_already_captured": "authorization_proof_replayed"}
-
-
 def _status_for(reason_code: str) -> int:
     if reason_code in UNAVAILABLE_REASONS:
         return 503
-    if reason_code == "idempotency_in_flight":
+    if reason_code in {"idempotency_in_flight", "transaction_already_captured"}:
         return 409
+    if reason_code == "idempotency_key_reused":
+        return 422
     if reason_code in FORBIDDEN_REASONS:
         return 403
     if reason_code.startswith(("vault_token", "mandate_", "merchant_authorization", "checkout_", "authorization_proof")):
@@ -65,7 +64,9 @@ def create_payment_capture_router(
     router = APIRouter()
 
     def require_agent(request: Request) -> None:
-        authenticate_rfc9421(request, verifier)
+        identity = authenticate_rfc9421(request, verifier)
+        if verifier is not None and (identity is None or identity.id != "agent_01"):
+            raise HTTPException(status_code=403, detail={"code": "agent_not_authorized"})
 
     @router.post("/payment-captures", status_code=201, dependencies=[Depends(require_agent)])
     async def capture(
@@ -81,13 +82,10 @@ def create_payment_capture_router(
             checkout_mandate=request.ap2.checkout_mandate,
             idempotency_key=idempotency_key,
         ))
-        if not result.approved or result.reservation is None:
-            reason = PROTOCOL_REASONS.get(result.reason_code, result.reason_code)
-            raise HTTPException(_status_for(reason), detail={"code": reason})
-        if result.replayed:
-            # Same key, same body: the caller is told this is the original answer rather
-            # than a second settlement, which is the difference that matters to them.
+        if result.replayed and response is not None:
             response.headers["Idempotent-Replayed"] = "true"
+        if not result.approved or result.reservation is None:
+            raise HTTPException(_status_for(result.reason_code), detail={"code": result.reason_code})
         return {
             "capture_id": result.reservation.id, "reservation_id": result.reservation.id,
             "status": "settled", "settlement_reference": result.settlement_reference,
@@ -97,11 +95,11 @@ def create_payment_capture_router(
     @router.get("/payment-captures/{capture_id}/receipts")
     async def receipts(capture_id: str, request: Request) -> dict[str, object]:
         identity = authenticate_rfc9421(request, verifier)
-        if identity is None or not service.can_read_capture(identity_id=identity.id, capture_id=capture_id):
-            raise HTTPException(403, detail={"code": "reader_not_authorized"})
         capture = service.receipts_for(capture_id)
         if capture is None:
             raise HTTPException(404, detail={"code": "capture_not_found"})
+        if identity is None or not service.can_read_capture(identity_id=identity.id, capture_id=capture_id):
+            raise HTTPException(403, detail={"code": "reader_not_authorized"})
         return {
             "capture_id": capture.id, "checkout_receipt": capture.checkout_receipt,
             "payment_receipt": capture.payment_receipt,
@@ -110,11 +108,11 @@ def create_payment_capture_router(
     @router.get("/payment-captures/{capture_id}")
     async def capture_status(capture_id: str, request: Request) -> dict[str, object]:
         identity = authenticate_rfc9421(request, verifier)
-        if identity is None or not service.can_read_capture(identity_id=identity.id, capture_id=capture_id):
-            raise HTTPException(403, detail={"code": "reader_not_authorized"})
         capture = service.receipts_for(capture_id)
         if capture is None:
             raise HTTPException(404, detail={"code": "capture_not_found"})
+        if identity is None or not service.can_read_capture(identity_id=identity.id, capture_id=capture_id):
+            raise HTTPException(403, detail={"code": "reader_not_authorized"})
         return {
             "capture_id": capture.id, "reservation_id": capture.id,
             "status": "settled", "settlement_reference": capture.settlement_reference,

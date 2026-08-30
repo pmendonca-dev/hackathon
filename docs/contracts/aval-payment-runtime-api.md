@@ -12,12 +12,13 @@ All timestamps are RFC 3339 UTC timestamps.
 ## Authentication and safety
 
 Every endpoint requires a trusted RFC 9421 identity. The signature covers the
-received raw body through `Content-Digest`, as well as `@method`, `@authority`,
-`@path`, `ucp-agent`, `idempotency-key`, and `content-type`. The runtime rejects
-missing/invalid signatures, altered bodies, unknown keys, and untrusted
-profiles before any operational service executes. The local roles are
-`agent_01` (merchant projection), `holder_01`, and `auditor_01`; only the
-latter two have cross-merchant audit access.
+received raw body through `Content-Digest`, plus `@method`, `@authority`,
+`@path`, `ucp-agent`, and `content-type`; a `POST` additionally signs
+`idempotency-key`. The runtime rejects missing/invalid signatures, altered
+bodies, unknown keys, and untrusted profiles before any operational service
+executes. The local roles are `agent_01` (the only delegation/capture writer),
+`holder_01`, and `auditor_01`. The latter two can read the authorized
+cross-merchant audit projection; the agent can read only `merchant_01` facts.
 
 Every `POST` requires a non-empty `Idempotency-Key` header. The key is durable
 for at least 24 hours and is scoped to the endpoint. Repeating the same key
@@ -37,6 +38,9 @@ All errors use:
 ```json
 {"detail":{"code":"stable_code"}}
 ```
+
+Schema or JSON payload validation returns `422 request_invalid`; no framework
+validation details are exposed.
 
 ## Delegate payment (preserved)
 
@@ -101,7 +105,12 @@ Requires a trusted merchant/agent authentication context and
 
 `mandate_id`, `merchant_id`, and amount are deliberately not accepted here.
 The runtime loads these values from `checkout_session_id`'s canonical persisted
-checkout and validates the vault-token scope against them.
+checkout and validates the vault-token scope against them. Before Core commit,
+it re-verifies the canonical merchant-authorization JCS/JWS and the closed AP2
+checkout mandate's issuer signature, holder key binding, audience, nonce,
+expiry, `sd_hash`, and checkout hash. The verified merchant authorization
+therefore binds canonical checkout ID, merchant, line items, and total; any
+divergence fails before a reservation, PSP call, receipt, or settlement event.
 
 `201 Created` on approved settlement:
 
@@ -121,12 +130,14 @@ a valid, single-use AuthorizationProof; it never receives a PAN or vault
 token. A revoked or expired mandate, divergent merchant/checkout, missing or
 invalid token, policy denial, invalid AP2 evidence, or unavailable revocation
 store is rejected before settlement. Stable errors include
-`reservation_not_committed`, `authorization_proof_invalid`,
+`transaction_already_captured`, `reservation_not_committed`, `authorization_proof_invalid`,
 `authorization_proof_replayed`, `vault_token_invalid`, `vault_token_expired`,
 `vault_token_scope_mismatch`, `settlement_declined`, and the delegation errors
-above. `reservation_not_committed`, proof, token, and evidence failures are
-`422`; policy/revocation failures are `403`; unavailable durable dependencies
-are `503`.
+above. A capture for an already captured canonical transaction with a new key
+returns `409 transaction_already_captured`. `reservation_not_committed`, proof,
+token, and evidence failures are `422`; policy/revocation failures are `403`;
+unavailable durable dependencies (including `revocation_unavailable`) are
+`503`.
 
 `GET /payment-captures/{capture_id}` returns the durable capture state:
 
@@ -140,7 +151,8 @@ are `503`.
 ```
 
 Unknown captures return `404 capture_not_found`. This is the settlement status
-endpoint; it is read-only and has no idempotency header.
+endpoint; it is read-only and has no idempotency header, but does require the
+RFC 9421 reader signature above.
 
 ## Receipts
 
@@ -180,8 +192,10 @@ refund, or dispute is the available remedy.
 ## Signed revocation
 
 `POST /mandates/{mandate_id}/revocations` requires an authenticated registered
-authority and `Idempotency-Key`. Its body contains the already signed
-revocation JWS:
+authority and `Idempotency-Key`. Its RFC 9421 signing key must match the key
+named by the signed revocation JWS and that JWS must validate against a
+registered mandate authority. Its body contains the already signed revocation
+JWS:
 
 ```json
 {"signed_revocation":"eyJ..."}
@@ -191,7 +205,9 @@ revocation JWS:
 Malformed, unauthorised, mismatched, or disallowed revocations return `422`
 with `revocation_invalid`, `revocation_authority_unknown`,
 `revocation_mandate_mismatch`, or `revocation_scope_not_allowed`. The JWS is
-stored as protected audit evidence but never returned by this API.
+stored as protected audit evidence but never returned by this API. An accepted
+mandate revocation appends `mandate.revoked`; it blocks later delegation and
+capture but never rewrites an already committed or settled reservation.
 
 ## Local seed examples
 

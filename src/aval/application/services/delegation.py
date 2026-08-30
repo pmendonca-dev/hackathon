@@ -107,7 +107,10 @@ class DurableDelegationService:
             idem.complete("delegate_payment", idempotency_key, self._outcome_json(outcome))
             return outcome
 
-        return run_in_write_transaction(self._engine, operation)
+        try:
+            return run_in_write_transaction(self._engine, operation)
+        except Exception:
+            return DelegationOutcome(None, "idempotency_unavailable", False)
 
     @staticmethod
     def _outcome_json(outcome: DelegationOutcome) -> str:

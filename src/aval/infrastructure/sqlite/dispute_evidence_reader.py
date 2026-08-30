@@ -27,11 +27,11 @@ class SqliteDisputeEvidenceReader:
     def get(self, mandate_id: str) -> DisputeEvidence | None:
         with self._engine.connect() as connection:
             capture = SqlitePaymentRuntimeRepository(connection).latest_for_mandate(mandate_id)
-            if capture is None:
-                return None
             rows = connection.execute(select(audit_events).where(
                 audit_events.c.mandate_id == mandate_id
             ).order_by(audit_events.c.occurred_at, audit_events.c.id)).mappings().all()
+        if capture is None and not rows:
+            return None
         timeline = tuple(ReadableAuditEvent(
             id=row["id"], mandate_id=mandate_id,
             event_type=PROTOCOL_EVENT_NAMES.get(row["event_type"], row["event_type"]),
@@ -40,6 +40,14 @@ class SqliteDisputeEvidenceReader:
             occurred_at=row["occurred_at"].replace(tzinfo=UTC) if row["occurred_at"].tzinfo is None else row["occurred_at"],
             evidence_hash="runtime", revocation_epoch=0,
         ) for row in rows)
+        if capture is None:
+            committed_at = timeline[0].occurred_at
+            return DisputeEvidence(
+                mandate_id=mandate_id, open_mandate=mandate_id, revocation_authority="runtime",
+                checkout_jwt="", checkout_hash="", closed_checkout_mandate="", closed_payment_mandate="",
+                merchant_authorization="", authorization_proof="", checkout_receipt="", payment_receipt="",
+                commit_point_at=committed_at, events=timeline,
+            )
         checkout_mandate = capture.checkout_mandate
         payment_mandate = capture.payment_mandate
         committed_at = timeline[0].occurred_at if timeline else datetime.now(UTC)
