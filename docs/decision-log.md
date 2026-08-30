@@ -319,3 +319,151 @@ safe signer boundary is published.
 **Why:** Vite variables are public client assets, and cookie-only requests do
 not satisfy the runtime contract. Either shortcut would weaken the identity
 boundary precisely where Task 12 is intended to test it.
+
+## Escopo obrigatório das listagens
+
+**Decisão:** como `GET /mandates` e `GET /escalations` respondem sem um id conhecido
+
+**Opções consideradas (uma por linha):**
+
+Listagem global, filtrável opcionalmente por titular
+Listagem global protegida por token de operador
+Escopo por titular obrigatório, sem variante global em lugar nenhum
+
+**O que escolhemos:** `principal_id` obrigatório, e nenhuma consulta global existe na
+pilha — os repositórios só sabem responder por titular, e a de escalações alcança as
+linhas por join no mandato que as possui.
+
+**Por quê:** uma listagem sem escopo entregaria a qualquer chamador todos os
+compradores do sistema, seus limites, seus gastos e suas compras pendentes — a mesma
+divulgação que a visão do merchant existe para impedir. Um titular sem mandatos recebe
+lista vazia e não 404, para a rota não virar um oráculo de quais ids existem.
+
+## Traço de avaliação e quem pode lê-lo
+
+**Decisão:** publicar a escada que o núcleo percorreu, e para quem
+
+**Opções consideradas (uma por linha):**
+
+Continuar devolvendo só o primeiro motivo de recusa
+Publicar o traço em todas as respostas, inclusive a do merchant
+Publicar o traço nas superfícies do agente e do titular, nunca na do merchant
+
+**O que escolhemos:** `evaluation_trace` em `/authorize` e `/agent/purchase`; ausente
+de `/merchant/verify`, com teste que falha se aparecer lá.
+
+**Por quê:** a ordem da escada é a regra — autoridade antes de dinheiro — e devolver só
+o primeiro motivo tornava essa ordem invisível. Mas o traço nomeia limite, teto e
+gasto: um merchant que os aprendesse aprenderia o orçamento da compradora a partir de
+um recibo que ele tem todo o direito de conferir.
+
+## Relógio da demonstração monotônico
+
+**Decisão:** direção em que `POST /admin/clock` pode mover o tempo
+
+**Opções consideradas (uma por linha):**
+
+Permitir avançar e rebobinar, para o time reencenar a demo
+Aceitar valor negativo e silenciosamente tratá-lo como zero
+Só avançar, recusando negativo e zero com 422
+
+**O que escolhemos:** monotônico, com 422 explícito.
+
+**Por quê:** avançar só retira autoridade — mandatos expiram, nada é concedido.
+Rebobinar reviveria um mandato expirado, o que é um operador devolvendo autoridade de
+gasto que a validade do próprio titular já tinha encerrado. Recusar em silêncio seria
+pior que recusar alto: o jurado acreditaria ter rebobinado o tempo sem ter rebobinado.
+
+## Ferramenta de adulteração da trilha
+
+**Decisão:** como oferecer a demonstração de que a cadeia pega o próprio editor
+
+**Opções consideradas (uma por linha):**
+
+Rota sempre montada, protegida só pelo token de operador
+Rota montada sempre, recusando com 403 quando uma variável não está setada
+Rota não montada a menos que `AVAL_DEMO_TAMPER` esteja ligada
+
+**O que escolhemos:** montagem condicional — sem a variável a rota não existe (404 de
+verdade, ausente do OpenAPI), e com ela ainda exige token de operador.
+
+**Por quê:** é uma ferramenta para corromper um log de auditoria. Uma checagem de
+permissão pode ser mal configurada para o lado permissivo; uma rota que não foi
+registrada não pode. Não há contrapartida que conserte a cadeia: uma rota capaz de
+reescrevê-la para um estado válido destruiria a propriedade que esta existe para provar.
+
+## Frequência como autoridade, não preferência
+
+**Decisão:** onde vive *"até 3 vezes por mês"*
+
+**Opções consideradas (uma por linha):**
+
+No agente, junto do preço-alvo, como preferência de compra
+No núcleo, como recusa dura sem caminho de aprovação
+No núcleo, na escada, aprovável como o orçamento
+
+**O que escolhemos:** no núcleo, entre o teto e o orçamento, com escalação possível.
+
+**Por quê:** frequência diz *quantas vezes* o agente pode agir, do mesmo modo que o
+orçamento diz *quanto* — é autoridade, e autoridade não mora no agente. Ser aprovável é
+o correto: um humano pode dizer sim a uma quarta compra, enquanto o teto continua sendo
+o único limite sem botão. Um uso é queimado por dinheiro efetivamente retido, então um
+cartão recusado pelo processador não come uma das compras permitidas do comprador.
+
+## A chave do titular mora no navegador
+
+**Decisão:** como um jurado produz um JWS ES256 do titular a partir de uma página
+
+**Opções consideradas (uma por linha):**
+
+Embutir uma chave confiável do runtime em variável do Vite
+O servidor assinar como `operator` em nome do titular
+O navegador gerar e guardar a própria chave, não-extraível
+
+**O que escolhemos:** par P-256 gerado no navegador com `extractable: false`, handle
+guardado no IndexedDB, JWK público registrado como autoridade do mandato na criação.
+
+**Por quê:** variáveis do Vite são assets públicos, então a primeira opção publica a
+chave. A segunda dá ao operador exatamente o poder que o modelo de segurança lhe nega —
+e a derrubaria no ponto em que ela está sendo demonstrada. Guardar o `CryptoKey` no
+IndexedDB é a única forma de persistir uma chave não-extraível: o navegador mantém o
+material, a página mantém um handle que assina e não consegue ler. Não existe caminho
+de exportação no módulo, e há teste estrutural que falha se aparecer um.
+
+## Nenhuma fixture atrás do navegador
+
+**Decisão:** o que a página mostra quando o runtime não responde
+
+**Opções consideradas (uma por linha):**
+
+Cair para fixtures rotuladas como mock
+Manter a última projeção conhecida em cache
+Dizer que o runtime não respondeu, e não mostrar mais nada
+
+**O que escolhemos:** estado de indisponibilidade explícito; nenhum módulo de fixture
+sobreviveu no `web/src`.
+
+**Por quê:** uma página que se preenche com dados inventados quando o servidor cai é
+indistinguível de uma que funciona, exatamente quando essa diferença mais importa —
+diante de um jurado testando o sistema ao vivo. E uma falha de rede renderizada como
+recusa diria que o mandato disse não quando ele nunca foi perguntado.
+
+## LLM na metade que propõe, com as regras de piso
+
+**Decisão:** se um modelo de verdade entra no agente comprador
+
+**Opções consideradas (uma por linha):**
+
+Manter só regras — sem chave, sem timeout, sem risco de palco
+Trocar as regras por um modelo, exigindo credencial para rodar o case
+Modelo opcional, com queda automática para as regras
+
+**O que escolhemos:** `AVAL_LLM_AGENT=1` mais credencial ligam o modelo; qualquer falha
+volta às regras, e o padrão sem configuração é as regras.
+
+**Por quê:** o case fala de um agente que *alucina uma compra*, e um leitor por regras
+não alucina — a demonstração só podia afirmar que o núcleo seguraria, nunca mostrar.
+Um modelo real propõe errado de verdade e é recusado do mesmo jeito. O modelo **não é
+informado do limite, do teto nem do saldo**: além de desnecessário para ler uma frase,
+mandar o orçamento da compradora a um terceiro seria o vazamento que o resto do sistema
+evita, e um modelo com prompt injetado não tem número privado para repetir.

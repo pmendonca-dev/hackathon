@@ -11,7 +11,6 @@
  *   node --experimental-strip-types tests/live-browser-journey.mjs http://127.0.0.1:8137
  */
 
-import assert from 'node:assert/strict';
 
 import { AuthorizationGateway } from '../src/gateways/authorizationGateway.ts';
 import { generateHolderKeyPair, signCompactJws } from '../src/wallet/holderKey.ts';
