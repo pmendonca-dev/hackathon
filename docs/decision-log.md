@@ -248,3 +248,17 @@ Compose only the published capture, receipt, audit, and dispute responses and re
 **What we chose:** The live UI will compose documented read-only runtime responses identified by configured mandate and capture IDs, without synthesizing mandate limits, private budgets, identity, or authorization state.
 
 **Why:** The payment runtime contract intentionally exposes no aggregate workspace or mandate-detail response. Rendering only returned facts preserves `AuthorizationCore` as the sole source of truth and prevents merchant-visible leakage of private fields.
+
+## Task 12 runtime conformance gate
+
+**Decision:** When Task 12 may be reported green
+
+**Options considered (one per line):**
+
+Treat Laptop A's focused integration tests as sufficient E2E evidence
+Adapt Laptop B tests to the current implementation even when it diverges from the published contract
+Keep public E2E assertions red until the integrated runtime implements the published authentication, AP2, revocation, and audit boundaries
+
+**What we chose:** Task 12 stays red until tests in `tests/integration/e2e/` pass against `origin/main` after the Laptop A merge, using public HTTP calls and stable contract responses.
+
+**Why:** Runtime commit `9904b06` currently accepts unauthenticated delegation, omits the signed revocation route, and rejects the contract's capture `ap2` object. Weakening the tests would turn implementation drift into a second de facto contract and would make the demo evidence misleading.

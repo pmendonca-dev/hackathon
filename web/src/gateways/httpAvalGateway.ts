@@ -102,7 +102,12 @@ export class HttpAvalGateway implements AvalGateway {
       ? this.getPaymentCapture(this.#captureId)
       : Promise.resolve(null);
     const receiptsPromise = this.#captureId
-      ? this.getPaymentReceipts(this.#captureId)
+      ? this.getPaymentReceipts(this.#captureId).catch((error: unknown) => {
+          if (error instanceof AvalHttpError && error.code === 'receipts_not_available') {
+            return null;
+          }
+          throw error;
+        })
       : Promise.resolve(null);
     const [capture, receipts, audit, dispute] = await Promise.all([
       capturePromise,

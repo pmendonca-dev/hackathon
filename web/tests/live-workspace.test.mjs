@@ -93,3 +93,40 @@ test('trial revocation has a real authenticated audited boundary and unsupported
   );
   assert.equal(requests.length, 1);
 });
+
+test('workspace keeps canonical capture and audit when receipts are not available yet', async () => {
+  const capture = {
+    capture_id: 'cap_pending',
+    reservation_id: 'rsv_pending',
+    status: 'pending_reconciliation',
+    settlement_reference: 'psp_pending',
+  };
+  const verdict = {
+    status: 'under_review',
+    reason_code: 'settlement_pending',
+    human_summary: 'Settlement reconciliation is still pending.',
+    post_commit_note: null,
+    timeline: [],
+  };
+  const gateway = new HttpAvalGateway({
+    baseUrl: 'https://aval.example',
+    mandateId: 'mandate_01',
+    captureId: 'cap_pending',
+    fetch: async (input) => {
+      const path = new URL(input).pathname;
+      if (path.endsWith('/receipts')) {
+        return Response.json(
+          { detail: { code: 'receipts_not_available' } },
+          { status: 409 },
+        );
+      }
+      if (path === '/payment-captures/cap_pending') return Response.json(capture);
+      return Response.json(verdict);
+    },
+  });
+
+  const workspace = await gateway.loadWorkspace();
+  assert.deepEqual(workspace.live.capture, capture);
+  assert.equal(workspace.live.receipts, null);
+  assert.deepEqual(workspace.live.audit, verdict);
+});
