@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link2, Link2Off, PenLine, Scale, ScrollText, ShieldAlert } from 'lucide-react';
+import { Link2, Link2Off, PenLine, Scale, ScrollText, Send, ShieldAlert } from 'lucide-react';
 
 import { useAval } from '../state/AvalContext.ts';
 import { Badge, Button, EmptyNotice, Field, Panel } from '../components/ui.tsx';
@@ -14,7 +14,7 @@ import { formatDateTime, shortHash } from '../utils/format.ts';
  * started with the demo flag — its absence is the normal state.
  */
 export function AuditorTrailView() {
-  const { auditorEntries, chain, disputes, selectedMandateId, tamperLedger, operatorAvailable } =
+  const { auditorEntries, chain, disputes, selectedMandateId, tamperLedger, operatorAvailable, telegramActivity } =
     useAval();
   const [sequence, setSequence] = useState('1');
   const [busy, setBusy] = useState(false);
@@ -45,6 +45,56 @@ export function AuditorTrailView() {
           </p>
         </div>
       )}
+
+      <Panel
+        eyebrow="Telegram lane"
+        title={
+          telegramActivity === null
+            ? 'The bot'
+            : `${telegramActivity.events.length} decision(s) from ${telegramActivity.chats} chat(s)`
+        }
+        action={<Send size={18} className="text-verify" aria-hidden="true" />}
+      >
+        {telegramActivity === null ? (
+          <EmptyNotice
+            title="The bot is not reachable from here"
+            body="This panel reads the core's own record of what the Telegram lane did. Nothing is being hidden — the runtime did not answer."
+          />
+        ) : telegramActivity.events.length === 0 ? (
+          <EmptyNotice
+            title="Nobody has typed yet"
+            body="Whatever a judge does in the chat lands here, as the core recorded it."
+          />
+        ) : (
+          <>
+            <ol className="space-y-2">
+              {telegramActivity.events.map((event, index) => (
+                <li
+                  key={`${event.digest ?? 'no-digest'}-${index}`}
+                  className="rounded-lg border border-line bg-ink-800/40 p-3"
+                >
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="flex items-center gap-2">
+                      <span className="text-[13px] font-semibold">{event.who}</span>
+                      <span className="mono text-[11px] text-verify">{event.event_type}</span>
+                    </span>
+                    <span className="mono text-[10px] text-fg-mute">{formatDateTime(event.at)}</span>
+                  </div>
+                  <p className="mt-1 text-[13px] leading-relaxed">{event.summary}</p>
+                  {event.digest !== null && (
+                    <p className="mono mt-1 text-[10px] text-fg-faint">{shortHash(event.digest)}</p>
+                  )}
+                </li>
+              ))}
+            </ol>
+            <p className="mt-3 text-[12px] leading-relaxed text-fg-mute">
+              A first name and a decision, and deliberately nothing else: this feed carries
+              no mandate, principal or chat id, so reading it can never become a way to look
+              a buyer up. The digests are the same chain the panel below verifies.
+            </p>
+          </>
+        )}
+      </Panel>
 
       <section className="grid gap-4 lg:grid-cols-[1.4fr_0.6fr]">
         <Panel eyebrow="Hash chain" title={`${auditorEntries.length} event(s)`} action={<ScrollText size={18} className="text-verify" aria-hidden="true" />}>

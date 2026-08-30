@@ -10,6 +10,7 @@ import type {
   Metrics,
   Money,
   OperatorJournal,
+  TelegramActivity,
   Watch,
 } from '../gateways/authorizationGateway.ts';
 
@@ -63,6 +64,7 @@ export interface AvalContextValue {
   receipts: CommandReceipt[];
   /** Instance-wide counters, read from the runtime. Null when it did not answer. */
   metrics: Metrics | null;
+  telegramActivity: TelegramActivity | null;
   /** Standing orders on the selected mandate — the agent still working unwatched. */
   watches: Watch[];
   /** Disputes on the selected mandate, each with the verdict recomputed from the trail. */

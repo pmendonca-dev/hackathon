@@ -136,6 +136,20 @@ export interface LedgerEntry {
   [key: string]: unknown;
 }
 
+/** One decision the bot provoked, as the judges' screen may read it. */
+export interface TelegramActivityEvent {
+  at: string;
+  who: string;
+  event_type: string;
+  summary: string;
+  digest: string | null;
+}
+
+export interface TelegramActivity {
+  events: TelegramActivityEvent[];
+  chats: number;
+}
+
 export interface Metrics {
   decisions: { authorized: number; awaiting_human: number; rejected: number };
   reasons: Record<string, number>;
@@ -390,6 +404,17 @@ export class AuthorizationGateway {
    */
   metrics(): Promise<Metrics> {
     return this.#request('/metrics');
+  }
+
+  /**
+   * What the bot has been doing, for the screen the judges are looking at.
+   *
+   * Open on purpose and carrying no identifier: the feed names a first name and a
+   * decision, never a mandate or a principal, so reading it can never become a way to
+   * look a buyer up. See `routes/telegram_activity.py`.
+   */
+  telegramActivity(): Promise<TelegramActivity> {
+    return this.#request('/telegram/activity');
   }
 
   merchantVerify(

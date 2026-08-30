@@ -11,6 +11,7 @@ import {
   type Dispute,
   type Metrics,
   type OperatorJournal,
+  type TelegramActivity,
   type Watch,
 } from '../gateways/authorizationGateway.ts';
 import { signCompactJws, type HolderWallet } from '../wallet/holderKey.ts';
@@ -81,6 +82,7 @@ export function AvalProvider({
   const [chain, setChain] = useState<ChainStatus | null>(null);
   const [receipts, setReceipts] = useState<CommandReceipt[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [telegramActivity, setTelegramActivity] = useState<TelegramActivity | null>(null);
   const [watches, setWatches] = useState<Watch[]>([]);
   const [serverNow, setServerNow] = useState<string | null>(null);
   const [offers, setOffers] = useState<CatalogOffer[]>([]);
@@ -157,6 +159,14 @@ export function AvalProvider({
       setMetrics(await gateway.metrics());
     } catch {
       setMetrics(null);
+    }
+    // The Telegram lane, like the footer, describes the instance rather than this
+    // buyer — it is what puts a judge's own purchase on the screen everybody is
+    // watching. Its failure is never allowed to blank the page.
+    try {
+      setTelegramActivity(await gateway.telegramActivity());
+    } catch {
+      setTelegramActivity(null);
     }
     // Read before the wallet gate for the same reason as the footer: it describes the
     // instance, not this buyer. Null means the runtime did not say — and the form that
@@ -246,6 +256,31 @@ export function AvalProvider({
     void reload();
   }, [reload]);
 
+  // The Telegram feed refreshes on its own, and alone.
+  //
+  // A judge types into their phone and looks up at a screen somebody else is holding;
+  // if that screen only changed when a person pressed Reload, the demonstration would
+  // be the operator's word rather than the runtime's. Only this one read repeats —
+  // calling the full `reload` on a timer would re-sign every principal-scoped listing
+  // with the wallet a few times a minute to refresh a panel that needs none of it.
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const feed = await gateway.telegramActivity();
+        if (active) setTelegramActivity(feed);
+      } catch {
+        // Leave the last good feed on screen. A blink to "not reachable" on one failed
+        // poll would read as the bot dying in front of the room, which it has not.
+      }
+    };
+    const timer = setInterval(() => void poll(), 5000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [gateway]);
+
   const requireWallet = useCallback((): HolderWallet => {
     if (!wallet) throw new Error('The holder wallet is not ready yet.');
     return wallet;
@@ -273,6 +308,7 @@ export function AvalProvider({
       chain,
       receipts,
       metrics,
+      telegramActivity,
       watches,
       disputes,
       serverNow,
@@ -593,6 +629,7 @@ export function AvalProvider({
       chain,
       receipts,
       metrics,
+      telegramActivity,
       watches,
       disputes,
       operatorSessionExpiresAt,
