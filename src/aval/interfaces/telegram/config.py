@@ -28,6 +28,11 @@ class MandateDefaults:
     limit_minor_units: int
     ceiling_minor_units: int | None
     valid_for: timedelta
+    # The case's "up to 3 times a month", as a rolling window. Frequency is authority
+    # over *how often*, next to the budget's *how much* — so it ships on by default
+    # instead of being a feature only the API can reach.
+    max_uses: int | None
+    usage_window: timedelta
     # A test card, because a demo that asks a judge to type a real PAN into a chat
     # deserves the answer it would get. It is tokenized at the edge either way.
     card_number: str
@@ -77,6 +82,10 @@ class BotConfig:
                 limit_minor_units=_positive_int(env, "AVAL_MANDATE_LIMIT_MINOR_UNITS", 20_000),
                 ceiling_minor_units=_optional_int(env, "AVAL_MANDATE_CEILING_MINOR_UNITS", 50_000),
                 valid_for=timedelta(days=_positive_int(env, "AVAL_MANDATE_VALID_DAYS", 30)),
+                max_uses=_optional_int(env, "AVAL_MANDATE_MAX_USES", 3),
+                usage_window=timedelta(
+                    days=_positive_int(env, "AVAL_MANDATE_USAGE_WINDOW_DAYS", 30)
+                ),
                 card_number=env.get("AVAL_MANDATE_CARD", "4242424242424242").strip(),
             ),
             poll_timeout_seconds=_positive_int(env, "TELEGRAM_POLL_TIMEOUT_SECONDS", 30),

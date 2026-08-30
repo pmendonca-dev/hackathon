@@ -130,17 +130,11 @@ class Bot:
         self._identities = identities
         self._api = api
         self._notified: set[tuple[int, str]] = set()
-        # Which reservations each chat actually bought. A dispute carries no
-        # signature, so the core cannot tell a forged reservation id from a real
-        # one — this is the only place that can.
-        # ponytail: in memory, so a restart refuses dispute buttons from older
-        # messages. Fail-closed, which is the right way to lose this state.
         # ponytail: the last unmet request per chat, in memory. A restart forgets it and
         # the person is asked to type again — the alternative is a standing order the
         # bot registered from something it could not show them.
         self._unmet: dict[int, str] = {}
         self._watched: set[str] = set()
-        self._own_reservations: dict[int, set[str]] = {}
 
     # ── updates ────────────────────────────────────────────────────────────
     def handle_update(self, update: Mapping[str, Any]) -> None:
@@ -245,6 +239,8 @@ class Bot:
             ),
             valid_for=defaults.valid_for,
             card_number=defaults.card_number,
+            max_uses=defaults.max_uses,
+            usage_window=defaults.usage_window,
         )
         # The scope is stored because the API never serves the instrument token back:
         # the only way to hold it is to have been told it once, here.
@@ -294,9 +290,9 @@ class Bot:
                 self._notified.add((identity.chat_id, escalation.id))
         elif result.outcome == "settled":
             if result.reservation_id:
-                self._own_reservations.setdefault(identity.chat_id, set()).add(
-                    result.reservation_id
-                )
+                # Written to the identity store, not to memory: the person who denies
+                # a purchase tomorrow must still be recognised as the one who made it.
+                self._identities.record_reservation(identity.chat_id, result.reservation_id)
             # A4: the person gets the record of what was bought, under which
             # mandate, and what is left — without having to ask for it.
             screens.append(views.receipt(self._gateway.receipt(identity.mandate_id)))
@@ -382,12 +378,14 @@ class Bot:
             return (views.watch_registered(watch),)
 
         if verb == views.CALLBACK_DISPUTE:
-            if argument not in self._own_reservations.get(identity.chat_id, set()):
+            if not self._identities.owns_reservation(identity.chat_id, argument):
                 return (views.plain("Essa compra não é sua."),)
-            message = self._gateway.open_dispute(
+            dispute = self._gateway.open_dispute(
                 argument, "titular não reconhece a compra (aberta pelo Telegram)"
             )
-            return (views.plain(f"⚠️ {message} A trilha do mandato é quem responde."),)
+            # The verdict comes back in the same tap: the resolution reads the ledger
+            # and asks nobody, so making the person wait for it would be theatre.
+            return (views.dispute_verdict(dispute),)
 
         if not self._owns(identity, argument):
             return (views.plain("Esse mandato não é seu."),)
@@ -498,9 +496,7 @@ class Bot:
                 self._send(chat_id, views.watch_fired(watch))
                 self._watched.add(watch.id)
                 if watch.purchase is not None and watch.purchase.reservation_id:
-                    self._own_reservations.setdefault(chat_id, set()).add(
-                        watch.purchase.reservation_id
-                    )
+                    self._identities.record_reservation(chat_id, watch.purchase.reservation_id)
                 delivered += 1
         return delivered
 

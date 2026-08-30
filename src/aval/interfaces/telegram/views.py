@@ -16,6 +16,8 @@ import re
 import unicodedata
 
 from aval.interfaces.telegram.gateway import (
+    ChainView,
+    DisputeView,
     EscalationView,
     WatchView,
     OfferView,
@@ -157,6 +159,15 @@ def _mandate_body(mandate: MandateView) -> str:
     ]
     if mandate.ceiling is not None:
         lines.append(f"Teto por compra: {format_money(mandate.ceiling)} — <i>ninguém atravessa</i>")
+    if mandate.max_uses is not None:
+        # Frequency reads as authority, not as a counter: what is left, and over what
+        # window. The core escalates the use past this — it is not a wall, it is a
+        # point where the person is asked again.
+        left = max(mandate.max_uses - mandate.uses_in_window, 0)
+        lines.append(
+            f"Frequência: <b>{left} de {mandate.max_uses}</b> compra(s) livres "
+            f"{_window_label(mandate.window_seconds)}"
+        )
     if mandate.instrument_label is not None:
         # The fourth thing the mandate authorizes, next to the other three. The
         # agent holds a token for it and never the number. Once cancelled the label
@@ -173,6 +184,16 @@ def _mandate_body(mandate: MandateView) -> str:
         f"Vence em {days} dia(s) · política v{mandate.policy_version} · epoch {mandate.revocation_epoch}",
     ]
     return "\n".join(lines)
+
+
+def _window_label(window_seconds: int | None) -> str:
+    """`2592000` becomes `nos últimos 30 dias` — a person counts in days, not seconds."""
+    if not window_seconds:
+        return "na janela do mandato"
+    days = window_seconds // 86_400
+    if days >= 1:
+        return f"nos últimos {days} dia(s)"
+    return f"nas últimas {max(window_seconds // 3_600, 1)} hora(s)"
 
 
 def _mandate_buttons(mandate: MandateView, *, primary: bool = False) -> tuple[Row, ...]:
@@ -324,7 +345,57 @@ def receipt(view: ReceiptView) -> View:
             f"{entry.occurred_at:%d/%m %H:%M} · <code>{escape(entry.event_type)}</code>"
             f"\n    {escape(entry.human_summary)}"
         )
+    if view.chain is not None:
+        lines += ["", _chain_line(view.chain)]
     return View("\n".join(lines), _mandate_buttons(view.mandate))
+
+
+def _chain_line(chain: ChainView) -> str:
+    """An extract that says it is auditable without proving it is only a claim."""
+    if chain.intact:
+        return f"🔗 <i>Trilha íntegra — {chain.checked} evento(s) conferidos agora.</i>"
+    where = "desconhecido" if chain.broken_at is None else f"#{chain.broken_at}"
+    return (
+        f"⛓️‍💥 <b>TRILHA VIOLADA</b> no evento {where} — {chain.checked} conferidos. "
+        "Nada aqui serve como prova."
+    )
+
+
+_DISPUTE_VERDICT = {
+    "MANDATE_HELD": (
+        "🟢",
+        "O mandato sustenta a compra",
+        "Existe prova de autorização assinada ligando esta compra ao seu mandato. "
+        "Numa contestação real é o emissor que responde ao titular, não o merchant.",
+    ),
+    "MANDATE_FAILED": (
+        "🔴",
+        "Nada vincula essa compra ao seu mandato",
+        "Não há prova de autorização para esta reserva. A cobrança não se sustenta "
+        "e o estorno é seu por direito.",
+    ),
+}
+
+
+def dispute_verdict(dispute: DisputeView) -> View:
+    """Who is right, decided by the trail — the only part of a dispute that matters.
+
+    The bot states no opinion of its own: the badge comes from the ledger's verdict
+    and the fine print is the core's own sentence, quoted.
+    """
+    badge, headline, meaning = _DISPUTE_VERDICT.get(
+        dispute.status,
+        ("⚪", "Disputa aberta", "O veredito ainda não saiu. A trilha é quem responde."),
+    )
+    lines = [
+        f"{badge} <b>{escape(headline)}</b>",
+        f"<code>{escape(dispute.id[:24])}</code> · {escape(dispute.status)}",
+        "",
+        escape(meaning),
+    ]
+    if dispute.resolution:
+        lines += ["", f"<i>{escape(dispute.resolution)}</i>"]
+    return View("\n".join(lines))
 
 
 @dataclass(frozen=True)

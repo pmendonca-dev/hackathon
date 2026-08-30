@@ -56,6 +56,10 @@ class ChatIdentity:
     # creation. The API never serves the instrument token — a client that could read it
     # could present it — so the only way to hold it is to have been told it.
     instrument_scope: str | None = None
+    # Reservations this chat actually bought. A dispute carries no signature, so the
+    # core cannot tell a forged reservation id from one the person really holds —
+    # this is the only place that knows, which is why it survives a restart.
+    reservations: tuple[str, ...] = ()
 
     @property
     def actor(self) -> str:
@@ -114,6 +118,21 @@ class IdentityStore:
         self._save()
         return identity
 
+    def record_reservation(self, chat_id: int, reservation_id: str) -> None:
+        """Remember that this chat bought this. Written through, because the button
+        that denies a purchase is worthless if a restart forgets the purchase."""
+        identity = self._identities.get(chat_id)
+        if identity is None or reservation_id in identity.reservations:
+            return
+        self._identities[chat_id] = replace(
+            identity, reservations=identity.reservations + (reservation_id,)
+        )
+        self._save()
+
+    def owns_reservation(self, chat_id: int, reservation_id: str) -> bool:
+        identity = self._identities.get(chat_id)
+        return identity is not None and reservation_id in identity.reservations
+
     def public_jwk(self, identity: ChatIdentity) -> dict[str, str]:
         return self._custody.public_jwk(identity.kid)
 
@@ -146,6 +165,7 @@ class IdentityStore:
                 display_name=str(entry["display_name"]),
                 mandate_id=entry.get("mandate_id"),
                 instrument_scope=entry.get("instrument_scope"),
+                reservations=tuple(entry.get("reservations") or ()),
             )
             self._custody.adopt(identity.kid, private_key)
             self._identities[identity.chat_id] = identity
@@ -160,6 +180,7 @@ class IdentityStore:
                     "display_name": identity.display_name,
                     "mandate_id": identity.mandate_id,
                     "instrument_scope": identity.instrument_scope,
+                    "reservations": list(identity.reservations),
                     "private_key_pem": self._custody.export_pem(identity.kid),
                 }
                 for identity in self._identities.values()

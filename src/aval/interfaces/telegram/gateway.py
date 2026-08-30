@@ -53,6 +53,10 @@ class MandateView:
     expires_at: datetime
     policy_version: int
     revocation_epoch: int
+    # How often the agent may act, and how much of that window it has already used.
+    max_uses: int | None = None
+    window_seconds: int | None = None
+    uses_in_window: int = 0
     # The card the mandate names, as four digits. The token behind it is never served.
     instrument_label: str | None = None
     instrument_revoked: bool = False
@@ -117,9 +121,33 @@ class LedgerEntryView:
 
 
 @dataclass(frozen=True)
+class ChainView:
+    """The hash chain behind the trail, as the core itself verified it."""
+
+    intact: bool
+    checked: int
+    broken_at: int | None
+
+
+@dataclass(frozen=True)
+class DisputeView:
+    """A denial, and what the trail answered back.
+
+    `MANDATE_HELD` means an authorization proof binds this purchase to this
+    mandate; `MANDATE_FAILED` means nothing does. The bot never picks a side —
+    it repeats the verdict the ledger produced.
+    """
+
+    id: str
+    status: str
+    resolution: str | None
+
+
+@dataclass(frozen=True)
 class ReceiptView:
     mandate: MandateView
     entries: tuple[LedgerEntryView, ...]
+    chain: ChainView | None = None
 
 
 # Paths as the running API exposes them; `GET /docs` on the instance is the live
@@ -139,6 +167,8 @@ ENDPOINTS = {
     "watch_tick": "/agent/watches/tick",
     "offers": "/merchant/offers",
     "disputes": "/disputes",
+    "dispute_resolution": "/disputes/{dispute_id}/resolution",
+    "ledger_verify": "/ledger/verify",
 }
 
 
@@ -190,7 +220,25 @@ class AvalGateway:
         )
         entries = [_entry(item) for item in payload.get("entries", [])]
         entries.sort(key=lambda item: item.sequence, reverse=True)
-        return ReceiptView(_mandate(payload["mandate"]), tuple(entries[:limit]))
+        return ReceiptView(_mandate(payload["mandate"]), tuple(entries[:limit]), self.verify(mandate_id))
+
+    def verify(self, mandate_id: str) -> ChainView | None:
+        """Ask the core whether its own trail still hashes.
+
+        A statement nobody checked is a claim. Returning None when the check itself
+        is unreachable keeps the receipt honest: it then says nothing rather than
+        implying an integrity it never confirmed.
+        """
+        try:
+            payload = self._call("GET", ENDPOINTS["ledger_verify"], query={"mandate_id": mandate_id})
+        except GatewayError:
+            return None
+        broken = payload.get("broken_at")
+        return ChainView(
+            intact=bool(payload.get("intact")),
+            checked=int(payload.get("checked", 0)),
+            broken_at=None if broken is None else int(broken),
+        )
 
     def catalogue(self) -> Sequence[OfferView]:
         payload = self._call("GET", ENDPOINTS["offers"])
@@ -215,6 +263,8 @@ class AvalGateway:
         ceiling: MoneyView | None,
         valid_for: timedelta,
         card_number: str | None = None,
+        max_uses: int | None = None,
+        usage_window: timedelta | None = None,
     ) -> tuple[str, str | None]:
         payload = self._call(
             "POST",
@@ -228,6 +278,16 @@ class AvalGateway:
                 "allowed_categories": list(categories),
                 "limit": _money_body(limit),
                 "ceiling": None if ceiling is None else _money_body(ceiling),
+                **(
+                    {}
+                    if max_uses is None or usage_window is None
+                    else {
+                        "usage_limit": {
+                            "max_uses": max_uses,
+                            "window_seconds": int(usage_window.total_seconds()),
+                        }
+                    }
+                ),
                 "expires_at": (datetime.now(UTC) + valid_for).isoformat(),
                 # The number is typed here and forgotten there. What comes back is a
                 # token the agent may present and four digits the holder recognises.
@@ -305,12 +365,30 @@ class AvalGateway:
         # An approval is not a bypass: the core re-checks everything on resume.
         return f"Aprovação registrada, mas a compra não passou: {capture.get('reason_code', 'desconhecido')}."
 
-    def open_dispute(self, reservation_id: str, reason: str) -> str:
-        """A later denial, answered by the trail rather than by trust."""
-        payload = self._call(
+    def open_dispute(self, reservation_id: str, reason: str) -> DisputeView:
+        """A later denial, answered by the trail rather than by trust.
+
+        Opening and resolving are one gesture here on purpose. The resolution reads
+        the ledger and nothing else, so there is nobody to wait for — leaving the
+        dispute open would only mean showing the person a promise instead of an answer.
+        """
+        opened = self._call(
             "POST", ENDPOINTS["disputes"], body={"reservation_id": reservation_id, "reason": reason}
         )
-        return f"Disputa {payload.get('dispute_id', '?')} aberta ({payload.get('status', 'OPEN')})."
+        dispute_id = str(opened.get("dispute_id", ""))
+        try:
+            resolved = self._call(
+                "POST", ENDPOINTS["dispute_resolution"].format(dispute_id=dispute_id)
+            )
+        except GatewayError:
+            # Opened but unresolved is a real state, not a failure to hide: the
+            # denial is registered and the verdict is simply not in yet.
+            return DisputeView(dispute_id, str(opened.get("status", "OPEN")), None)
+        return DisputeView(
+            dispute_id,
+            str(resolved.get("status", "OPEN")),
+            resolved.get("resolution"),
+        )
 
     def revoke(self, identity: ChatIdentity, mandate_id: str, *, epoch: int, reason: str) -> str:
         token = self._identities.sign(
@@ -431,6 +509,7 @@ def _instant(value: Any) -> datetime:
 
 def _mandate(payload: Mapping[str, Any]) -> MandateView:
     ceiling = payload.get("ceiling")
+    usage = payload.get("usage_limit") or {}
     return MandateView(
         id=str(payload["mandate_id"]),
         status=str(payload["status"]),
@@ -446,6 +525,9 @@ def _mandate(payload: Mapping[str, Any]) -> MandateView:
         revocation_epoch=int(payload.get("revocation_epoch", 0)),
         instrument_label=payload.get("instrument_label"),
         instrument_revoked=bool(payload.get("instrument_revoked", False)),
+        max_uses=None if not usage else int(usage["max_uses"]),
+        window_seconds=None if not usage else int(usage["window_seconds"]),
+        uses_in_window=int(payload.get("uses_in_window", 0)),
     )
 
 

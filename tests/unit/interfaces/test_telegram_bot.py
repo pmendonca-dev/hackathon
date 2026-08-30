@@ -35,6 +35,10 @@ class FakeAval:
         self.received: list[tuple[str, dict[str, Any]]] = []
         self.verified_claims: list[dict[str, Any]] = []
         self.disputes: list[dict[str, Any]] = []
+        # What the trail answers when a purchase is denied, and whether the chain
+        # still hashes. Both are knobs because both are what a judge comes to break.
+        self.dispute_status = "MANDATE_HELD"
+        self.chain_intact = True
         self.watches: dict[str, dict[str, Any]] = {}
         # What Córdoba costs right now. The judge's price knob moves this.
         self.cordoba_price = 13000
@@ -109,6 +113,25 @@ class FakeAval:
         if route == "/disputes" and method == "POST":
             self.disputes.append(body)
             return 201, {"dispute_id": "dsp_1", "status": "OPEN", "reason": body["reason"]}
+        if route.startswith("/disputes/") and route.endswith("/resolution"):
+            held = self.dispute_status == "MANDATE_HELD"
+            return 200, {
+                "dispute_id": route.split("/")[2],
+                "status": self.dispute_status,
+                "resolution": (
+                    "Prova jti_1 vincula merchant vuelaya, valor 13000 e terms_hash th_1."
+                    if held
+                    else "Nenhuma prova de autorização vincula esta compra."
+                ),
+            }
+        if route == "/ledger/verify":
+            if params.get("mandate_id") not in self.mandates:
+                return 404, {"reason_code": "mandate_not_found"}
+            return 200, {
+                "intact": self.chain_intact,
+                "checked": 3,
+                "broken_at": None if self.chain_intact else 2,
+            }
         if route == "/agent/purchase":
             return self._purchase(body)
         if route == "/agent/watches" and method == "POST":
@@ -143,6 +166,8 @@ class FakeAval:
             "expires_at": body["expires_at"],
             "policy_version": 1,
             "revocation_epoch": 0,
+            "usage_limit": body.get("usage_limit"),
+            "uses_in_window": 0,
             "_jwk": body["authorities"][0]["public_jwk"],
         }
         scope = None
@@ -372,9 +397,9 @@ class FakeApi:
         return latest.text
 
 
-@pytest.fixture
-def world(tmp_path: Path):
-    aval = FakeAval()
+def _build(tmp_path: Path, aval: "FakeAval"):
+    """One bot process. Called twice by the restart test, which is the whole point:
+    everything a restart may not forget has to live in the identity file."""
     config = BotConfig.from_env(
         {
             "TELEGRAM_BOT_TOKEN": "t",
@@ -387,6 +412,17 @@ def world(tmp_path: Path):
     gateway = AvalGateway("http://127.0.0.1:9000", identities=identities, opener=aval.opener)
     api = FakeApi()
     return Bot(config, gateway, identities, api), api, aval, identities
+
+
+@pytest.fixture
+def world(tmp_path: Path):
+    return _build(tmp_path, FakeAval())
+
+
+@pytest.fixture
+def restart(tmp_path: Path):
+    """Boot a second bot over the same identity file and the same server."""
+    return lambda aval: _build(tmp_path, aval)
 
 
 def message(text: str, chat_id: int = MARTA, first_name: str = "Marta") -> dict:
@@ -1087,3 +1123,84 @@ def test_the_mandate_card_says_what_the_agent_is_watching(world) -> None:
     bot.handle_update(message("/mandato"))
 
     assert "abaixo de $80" in api.sent[-1][1].text
+
+
+# ── the trail answers the dispute ───────────────────────────────────────────
+def test_denying_a_purchase_returns_the_verdict_the_trail_produced(world) -> None:
+    """The bonus the case asks for: the denial is answered, not just filed.
+
+    Opening a dispute and leaving it open would show the person a promise. The
+    resolution reads the ledger and asks nobody, so the verdict arrives in the
+    same tap or the feature is theatre.
+    """
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/comprar um voo pra Cordoba"))
+
+    bot.handle_update(tap("dsp:rsv_1"))
+
+    assert "MANDATE_HELD" in api.last_text
+    assert "terms_hash th_1" in api.last_text
+
+
+def test_a_purchase_with_no_proof_behind_it_resolves_for_the_holder(world) -> None:
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/comprar um voo pra Cordoba"))
+    aval.dispute_status = "MANDATE_FAILED"
+
+    bot.handle_update(tap("dsp:rsv_1"))
+
+    assert "MANDATE_FAILED" in api.last_text
+    assert "estorno é seu" in api.last_text
+
+
+def test_the_dispute_button_survives_a_restart_of_the_bot(world, restart) -> None:
+    """A restart that forgets what the person bought turns the denial into a lie.
+
+    The identity store already outlives the process; the reservations belong there
+    for the same reason the keys do.
+    """
+    bot, _, aval, identities = world
+    bot.handle_update(message("/start"))
+    bot.handle_update(message("/comprar um voo pra Cordoba"))
+
+    revived, revived_api, _, _ = restart(aval)
+    revived.handle_update(tap("dsp:rsv_1"))
+
+    assert "MANDATE_HELD" in revived_api.last_text
+
+
+# ── the extract proves itself ───────────────────────────────────────────────
+def test_the_extract_says_the_chain_was_checked(world) -> None:
+    bot, api, _, _ = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(message("/extrato"))
+
+    assert "Trilha íntegra" in api.last_text
+    assert "3 evento(s) conferidos" in api.last_text
+
+
+def test_a_broken_chain_is_reported_instead_of_being_claimed_intact(world) -> None:
+    """Tampering has to reach the person's own screen, not only the auditor's."""
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    aval.chain_intact = False
+
+    bot.handle_update(message("/extrato"))
+
+    assert "TRILHA VIOLADA" in api.last_text
+    assert "#2" in api.last_text
+
+
+# ── frequency is authority, and it is visible ───────────────────────────────
+def test_the_mandate_is_created_with_the_frequency_rule_and_shows_it(world) -> None:
+    """The case's "up to 3 times a month" — enforced by the core, said by the card."""
+    bot, api, aval, _ = world
+
+    bot.handle_update(message("/start"))
+
+    created = next(body for route, body in aval.received if route == "POST /mandates")
+    assert created["usage_limit"] == {"max_uses": 3, "window_seconds": 30 * 86_400}
+    assert "3 de 3</b> compra(s) livres nos últimos 30 dia(s)" in api.last_text
