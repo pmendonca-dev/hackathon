@@ -729,3 +729,23 @@ validation does not add a proxy, ship a key, or bypass RFC 9421.
 would create a second trust boundary without an approved custody or identity
 model. The public signed E2E client remains the runtime evidence while the
 browser blocker is tracked separately.
+
+## Browser BFF same-origin delivery gate
+
+**Decision:** Final browser validation after the browser-safe BFF exists
+
+**Options considered (one per line):**
+
+Add a Vite proxy without an approved deployment topology
+Make the browser call the BFF cross-origin and weaken cookie semantics
+Keep relative same-origin calls and report the missing SPA/BFF delivery seam
+
+**What we chose:** Keep `UiBffGateway` on relative `/ui-api/v1/` routes with
+`credentials: "same-origin"`. Public HTTP E2E proves the BFF contract, while
+the production browser flow remains blocked until an approved server or
+development topology serves the SPA and BFF from one origin.
+
+**Why:** The BFF session cookie is intentionally `HttpOnly`, `Secure`, and
+`SameSite=Strict`. An ad-hoc cross-origin workaround or unapproved proxy would
+change the security architecture. A visible 404 with cleared credentials is
+safer and more truthful than fixture fallback or weakened cookie handling.
