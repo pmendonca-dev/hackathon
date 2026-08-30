@@ -42,11 +42,11 @@ def configured_tick_interval() -> float | None:
     try:
         interval = float(raw)
     except ValueError:
-        logger.warning("AVAL_WATCH_TICK_SECONDS=%r is not a number; vigílias desligadas", raw)
+        logger.warning("AVAL_WATCH_TICK_SECONDS=%r is not a number; watches disabled", raw)
         return None
     if interval < MINIMUM_INTERVAL_SECONDS:
         logger.warning(
-            "AVAL_WATCH_TICK_SECONDS=%s é curto demais; usando %s",
+            "AVAL_WATCH_TICK_SECONDS=%s is too short; using %s",
             interval,
             MINIMUM_INTERVAL_SECONDS,
         )
@@ -75,7 +75,7 @@ def tick_once(runtime: AvalRuntime) -> int:
             # One mandate's failure must not stop the others. The watch stays open and
             # is tried again next tick, which is the same thing that happens when the
             # catalogue simply has no matching offer yet.
-            logger.exception("vigília do mandato %s falhou neste tick", mandate_id)
+            logger.exception("the watch on mandate %s failed on this tick", mandate_id)
     return fired
 
 
@@ -86,10 +86,10 @@ async def run_watch_scheduler(runtime: AvalRuntime, *, interval_seconds: float) 
     synchronously, and doing that on the event loop would stall every request for as
     long as a purchase takes.
     """
-    logger.info("vigílias ativas: um tick a cada %ss", interval_seconds)
+    logger.info("watches active: one tick every %ss", interval_seconds)
     while True:
         await asyncio.sleep(interval_seconds)
         with suppress(asyncio.CancelledError):
             fired = await asyncio.to_thread(tick_once, runtime)
             if fired:
-                logger.info("%s vigília(s) deixaram de esperar neste tick", fired)
+                logger.info("%s watch(es) stopped waiting on this tick", fired)

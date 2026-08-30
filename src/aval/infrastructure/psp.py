@@ -54,7 +54,7 @@ class DemoPspAdapter:
     def authorize(self, reservation: Reservation, proof: str) -> SettlementResult:
         mode = self._mode_provider()
         if mode == "offline":
-            raise PspUnreachable("o processador não respondeu")
+            raise PspUnreachable("the processor did not answer")
         if mode == "decline":
             return SettlementResult(approved=False)
         # Money only moves for a reservation the core already committed.
@@ -82,7 +82,7 @@ class DemoPspAdapter:
         """
         mode = self._mode_provider()
         if mode == "offline":
-            raise PspUnreachable("o processador não respondeu ao estorno")
+            raise PspUnreachable("the processor did not answer the reversal")
         if mode == "decline":
             return SettlementResult(approved=False)
         digest = hashlib.sha256(f"refund:{reservation.id}".encode("utf-8")).hexdigest()[:24]
@@ -104,7 +104,7 @@ class DemoPspAdapter:
 
     def create_setup_session(self, mandate_id: str, *, return_url: str) -> dict[str, str]:
         if self._mode_provider() == "offline":
-            raise PspUnreachable("o processador não respondeu")
+            raise PspUnreachable("the processor did not answer")
         session_id = "cs_demo_" + hashlib.sha256(mandate_id.encode("utf-8")).hexdigest()[:16]
         # ponytail: in memory, so a restart forgets the open sessions. The card itself
         # is on the mandate by then; a forgotten session just means opening a new one.

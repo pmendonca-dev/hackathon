@@ -21,20 +21,20 @@ export function MerchantDeskView() {
     <div className="page-shell">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Visão do merchant · {merchantId}</p>
-          <h1>Verifiquei que a compra é legítima sem saber quem comprou.</h1>
+          <p className="eyebrow">Merchant view · {merchantId}</p>
+          <h1>I verified the purchase is legitimate without learning who bought.</h1>
           <p>
-            A prova de autorização vincula checkout, merchant, valor, moeda e termos — e
-            omite o mandato e o comprador. Aceitar não exige conhecê-los.
+            The authorization proof binds checkout, merchant, amount, currency and terms —
+            and omits the mandate and the buyer. Accepting does not require knowing either.
           </p>
         </div>
-        <Badge tone="verify">SEM IDENTIDADE DO COMPRADOR</Badge>
+        <Badge tone="verify">NO BUYER IDENTITY</Badge>
       </header>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <Panel eyebrow="O que eu recebo" title="Projeção do merchant" action={<Store size={18} className="text-verify" aria-hidden="true" />}>
+        <Panel eyebrow="What I receive" title="The merchant projection" action={<Store size={18} className="text-verify" aria-hidden="true" />}>
           {merchantEntries.length === 0 ? (
-            <EmptyNotice title="Nenhuma venda ainda" body="Compras liquidadas por este merchant aparecem aqui." />
+            <EmptyNotice title="No sales yet" body="Purchases settled at this merchant appear here." />
           ) : (
             <ul className="space-y-2">
               {merchantEntries.slice().reverse().map((entry, index) => (
@@ -52,12 +52,12 @@ export function MerchantDeskView() {
         </Panel>
 
         <Panel
-          eyebrow="O que me é negado"
-          title="Campos retidos pela projeção"
+          eyebrow="What I am denied"
+          title="Fields the projection withholds"
           action={<EyeOff size={18} className="text-escalate" aria-hidden="true" />}
         >
           {merchantRedactions.length === 0 ? (
-            <EmptyNotice title="Lista indisponível" body="Carregue um mandato para ver o que a projeção retém." />
+            <EmptyNotice title="List unavailable" body="Load a mandate to see what the projection withholds." />
           ) : (
             <>
               <ul className="space-y-2">
@@ -70,28 +70,29 @@ export function MerchantDeskView() {
               </ul>
               <p className="safe-note mt-4">
                 <EyeOff size={15} aria-hidden="true" />
-                Esta lista é construída por lista branca no servidor: a projeção nomeia o
-                que o merchant recebe, em vez de tentar lembrar o que esconder.
+                This list is built by allowlist on the server: the projection names what the
+                merchant receives, instead of trying to remember what to hide.
               </p>
             </>
           )}
         </Panel>
       </section>
 
-      <Panel eyebrow="Prova de privacidade" title="O mesmo evento, para dois públicos">
+      <Panel eyebrow="Privacy, demonstrated" title="The same event, for two audiences">
         <p className="mb-4 text-[13px] leading-relaxed text-fg-mute">
-          À esquerda o que o auditor lê; à direita o que o merchant recebe do mesmo
-          evento. A diferença não é estilo — é o que a projeção se recusa a entregar.
+          On the left, what the auditor reads; on the right, what the merchant receives of
+          the same event. The difference is not styling — it is what the projection refuses
+          to hand over.
         </p>
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="rounded-xl border border-line bg-ink-800/40 p-4">
-            <p className="eyebrow mb-2">Auditor · {auditorEntries.length} eventos</p>
+            <p className="eyebrow mb-2">Auditor · {auditorEntries.length} events</p>
             <pre className="mono max-h-72 overflow-auto text-[10.5px] leading-relaxed text-fg-dim">
               {JSON.stringify(auditorEntries.slice(-2), null, 2)}
             </pre>
           </div>
           <div className="rounded-xl border border-verify/30 bg-verify/5 p-4">
-            <p className="eyebrow mb-2">Merchant · {merchantEntries.length} eventos</p>
+            <p className="eyebrow mb-2">Merchant · {merchantEntries.length} events</p>
             <pre className="mono max-h-72 overflow-auto text-[10.5px] leading-relaxed text-fg-dim">
               {JSON.stringify(merchantEntries.slice(-2), null, 2)}
             </pre>
@@ -117,7 +118,7 @@ function PairwiseHandle({ entry }: { entry: { [key: string]: unknown } }) {
 
   return (
     <p className="mono mt-2 text-[10px] text-fg-faint">
-      comprador nesta loja · {handle}
+      buyer at this shop · {handle}
     </p>
   );
 }

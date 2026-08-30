@@ -56,7 +56,7 @@ def verify(request: Request, body: VerifyRequest) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
 
     claims = offer_claims(body.merchant_authorization, runtime)
-    checks.append(_check("offer_signature_valid", True, "ES256 · chave do merchant"))
+    checks.append(_check("offer_signature_valid", True, "ES256 · merchant key"))
 
     now = runtime.clock.now()
     try:
@@ -68,7 +68,7 @@ def verify(request: Request, body: VerifyRequest) -> dict[str, Any]:
         _check(
             "offer_within_validity",
             within_validity,
-            "dentro da janela" if within_validity else "oferta vencida",
+            "within the validity window" if within_validity else "offer expired",
         )
     )
 
@@ -84,7 +84,7 @@ def verify(request: Request, body: VerifyRequest) -> dict[str, Any]:
     )
     proof: dict[str, Any] | None = None
     if reservation is None or state is None:
-        checks.append(_check("authorization_proof_valid", False, "reserva desconhecida"))
+        checks.append(_check("authorization_proof_valid", False, "unknown reservation"))
     else:
         try:
             proof = runtime.proofs.verify_and_consume(
@@ -93,13 +93,13 @@ def verify(request: Request, body: VerifyRequest) -> dict[str, Any]:
                 policy_version=state["policy_version"],
                 revocation_epoch=state["epoch"],
             )
-            checks.append(_check("authorization_proof_valid", True, "ES256 · chave do AVAL"))
+            checks.append(_check("authorization_proof_valid", True, "ES256 · AVAL key"))
         except ValueError as error:
             checks.append(_check("authorization_proof_valid", False, str(error)))
 
     if proof is None:
-        checks.append(_check("terms_hash_matches", False, "sem prova para comparar"))
-        checks.append(_check("authority_still_valid", False, "sem prova para consultar"))
+        checks.append(_check("terms_hash_matches", False, "no proof to compare against"))
+        checks.append(_check("authority_still_valid", False, "no proof to look up"))
         return {"accepted": False, "checks": checks, "merchant_id": claims.get("merchant_id")}
 
     # The proof names an amount, a merchant and a terms hash. All three have to be the
@@ -115,12 +115,12 @@ def verify(request: Request, body: VerifyRequest) -> dict[str, Any]:
         _check(
             "terms_hash_matches",
             bound,
-            "a prova cobre esta oferta" if bound else "a prova é de outra compra",
+            "the proof covers this offer" if bound else "the proof belongs to a different purchase",
         )
     )
 
     if state is None:
-        checks.append(_check("authority_still_valid", False, "reserva desconhecida"))
+        checks.append(_check("authority_still_valid", False, "unknown reservation"))
     else:
         still_valid = (
             not state["revoked"]
@@ -128,18 +128,18 @@ def verify(request: Request, body: VerifyRequest) -> dict[str, Any]:
             and state["epoch"] == proof.get("revocation_epoch")
             and state["policy_version"] == proof.get("policy_version")
         )
-        note = "autoridade vigente"
+        note = "authority still in force"
         if state["revoked"]:
-            note = "mandato revogado"
+            note = "mandate revoked"
         elif state["expired"]:
-            note = "mandato expirado"
+            note = "mandate expired"
         elif not still_valid:
-            note = "política mudou depois da prova"
+            note = "the policy changed after the proof"
         checks.append(_check("authority_still_valid", still_valid, note))
 
     accepted = all(check["passed"] for check in checks)
     if not claims.get("merchant_id"):
-        raise ApiError(409, "offer_malformed", "Oferta sem merchant.")
+        raise ApiError(409, "offer_malformed", "Offer names no merchant.")
     return {
         "accepted": accepted,
         "checks": checks,

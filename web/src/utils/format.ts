@@ -1,7 +1,7 @@
 import type { Money } from '../contracts/avalGateway.ts';
 
 export function formatMoney(money: Money): string {
-  return new Intl.NumberFormat('pt-BR', {
+  return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: money.currency,
     minimumFractionDigits: money.scale,
@@ -10,7 +10,7 @@ export function formatMoney(money: Money): string {
 }
 
 export function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat('pt-BR', {
+  return new Intl.DateTimeFormat('en-US', {
     dateStyle: 'short',
     timeStyle: 'medium',
   }).format(new Date(value));

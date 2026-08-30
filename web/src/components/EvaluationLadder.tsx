@@ -13,20 +13,22 @@ import type { EvaluationStep } from '../gateways/authorizationGateway.ts';
  */
 
 const LABELS: Record<string, string> = {
-  mandate_exists: 'Mandato existe',
-  revocation_readable: 'Revogação legível',
-  mandate_not_revoked: 'Não revogado',
-  merchant_not_revoked: 'Merchant não revogado',
-  instrument_not_revoked: 'Instrumento não revogado',
-  budget_not_zeroed: 'Orçamento não zerado',
-  mandate_not_expired: 'Dentro da validade',
-  merchant_in_scope: 'Merchant no escopo',
-  category_in_scope: 'Categoria no escopo',
-  money_unit_matches: 'Moeda e escala conferem',
-  amount_positive: 'Valor positivo',
-  below_ceiling: 'Abaixo do teto',
-  within_usage_window: 'Dentro da frequência',
-  within_budget: 'Dentro do orçamento',
+  mandate_exists: 'Mandate exists',
+  revocation_readable: 'Revocation readable',
+  mandate_not_revoked: 'Not revoked',
+  merchant_not_revoked: 'Merchant not revoked',
+  instrument_not_revoked: 'Instrument not revoked',
+  instrument_in_mandate: 'Instrument named by the mandate',
+  reservation_slot_free: 'A reservation slot is free',
+  budget_not_zeroed: 'Budget not zeroed',
+  mandate_not_expired: 'Still within validity',
+  merchant_in_scope: 'Merchant in scope',
+  category_in_scope: 'Category in scope',
+  money_unit_matches: 'Currency and scale agree',
+  amount_positive: 'Amount positive',
+  below_ceiling: 'Below the ceiling',
+  within_usage_window: 'Within the frequency limit',
+  within_budget: 'Within the budget',
 };
 
 /** The full order, so a stopped ladder still shows what it never reached. */
@@ -39,9 +41,11 @@ const FULL_ORDER = [
   'mandate_not_expired',
   'merchant_in_scope',
   'category_in_scope',
+  'instrument_in_mandate',
   'money_unit_matches',
   'amount_positive',
   'below_ceiling',
+  'reservation_slot_free',
   'within_usage_window',
   'within_budget',
 ];
@@ -52,7 +56,7 @@ export function EvaluationLadder({ trace }: { trace: EvaluationStep[] }) {
   if (trace.length === 0) {
     return (
       <p className="text-[13px] leading-relaxed text-fg-mute">
-        Nenhuma avaliação nesta sessão. Peça uma compra ao agente para ver a escada.
+        No evaluation in this session yet. Ask the agent for a purchase to see the ladder.
       </p>
     );
   }
@@ -62,12 +66,14 @@ export function EvaluationLadder({ trace }: { trace: EvaluationStep[] }) {
   // so an unwalked one is only drawn when the ladder actually reached that far.
   const stoppedAt = trace.length;
   const rows = FULL_ORDER.filter(
-    (check) => walked.has(check) || (check !== 'within_usage_window' && stoppedAt > 0),
+    (check) =>
+      walked.has(check)
+      || (check !== 'within_usage_window' && check !== 'instrument_in_mandate' && stoppedAt > 0),
   );
 
   return (
     <>
-      <ol className="space-y-px" aria-label="Ordem de avaliação do núcleo">
+      <ol className="space-y-px" aria-label="The order the core evaluates in">
         {rows.map((check, index) => {
           const step = walked.get(check);
           const state = step === undefined ? 'skipped' : step.passed ? 'passed' : 'failed';
@@ -76,7 +82,7 @@ export function EvaluationLadder({ trace }: { trace: EvaluationStep[] }) {
             <li key={check}>
               {boundary && (
                 <p className="eyebrow px-3 pt-4 pb-2 text-fg-faint">
-                  ── acima: autoridade · abaixo: dinheiro ──
+                  ── above: authority · below: money ──
                 </p>
               )}
               <div
@@ -102,10 +108,10 @@ export function EvaluationLadder({ trace }: { trace: EvaluationStep[] }) {
                     {LABELS[check] ?? check}
                     <span className="sr-only">
                       {state === 'passed'
-                        ? ' — aprovado'
+                        ? ' — passed'
                         : state === 'failed'
-                          ? ' — reprovado, a avaliação parou aqui'
-                          : ' — não avaliado'}
+                          ? ' — failed, the evaluation stopped here'
+                          : ' — never evaluated'}
                     </span>
                   </span>
                   {step?.detail && (
@@ -115,7 +121,7 @@ export function EvaluationLadder({ trace }: { trace: EvaluationStep[] }) {
                   )}
                   {state === 'skipped' && (
                     <span className="mono mt-0.5 block text-[11px] text-fg-faint">
-                      nunca consultado
+                      never consulted
                     </span>
                   )}
                 </span>
@@ -126,8 +132,8 @@ export function EvaluationLadder({ trace }: { trace: EvaluationStep[] }) {
       </ol>
       <p className="safe-note mt-4">
         <Check size={15} aria-hidden="true" />
-        Um degrau cinza não é uma regra ausente: é uma regra que o núcleo não precisou
-        consultar, porque já tinha uma resposta acima dela.
+        A greyed rung is not a missing rule: it is a rule the core never needed to
+        consult, because it already had an answer further up.
       </p>
     </>
   );

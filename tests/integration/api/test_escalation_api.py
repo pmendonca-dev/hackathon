@@ -224,7 +224,7 @@ def test_the_human_view_shows_the_approval_but_not_the_raw_token(harness):
 
     body = harness.human_ledger(mandate_id).json()
     summaries = [entry["human_summary"] for entry in body["entries"]]
-    assert any("aprov" in summary.lower() for summary in summaries)
+    assert any("approv" in summary.lower() for summary in summaries)
     assert "approval_jws" not in harness.human_ledger(mandate_id).text
 
 

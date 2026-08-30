@@ -41,8 +41,8 @@ def test_the_person_reads_confirmation_and_never_the_word_approved(harness):
     buy(harness, mandate_id)
 
     last = human_entries(harness, mandate_id)[-1]
-    assert "confirmação" in last["human_summary"].lower()
-    assert "liquidado" not in last["human_summary"].lower()
+    assert "confirmation" in last["human_summary"].lower()
+    assert "settled" not in last["human_summary"].lower()
 
 
 def test_a_purchase_in_confirmation_never_reports_a_settlement_reference(harness):
@@ -154,8 +154,8 @@ def test_the_agent_says_confirmation_and_never_says_bought(harness):
     )
 
     summary = response.json()["human_summary"].lower()
-    assert "confirmação" in summary
-    assert "concluída" not in summary
+    assert "confirmation" in summary
+    assert "completed" not in summary
 
 
 def test_the_budget_the_agent_held_is_still_held(harness):

@@ -38,14 +38,14 @@ def verify_signed_request(
     def public_key_for(keyid: str):
         identity = runtime.core.agent_for_kid(keyid)
         if identity is None:
-            raise SignatureError("key_not_found", "Chave de agente desconhecida.")
+            raise SignatureError("key_not_found", "Unknown agent key.")
         if not identity.trusted:
-            raise SignatureError("profile_not_trusted", "Perfil de agente não confiável.")
+            raise SignatureError("profile_not_trusted", "Untrusted agent profile.")
         try:
             key = public_key_from_jwk(dict(identity.public_jwk))
         except ValueError as error:
             raise SignatureError(
-                "agent_key_unsupported", "Chave do perfil do agente não suportada."
+                "agent_key_unsupported", "Unsupported agent profile key."
             ) from error
         found["identity"] = identity
         return key

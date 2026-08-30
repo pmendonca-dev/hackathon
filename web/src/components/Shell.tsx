@@ -6,10 +6,10 @@ import { useAval, type View } from '../state/AvalContext.ts';
 import { Badge, Button } from './ui.tsx';
 
 const views: Array<{ id: View; label: string; context: string; icon: LucideIcon }> = [
-  { id: 'human', label: 'Titular', context: 'Minha autoridade', icon: UserRound },
-  { id: 'merchant', label: 'Merchant', context: 'O que verifiquei', icon: Store },
-  { id: 'auditor', label: 'Auditor', context: 'Trilha completa', icon: ScrollText },
-  { id: 'trial', label: 'Trial-by-fire', context: 'Mude ao vivo', icon: Gavel },
+  { id: 'human', label: 'Holder', context: 'My authority', icon: UserRound },
+  { id: 'merchant', label: 'Merchant', context: 'What I verified', icon: Store },
+  { id: 'auditor', label: 'Auditor', context: 'The full trail', icon: ScrollText },
+  { id: 'trial', label: 'Trial by fire', context: 'Change it live', icon: Gavel },
 ];
 
 /**
@@ -33,7 +33,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        <nav aria-label="Perspectivas" className="overflow-x-auto p-3 lg:overflow-visible">
+        <nav aria-label="Perspectives" className="overflow-x-auto p-3 lg:overflow-visible">
           <ul className="flex min-w-max gap-1 lg:min-w-0 lg:flex-col">
             {views.map(({ id, label, context, icon: Icon }) => {
               const active = view === id;
@@ -43,7 +43,7 @@ export function Shell({ children }: { children: ReactNode }) {
                     type="button"
                     aria-current={active ? 'page' : undefined}
                     onClick={() => setView(id)}
-                    className={`group flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors ${active ? 'bg-ink-800 text-fg' : 'text-fg-mute hover:bg-white/4 hover:text-fg'}`}
+                    className={`group flex min-h-12 w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors ${active ? 'bg-ink-800 text-fg' : 'text-fg-mute hover:bg-ink-750 hover:text-fg'}`}
                   >
                     <Icon size={17} className={active ? 'text-allow' : ''} aria-hidden="true" />
                     <span>
@@ -58,10 +58,10 @@ export function Shell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="hidden border-t border-line p-5 lg:absolute lg:inset-x-0 lg:bottom-0 lg:block">
-          <p className="eyebrow">Quem assina aqui</p>
+          <p className="eyebrow">Who signs here</p>
           <div className="mt-2 flex items-center justify-between gap-2">
             <Badge tone={walletReady ? 'verify' : 'escalate'}>
-              {walletReady ? 'CHAVE LOCAL' : 'SEM CHAVE'}
+              {walletReady ? 'LOCAL KEY' : 'NO KEY'}
             </Badge>
             <span className="mono text-[9px] text-fg-mute">{principalId}</span>
           </div>
@@ -73,21 +73,21 @@ export function Shell({ children }: { children: ReactNode }) {
         <header className="sticky top-0 z-20 border-b border-line bg-ink-950/90 px-5 py-3 backdrop-blur-md sm:px-7">
           <div className="mx-auto flex max-w-[1180px] items-center justify-between gap-4">
             <div className="min-w-0">
-              <p className="eyebrow">Lane de autorização · núcleo determinístico</p>
+              <p className="eyebrow">Authorization lane · deterministic core</p>
               <p className="mono truncate text-[11px] text-fg-mute">
                 <KeyRound size={11} className="mr-1 inline" aria-hidden="true" />
-                {holderKid ?? 'carteira do titular ainda não aberta'}
+                {holderKid ?? 'holder wallet not open yet'}
               </p>
             </div>
             <div className="flex items-center gap-2">
               {chain && (
                 <Badge tone={chain.intact ? 'verify' : 'deny'}>
-                  {chain.intact ? `CADEIA OK · ${chain.checked}` : `QUEBRA EM ${chain.broken_at}`}
+                  {chain.intact ? `CHAIN OK · ${chain.checked}` : `BREAK AT ${chain.broken_at}`}
                 </Badge>
               )}
-              <Button variant="ghost" onClick={() => void reload()} disabled={loading} aria-label="Recarregar estado canônico">
+              <Button variant="ghost" onClick={() => void reload()} disabled={loading} aria-label="Reload canonical state">
                 <RefreshCw size={13} aria-hidden="true" />
-                <span className="hidden sm:inline">Recarregar</span>
+                <span className="hidden sm:inline">Reload</span>
               </Button>
             </div>
           </div>

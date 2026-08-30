@@ -65,7 +65,7 @@ def test_the_verdict_cites_the_proof_that_carries_it(harness):
 
     verdict = dispute(harness, reservation_id)["liability"]
 
-    assert any("prova" in line.lower() for line in verdict["basis"])
+    assert any("proof" in line.lower() for line in verdict["basis"])
 
 
 def test_a_purchase_the_processor_refused_leaves_nobody_liable(harness):

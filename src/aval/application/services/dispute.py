@@ -70,7 +70,7 @@ class DisputeService:
         if evidence is None:
             return self._inconclusive(
                 "evidence_not_found",
-                "Evidência da disputa não encontrada.",
+                "Dispute evidence not found.",
             )
         self._validate_timeline(evidence)
         required = (
@@ -84,13 +84,13 @@ class DisputeService:
         if not all(required):
             return self._inconclusive(
                 "evidence_chain_incomplete",
-                "A cadeia de evidências está incompleta.",
+                "The evidence chain is incomplete.",
                 evidence,
             )
         if evidence.checkout_hash != mandate_reference(evidence.checkout_jwt):
             return self._inconclusive(
                 "checkout_hash_mismatch",
-                "O hash do checkout não corresponde ao JWT apresentado.",
+                "The checkout hash does not match the JWT presented.",
                 evidence,
             )
         try:
@@ -99,7 +99,7 @@ class DisputeService:
         except ValueError:
             return self._inconclusive(
                 "receipt_signature_invalid",
-                "A assinatura de um recibo não pôde ser validada.",
+                "A receipt signature could not be validated.",
                 evidence,
             )
         if checkout_receipt.get("reference") != mandate_reference(
@@ -107,7 +107,7 @@ class DisputeService:
         ):
             return self._inconclusive(
                 "checkout_receipt_reference_unknown",
-                "A referência do recibo de checkout não corresponde ao mandato fechado.",
+                "The checkout receipt reference does not match the mandate that was closed.",
                 evidence,
             )
         if payment_receipt.get("reference") != mandate_reference(
@@ -115,14 +115,14 @@ class DisputeService:
         ):
             return self._inconclusive(
                 "payment_receipt_reference_unknown",
-                "A referência do recibo de pagamento não corresponde ao mandato fechado.",
+                "The payment receipt reference does not match the mandate that was closed.",
                 evidence,
             )
 
         return DisputeVerdict(
             status="VALID",
             reason_code="evidence_chain_valid",
-            human_summary="Cadeia de mandato, autorização, commit e recibos validada.",
+            human_summary="Mandate, authorization, commit and receipts validated as one chain.",
             timeline=evidence.events,
             post_commit_note=self._post_commit_note(evidence),
         )
@@ -144,10 +144,10 @@ class DisputeService:
         )
         if revoked_after_commit:
             return (
-                "A revogação ocorreu após o commit point e vale para compras futuras; "
-                "esta transação exige reversal, refund ou disputa para desfazimento."
+                "The revocation happened after the commit point and applies to future "
+                "purchases; undoing this one needs a reversal, a refund or a dispute."
             )
-        return "Nenhuma revogação posterior ao commit point foi registrada."
+        return "No revocation after the commit point was recorded."
 
     def _inconclusive(
         self,
@@ -160,5 +160,5 @@ class DisputeService:
             reason_code=reason_code,
             human_summary=human_summary,
             timeline=() if evidence is None else evidence.events,
-            post_commit_note="Atribuição automática de responsabilidade não foi realizada.",
+            post_commit_note="No automatic liability attribution was made.",
         )

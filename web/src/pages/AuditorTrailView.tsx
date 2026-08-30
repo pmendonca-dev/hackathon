@@ -23,15 +23,15 @@ export function AuditorTrailView() {
     <div className="page-shell">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Visão do auditor</p>
-          <h1>A trilha se verifica sozinha, sem confiar em quem a guarda.</h1>
+          <p className="eyebrow">Auditor view</p>
+          <h1>The trail verifies itself, without trusting whoever keeps it.</h1>
           <p>
-            Cada evento canonicaliza a si mesmo e encadeia o digest do anterior. Editar
-            qualquer linha quebra o próprio digest e todos os elos seguintes.
+            Every event canonicalises itself and chains the digest of the one before it.
+            Editing any line breaks its own digest and every link that follows.
           </p>
         </div>
         <Badge tone={chain?.intact === false ? 'deny' : 'verify'}>
-          {chain === null ? 'SEM CADEIA' : chain.intact ? 'CADEIA ÍNTEGRA' : 'CADEIA QUEBRADA'}
+          {chain === null ? 'NO CHAIN' : chain.intact ? 'CHAIN INTACT' : 'CHAIN BROKEN'}
         </Badge>
       </header>
 
@@ -39,17 +39,17 @@ export function AuditorTrailView() {
         <div role="alert" className="flex gap-3 rounded-2xl border border-deny/45 bg-deny/8 p-4 text-deny">
           <ShieldAlert className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
           <p className="text-[13px] leading-relaxed">
-            <strong>Adulteração detectada na posição {chain.broken_at}.</strong> O registro
-            gravado não corresponde mais ao digest tirado sobre ele no momento da escrita.
-            Nenhuma pessoa precisou notar isso — a verificação é aritmética.
+            <strong>Tampering detected at position {chain.broken_at}.</strong> The stored
+            record no longer matches the digest taken over it at the moment it was written.
+            Nobody had to notice this — the verification is arithmetic.
           </p>
         </div>
       )}
 
       <section className="grid gap-4 lg:grid-cols-[1.4fr_0.6fr]">
-        <Panel eyebrow="Cadeia de hash" title={`${auditorEntries.length} evento(s)`} action={<ScrollText size={18} className="text-verify" aria-hidden="true" />}>
+        <Panel eyebrow="Hash chain" title={`${auditorEntries.length} event(s)`} action={<ScrollText size={18} className="text-verify" aria-hidden="true" />}>
           {auditorEntries.length === 0 ? (
-            <EmptyNotice title="Nada registrado" body="Selecione um mandato com atividade para ler a trilha." />
+            <EmptyNotice title="Nothing recorded" body="Select a mandate with activity to read its trail." />
           ) : (
             <ol className="space-y-2">
               {auditorEntries.map((entry) => {
@@ -84,14 +84,14 @@ export function AuditorTrailView() {
 
         <div className="space-y-4">
           <Panel
-            eyebrow="Arbitragem"
-            title="Quem responde, derivado da trilha"
+            eyebrow="Arbitration"
+            title="Who answers for it, derived from the trail"
             action={<Scale size={18} className="text-hold" aria-hidden="true" />}
           >
             {disputes.length === 0 ? (
               <EmptyNotice
-                title="Nenhuma disputa"
-                body="Quando uma compra é negada, o veredito aparece aqui com as linhas que o sustentam."
+                title="No disputes"
+                body="When a purchase is denied, the verdict appears here with the lines that support it."
               />
             ) : (
               <ul className="space-y-3">
@@ -104,7 +104,7 @@ export function AuditorTrailView() {
                       </Badge>
                     </div>
                     <p className="mt-1 text-[12px] text-fg-mute">
-                      responde: {dispute.liability.liable_party}
+                      answers for it: {dispute.liability.liable_party}
                     </p>
                     {/* The verdict is not stored. It is recomputed from append-only
                         evidence on every read, and these are the exact lines it read —
@@ -120,7 +120,7 @@ export function AuditorTrailView() {
                       <Badge
                         tone={dispute.liability.mandate_repudiation === 'refuted' ? 'verify' : 'hold'}
                       >
-                        repudiação: {dispute.liability.mandate_repudiation}
+                        repudiation: {dispute.liability.mandate_repudiation}
                       </Badge>
                       {dispute.liability.holder_signatures.map((signature) => (
                         <span key={signature.kid + signature.kind} className="mono text-[10px] text-fg-faint">
@@ -134,34 +134,34 @@ export function AuditorTrailView() {
             )}
             <p className="safe-note mt-4">
               <Scale size={15} aria-hidden="true" />
-              O mandato nasce assinado pela chave do titular, e essa assinatura é a
-              posição 0 desta cadeia. É ela que responde a um “eu nunca criei esse
-              mandato” sem depender de nada que a pessoa tenha feito depois.
+              The mandate is born signed by the holder's key, and that signature is
+              position 0 of this chain. It is what answers “I never created that mandate”
+              without depending on anything the person did afterwards.
             </p>
           </Panel>
 
-          <Panel eyebrow="Verificação" title="Estado da cadeia">
+          <Panel eyebrow="Verification" title="Chain status">
             <dl>
-              <Field label="Mandato">{selectedMandateId ?? '—'}</Field>
-              <Field label="Elos conferidos">{chain?.checked ?? 0}</Field>
-              <Field label="Quebra em">{chain?.broken_at ?? 'nenhuma'}</Field>
+              <Field label="Mandate">{selectedMandateId ?? '—'}</Field>
+              <Field label="Links checked">{chain?.checked ?? 0}</Field>
+              <Field label="Break at">{chain?.broken_at ?? 'none'}</Field>
             </dl>
           </Panel>
 
-          <Panel eyebrow="Prova ao vivo" title="Quebre um elo você mesmo">
+          <Panel eyebrow="Live proof" title="Break a link yourself">
             {!operatorAvailable ? (
               <p className="text-[13px] leading-relaxed text-fg-mute">
-                Exige token de operador. Sem ele o comando não é enviado — e nada é
-                simulado localmente.
+                Requires an operator token. Without one the command is never sent — and
+                nothing is simulated locally.
               </p>
             ) : (
               <>
                 <p className="mb-3 text-[13px] leading-relaxed text-fg-mute">
-                  Reescreve o autor de um evento e recanonicaliza. A linha continua bem
-                  formada; é o digest que denuncia.
+                  Rewrites an event's author and re-canonicalises it. The line stays
+                  well formed; it is the digest that gives it away.
                 </p>
                 <label className="block">
-                  <span className="eyebrow">Sequência</span>
+                  <span className="eyebrow">Sequence</span>
                   <input className="form-control" value={sequence} onChange={(event) => setSequence(event.target.value)} />
                 </label>
                 <Button
@@ -173,12 +173,12 @@ export function AuditorTrailView() {
                     void tamperLedger(Number(sequence)).finally(() => setBusy(false));
                   }}
                 >
-                  <ShieldAlert size={13} aria-hidden="true" />Adulterar evento
+                  <ShieldAlert size={13} aria-hidden="true" />Tamper with the event
                 </Button>
                 <p className="safe-note mt-4">
                   <ShieldAlert size={15} aria-hidden="true" />
-                  Esta rota só existe quando o runtime sobe com AVAL_DEMO_TAMPER. Não há
-                  contrapartida que conserte a cadeia.
+                  This route only exists when the runtime starts with AVAL_DEMO_TAMPER.
+                  There is no counterpart that repairs the chain.
                 </p>
               </>
             )}

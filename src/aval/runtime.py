@@ -108,14 +108,14 @@ def _settlement_adapter(*, proof_verifier, mode_provider, mandate_for):
     if selected in ("", "demo"):
         return DemoPspAdapter(mode_provider, proof_verifier=proof_verifier)
     if selected != "stripe":
-        raise StripeConfigError(f"AVAL_PSP={selected!r} não é um processador conhecido")
+        raise StripeConfigError(f"AVAL_PSP={selected!r} is not a known processor")
     key = os.environ.get("AVAL_STRIPE_SECRET_KEY", "").strip()
     if not key:
-        raise StripeConfigError("AVAL_PSP=stripe exige AVAL_STRIPE_SECRET_KEY")
+        raise StripeConfigError("AVAL_PSP=stripe requires AVAL_STRIPE_SECRET_KEY")
     if key.startswith("sk_live_"):
         # A hackathon demo has no business holding a live key, and a judge pressing
         # buttons on someone's real account is not a scenario worth supporting.
-        raise StripeConfigError("chave de produção recusada: use uma chave sk_test_")
+        raise StripeConfigError("production key refused: use an sk_test_ key")
     return StripePspAdapter(
         secret_key=key, mandate_for=mandate_for, proof_verifier=proof_verifier
     )
@@ -138,7 +138,7 @@ def _discovery_adapter() -> OfferDiscovery:
         return build_discovery()
     secret = os.environ.get("AVAL_CORE_TO_EDGE_SECRET", "").strip()
     if not secret:
-        raise EdgeAuthError("AVAL_DISCOVERY_EDGE_URL exige AVAL_CORE_TO_EDGE_SECRET")
+        raise EdgeAuthError("AVAL_DISCOVERY_EDGE_URL requires AVAL_CORE_TO_EDGE_SECRET")
     return CoreDiscoveryClient(
         base_url=edge_url,
         secret=secret,

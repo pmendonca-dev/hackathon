@@ -121,7 +121,7 @@ def test_audit_timeline_is_immutable_legible_and_explains_post_commit_revocation
     assert [event.id for event in verdict.timeline] == ["aud_1", "aud_2", "aud_3"]
     assert verdict.timeline[1].reason_code == "operator_revocation"
     assert verdict.timeline[1].human_summary == "Mandato revogado para compras futuras."
-    assert "reversal, refund ou disputa" in verdict.post_commit_note
+    assert "a reversal, a refund or a dispute" in verdict.post_commit_note
     with pytest.raises(FrozenInstanceError):
         committed.human_summary = "alterado"  # type: ignore[misc]
 

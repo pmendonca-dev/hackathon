@@ -101,8 +101,8 @@ test('an unreachable runtime is surfaced as unreachable rather than as a refusal
   const appSource = read(join(root, 'src/App.tsx'));
 
   assert.match(gatewaySource, /runtime_unreachable/);
-  assert.match(appSource, /Runtime indisponível/);
-  assert.equal(appSource.includes('DADOS DE DEMONSTRAÇÃO'), false);
+  assert.match(appSource, /Runtime unreachable/);
+  assert.equal(appSource.includes('DEMO DATA'), false);
 });
 
 test('the operator token is confined to routes that cannot move money', () => {
@@ -129,6 +129,6 @@ test('the evaluation ladder shows unreached rungs instead of hiding them', () =>
 
   // A refusal that stopped early must look like an early answer, not a shorter rule
   // set. Dropping the unwalked rungs would erase the ordering the trace exists to show.
-  assert.match(ladder, /nunca consultado/);
-  assert.match(ladder, /autoridade · abaixo: dinheiro/);
+  assert.match(ladder, /never consulted/);
+  assert.match(ladder, /authority · below: money/);
 });

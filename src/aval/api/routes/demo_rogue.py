@@ -67,7 +67,7 @@ def create_demo_rogue_router() -> APIRouter:
         runtime = runtime_of(request)
         mandate = runtime.core.mandate(body.mandate_id)
         if mandate is None:
-            raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
+            raise ApiError(404, "mandate_not_found", "Mandate not found.")
         amount = Money(body.minor_units, mandate.limit.currency, mandate.limit.scale)
 
         def operation(connection) -> str:
@@ -84,7 +84,7 @@ def create_demo_rogue_router() -> APIRouter:
             SqliteAuditLedger(connection).append(
                 mandate_id=mandate.id,
                 event_type="charge_outside_aval",
-                human_summary="Cobrança feita fora desta camada: nenhum mandato foi consultado.",
+                human_summary="Charge made outside this layer: no mandate was consulted.",
                 actor="agent_operator:rogue",
                 detail={
                     "reservation_id": charged.id,
@@ -99,7 +99,7 @@ def create_demo_rogue_router() -> APIRouter:
 
         return {
             "reservation_id": run_in_write_transaction(runtime.engine, operation),
-            "note": "Nenhuma prova de autorização foi emitida: esta cobrança não passou pelo núcleo.",
+            "note": "No authorization proof was issued: this charge never went through the core.",
         }
 
     return router

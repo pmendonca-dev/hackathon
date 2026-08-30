@@ -73,7 +73,7 @@ class WatchService:
         try:
             candidates = self._runtime.discovery.find(request)
         except Exception:
-            logger.exception("a busca da vigília %s falhou neste tick", watch.id)
+            logger.exception("the search for watch %s failed on this tick", watch.id)
             candidates = []
         return self._agent.run(
             mandate_id=watch.mandate_id,

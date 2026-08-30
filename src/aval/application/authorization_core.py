@@ -300,12 +300,12 @@ class AuthorizationCore:
                     raise ApprovalError(
                         409,
                         "mandate_creation_replayed",
-                        "Esta autorização de criação já foi usada.",
+                        "This creation authority has already been used.",
                     ) from error
             SqliteAuditLedger(connection).append(
                 mandate_id=mandate.id,
                 event_type="mandate_registered",
-                human_summary=f"Mandato criado por {mandate.principal.display_name}.",
+                human_summary=f"Mandate created by {mandate.principal.display_name}.",
                 actor=f"principal:{mandate.principal.id}",
                 detail={
                     "allowed_merchant_ids": sorted(mandate.allowed_merchant_ids),
@@ -410,7 +410,7 @@ class AuthorizationCore:
                 )
                 if claims.get("mandate_id") != mandate_id:
                     raise ApprovalError(
-                        403, "limit_change_mandate_mismatch", "A autorização não é deste mandato."
+                        403, "limit_change_mandate_mismatch", "The authority is not for this mandate."
                     )
                 signed_unit = (
                     claims.get("limit_minor_units"),
@@ -419,7 +419,7 @@ class AuthorizationCore:
                 )
                 if signed_unit != (limit.minor_units, limit.currency, limit.scale):
                     raise ApprovalError(
-                        403, "limit_change_amount_mismatch", "O limite assinado não confere."
+                        403, "limit_change_amount_mismatch", "The signed limit does not match."
                     )
                 # The version the holder was looking at when they signed. Anything else
                 # is a token from before some other change — replaying it would move the
@@ -428,7 +428,7 @@ class AuthorizationCore:
                     raise ApprovalError(
                         403,
                         "limit_change_version_stale",
-                        "A autorização foi assinada sobre uma política anterior.",
+                        "The authority was signed over an earlier policy version.",
                     )
             version = SqlitePolicyRepository(connection).replace_limit(mandate_id, limit)
             metadata = dict(mandate.revocation_metadata)
@@ -439,7 +439,7 @@ class AuthorizationCore:
             SqliteAuditLedger(connection).append(
                 mandate_id=mandate_id,
                 event_type="mandate_limit_replaced",
-                human_summary="Limite vivo do mandato alterado.",
+                human_summary="The mandate live limit was changed.",
                 actor=(
                     f"principal:{mandate.principal.id}"
                     if authorization_jws is not None
@@ -468,15 +468,15 @@ class AuthorizationCore:
         if mandate is None:
             raise ValueError("mandate not found")
         if not authorization_jws:
-            raise ApprovalError(403, f"{scope}_unsigned", "Ação exige autorização assinada.")
+            raise ApprovalError(403, f"{scope}_unsigned", "This action requires a signed authority.")
         claims = self._verified_approval(authorization_jws, mandate, kind=scope)
         if claims.get("mandate_id") != mandate_id:
             raise ApprovalError(
-                403, f"{scope}_mandate_mismatch", "A autorização não é deste mandato."
+                403, f"{scope}_mandate_mismatch", "The authority is not for this mandate."
             )
         if claims.get("scope") != scope:
             raise ApprovalError(
-                403, f"{scope}_scope_mismatch", "A autorização não é para esta ação."
+                403, f"{scope}_scope_mismatch", "The authority is not for this action."
             )
         return claims
 
@@ -514,7 +514,7 @@ class AuthorizationCore:
             if revoked or mandate.status is MandateStatus.REVOKED:
                 # A card on a dead mandate is authority nobody can use and a screen that
                 # lies about being funded.
-                raise ApprovalError(409, "mandate_revoked", "Mandato revogado.")
+                raise ApprovalError(409, "mandate_revoked", "Mandate revoked.")
             previous = mandate.instrument
             if authorization_jws is not None:
                 claims = self._verified_approval(
@@ -524,26 +524,26 @@ class AuthorizationCore:
                     raise ApprovalError(
                         403,
                         "instrument_binding_mandate_mismatch",
-                        "A autorização não é deste mandato.",
+                        "The authority is not for this mandate.",
                     )
                 if claims.get("scope") != "instrument":
                     raise ApprovalError(
                         403,
                         "instrument_binding_scope_mismatch",
-                        "A autorização não é sobre um meio de pagamento.",
+                        "The authority is not about a payment method.",
                     )
                 signed = (claims.get("instrument_token"), claims.get("instrument_label"))
                 if signed != (instrument.token, instrument.label):
                     raise ApprovalError(
                         403,
                         "instrument_binding_token_mismatch",
-                        "O meio de pagamento assinado não confere.",
+                        "The signed payment method does not match.",
                     )
                 if claims.get("supersedes") != (None if previous is None else previous.token):
                     raise ApprovalError(
                         403,
                         "instrument_binding_stale",
-                        "A autorização foi assinada sobre outro meio de pagamento.",
+                        "The authority was signed over a different payment method.",
                     )
             repository.put(replace(mandate, instrument=instrument))
             # A holder who authorized a card is by construction allowed to cancel it.
@@ -562,7 +562,7 @@ class AuthorizationCore:
             SqliteAuditLedger(connection).append(
                 mandate_id=mandate_id,
                 event_type="mandate_instrument_bound",
-                human_summary=f"Meio de pagamento {instrument.label} vinculado ao mandato.",
+                human_summary=f"Payment method {instrument.label} bound to the mandate.",
                 actor=(
                     f"principal:{mandate.principal.id}"
                     if authorization_jws is not None
@@ -697,7 +697,7 @@ class AuthorizationCore:
                 SqliteAuditLedger(connection).append(
                     mandate_id=mandate.id,
                     event_type="mandate.revoked" if scope == "mandate" else f"revocation.{authority.role.value}",
-                    human_summary=f"Revogação de escopo {scope} por {authority.role.value} aceita.",
+                    human_summary=f"Scope revocation {scope} by {authority.role.value} accepted.",
                     actor=("operator_01" if authority.role is RevocationRole.OPERATOR else f"authority:{authority.kid}"),
                     detail={
                         "scope": revocation.scope,
@@ -873,7 +873,7 @@ class AuthorizationCore:
                     SqliteAuditLedger(connection).append(
                         mandate_id=mandate.id,
                         event_type=f"revocation.{authority.role.value}",
-                        human_summary="Revogação total do titular aceita.",
+                        human_summary="Full holder revocation accepted.",
                         actor=f"authority:{authority.kid}",
                         detail={
                             "scope": "mandate",
@@ -932,7 +932,7 @@ class AuthorizationCore:
             SqliteAuditLedger(connection).append(
                 mandate_id=dispute.mandate_id,
                 event_type="dispute_opened",
-                human_summary="Compra contestada pelo titular.",
+                human_summary="Purchase disputed by the holder.",
                 actor=f"principal:{disputant_kid}" if disputant_kid else "principal:disputant",
                 detail={
                     "dispute_id": dispute.id,
@@ -974,14 +974,14 @@ class AuthorizationCore:
             if proof is None or not settled:
                 resolved = dispute.resolve(
                     DisputeStatus.MANDATE_FAILED,
-                    "Nenhuma prova de autorização vincula esta compra.",
+                    "No authorization proof binds this purchase.",
                     self._clock(),
                 )
             else:
                 bound = self._proof_payload(proof["signed_proof"])
                 resolved = dispute.resolve(
                     DisputeStatus.MANDATE_HELD,
-                    "Prova {jti} vincula merchant {merchant}, valor {amount} e terms_hash {terms}.".format(
+                    "Proof {jti} binds merchant {merchant}, amount {amount} and terms_hash {terms}.".format(
                         jti=proof["jti"], merchant=bound.get("merchant_id"),
                         amount=bound.get("amount_minor_units"), terms=bound.get("terms_hash"),
                     ),
@@ -994,7 +994,7 @@ class AuthorizationCore:
             SqliteAuditLedger(connection).append(
                 mandate_id=resolved.mandate_id,
                 event_type="dispute_resolved",
-                human_summary=resolved.resolution or "Disputa resolvida.",
+                human_summary=resolved.resolution or "Dispute resolved.",
                 actor="auditor:aval",
                 detail={
                     "dispute_id": resolved.id,
@@ -1101,10 +1101,10 @@ class AuthorizationCore:
                 mandate_id=mandate_id,
                 event_type=outcome,
                 human_summary={
-                    "purchase_reversed": "Valor estornado: a trilha não sustenta esta cobrança.",
-                    "reversal_refused": "O processador recusou o estorno; o valor segue retido.",
-                    "reversal_in_doubt": "O processador não respondeu ao estorno; o valor segue retido.",
-                    "reversal_unsupported": "Nenhum processador para estornar; o valor segue retido.",
+                    "purchase_reversed": "Amount reversed: the trail does not support this charge.",
+                    "reversal_refused": "The processor refused the reversal; the amount stays held.",
+                    "reversal_in_doubt": "The processor did not answer the reversal; the amount stays held.",
+                    "reversal_unsupported": "No processor to reverse against; the amount stays held.",
                 }[outcome],
                 actor="auditor:aval",
                 detail={
@@ -1158,10 +1158,10 @@ class AuthorizationCore:
     # *mandate repudiation*, and both are questions this trail can answer — so it
     # answers them, in a fixed order, the way the authorization ladder does.
     REPUDIATION_UNPROVEN_NOTE = (
-        "Este mandato não carrega prova de criação assinada, e nenhum outro artefato "
-        "assinado pelo titular o nomeia. A trilha prova que o agente ficou dentro do "
-        "mandato; não prova que esta pessoa o criou. Todo mandato criado por HTTP nasce "
-        "assinado — esta resposta só alcança um mandato registrado em processo."
+        "This mandate carries no signed creation proof, and no other artefact "
+        "signed by the holder names it. The trail proves the agent stayed inside the "
+        "mandate; it does not prove this person created it. Every mandate created over "
+        "HTTP is born signed — this answer only reaches a mandate registered in process."
     )
 
     #: Ledger event types, mapped to the three outcomes the core can reach. Reading the
@@ -1250,7 +1250,7 @@ class AuthorizationCore:
         ).mappings().one_or_none()
         if row is None:
             return self._verdict(
-                "NO_CHARGE", "nobody", ["Nenhuma reserva com este identificador."], []
+                "NO_CHARGE", "nobody", ["No reservation with that identifier."], []
             )
         proof = connection.execute(
             select(authorization_proofs.c.jti, authorization_proofs.c.signed_proof).where(
@@ -1267,7 +1267,7 @@ class AuthorizationCore:
             return self._verdict(
                 "NO_CHARGE",
                 "nobody",
-                [f"A reserva terminou como {row['status']}; nenhum valor foi cobrado."],
+                [f"The reservation ended as {row['status']}; no amount was charged."],
                 signatures,
             )
         if proof is None:
@@ -1278,23 +1278,23 @@ class AuthorizationCore:
                 "AGENT_OVERREACH",
                 "agent_operator",
                 [
-                    "Valor retido sem prova de autorização emitida por esta camada.",
-                    "Nenhuma decisão do núcleo vincula esta reserva.",
+                    "Amount held with no authorization proof issued by this layer.",
+                    "No core decision binds this reservation.",
                 ],
                 signatures,
             )
         bound = self._proof_payload(proof["signed_proof"])
         basis = [
-            "Prova {jti} vincula merchant {merchant}, valor {amount} e terms_hash {terms}.".format(
+            "Proof {jti} binds merchant {merchant}, amount {amount} and terms_hash {terms}.".format(
                 jti=proof["jti"],
                 merchant=bound.get("merchant_id"),
                 amount=bound.get("amount_minor_units"),
                 terms=bound.get("terms_hash"),
             ),
-            f"Reserva {reservation_id} comprometida sob a política v{bound.get('policy_version')}.",
+            f"Reservation {reservation_id} committed under policy v{bound.get('policy_version')}.",
         ]
         basis.extend(
-            f"Assinatura do titular ({signature['kind']}) pela chave {signature['kid']}."
+            f"Holder signature ({signature['kind']}) by key {signature['kid']}."
             for signature in signatures
         )
         return self._verdict("HOLDER_LIABLE", "holder", basis, signatures)
@@ -1355,7 +1355,7 @@ class AuthorizationCore:
             "holder_signatures": signatures,
             "mandate_repudiation": "refuted" if refuted else "unproven",
             "repudiation_note": (
-                "O titular assinou artefatos que nomeiam este mandato."
+                "The holder signed artefacts that name this mandate."
                 if refuted
                 else self.REPUDIATION_UNPROVEN_NOTE
             ),
@@ -1470,9 +1470,9 @@ class AuthorizationCore:
                 mandate_id=row["mandate_id"],
                 event_type="purchase_settled" if result.approved else "purchase_declined",
                 human_summary=(
-                    "Pagamento liquidado na reconciliação."
+                    "Payment settled at reconciliation."
                     if result.approved
-                    else "Pagamento recusado na reconciliação."
+                    else "Payment declined at reconciliation."
                 ),
                 actor="psp:demo",
                 detail={
@@ -1560,7 +1560,7 @@ class AuthorizationCore:
             kid = header["kid"]
         except (IndexError, KeyError, ValueError, json.JSONDecodeError) as error:
             raise ApprovalError(
-                403, f"{kind}_malformed", "Autorização malformada."
+                403, f"{kind}_malformed", "Malformed authority."
             ) from error
         # Only the holder approves spending. A guardian may revoke authority; it may
         # not spend on the holder behalf.
@@ -1574,13 +1574,13 @@ class AuthorizationCore:
         )
         if authority is None:
             raise ApprovalError(
-                403, f"{kind}_authority_unknown", "Chave de autorização desconhecida."
+                403, f"{kind}_authority_unknown", "Unknown authority key."
             )
         try:
             claims = verify_compact_jws(token, public_key_from_jwk(dict(authority.public_jwk)))
         except ValueError as error:
             raise ApprovalError(
-                403, f"{kind}_signature_invalid", "Assinatura de autorização inválida."
+                403, f"{kind}_signature_invalid", "Invalid authority signature."
             ) from error
         claims["kid"] = kid
         return claims
@@ -1604,7 +1604,7 @@ class AuthorizationCore:
             raise ApprovalError(
                 422,
                 "mandate_creation_nonce_missing",
-                "A autorização de criação não carrega nonce.",
+                "The creation authority carries no nonce.",
             )
         signed = (
             claims.get("principal_id"),
@@ -1634,7 +1634,7 @@ class AuthorizationCore:
             raise ApprovalError(
                 403,
                 "mandate_creation_terms_mismatch",
-                "A autorização não descreve o mandato que está sendo criado.",
+                "The authority does not describe the mandate being created.",
             )
         return {"kid": str(claims["kid"]), "nonce": nonce}
 
@@ -1662,14 +1662,14 @@ class AuthorizationCore:
         """
         if claims.get("decision_handle") != escalation.id:
             raise ApprovalError(
-                403, "approval_handle_mismatch", "A aprovação não é desta escalação."
+                403, "approval_handle_mismatch", "The approval is not for this escalation."
             )
         if claims.get("mandate_id") != escalation.mandate_id:
-            raise ApprovalError(403, "approval_mandate_mismatch", "A aprovação não é deste mandato.")
+            raise ApprovalError(403, "approval_mandate_mismatch", "The approval is not for this mandate.")
         if claims.get("amount_minor_units") != escalation.amount.minor_units:
-            raise ApprovalError(403, "approval_amount_mismatch", "O valor aprovado não confere.")
+            raise ApprovalError(403, "approval_amount_mismatch", "The approved amount does not match.")
         if claims.get("decision") != decision:
-            raise ApprovalError(403, "approval_decision_mismatch", "A decisão assinada não confere.")
+            raise ApprovalError(403, "approval_decision_mismatch", "The signed decision does not match.")
 
     def decide_escalation(
         self, *, escalation_id: str, decision: str, approval_jws: str
@@ -1681,20 +1681,20 @@ class AuthorizationCore:
         the person was deciding still refuses the purchase.
         """
         if decision not in ("approve", "deny"):
-            raise ApprovalError(422, "approval_decision_unknown", "Decisão desconhecida.")
+            raise ApprovalError(422, "approval_decision_unknown", "Unknown decision.")
 
         def settle(connection) -> Escalation:
             repository = SqliteEscalationRepository(connection)
             escalation = repository.get(escalation_id)
             if escalation is None:
-                raise ApprovalError(404, "escalation_not_found", "Escalação não encontrada.")
+                raise ApprovalError(404, "escalation_not_found", "Escalation not found.")
             if escalation.status is not EscalationStatus.OPEN:
-                raise ApprovalError(409, "escalation_already_decided", "Escalação já decidida.")
+                raise ApprovalError(409, "escalation_already_decided", "Escalation already decided.")
             if escalation.is_expired_at(self._clock()):
-                raise ApprovalError(409, "escalation_expired", "Escalação expirada.")
+                raise ApprovalError(409, "escalation_expired", "Escalation expired.")
             mandate = SqliteMandateRepository(connection).get(escalation.mandate_id)
             if mandate is None:
-                raise ApprovalError(404, "mandate_not_found", "Mandato não encontrado.")
+                raise ApprovalError(404, "mandate_not_found", "Mandate not found.")
             claims = self._verified_approval(approval_jws, mandate)
             self._require_approval_binds(claims, escalation, decision)
             now = self._clock()
@@ -1710,9 +1710,9 @@ class AuthorizationCore:
                     "escalation_approved" if decision == "approve" else "escalation_denied"
                 ),
                 human_summary=(
-                    "Compra aprovada pelo titular do mandato."
+                    "Purchase approved by the mandate holder."
                     if decision == "approve"
-                    else "Compra negada pelo titular do mandato."
+                    else "Purchase denied by the mandate holder."
                 ),
                 actor=f"principal:{mandate.principal.id}",
                 detail={
@@ -1968,8 +1968,8 @@ class AuthorizationCore:
         if mandate is None:
             return self._reject(
                 "mandate_not_found",
-                "Mandato não encontrado.",
-                stopped("mandate_exists", f"mandato {command.mandate_id} não existe"),
+                "Mandate not found.",
+                stopped("mandate_exists", f"mandate {command.mandate_id} does not exist"),
             ), None
         cleared("mandate_exists", command.mandate_id)
         try:
@@ -1981,16 +1981,16 @@ class AuthorizationCore:
             # Unknown is not permitted. If revocation cannot be read, the answer is no.
             return self._reject(
                 "revocation_unavailable",
-                "Revogação indisponível; captura recusada.",
-                stopped("revocation_readable", "store de revogação indisponível"),
+                "Revocation unreadable; capture refused.",
+                stopped("revocation_readable", "revocation store unavailable"),
             ), mandate
         cleared("revocation_readable")
         limit, _ = SqlitePolicyRepository(connection).active_limit_for(command.mandate_id, mandate.limit)
         if revoked or mandate.status is MandateStatus.REVOKED:
             return self._reject(
                 "mandate_revoked",
-                "Mandato revogado.",
-                stopped("mandate_not_revoked", "mandato revogado pelo titular"),
+                "Mandate revoked.",
+                stopped("mandate_not_revoked", "mandate revoked by the holder"),
             ), mandate
         cleared("mandate_not_revoked")
         # Whichever card is in play: the one this command presents, or — when the
@@ -2006,15 +2006,15 @@ class AuthorizationCore:
         if merchant_revoked:
             return self._reject(
                 "merchant_revoked",
-                "Merchant revogado para este mandato.",
-                stopped("merchant_not_revoked", f"merchant {command.merchant_id} revogado"),
+                "Merchant revoked for this mandate.",
+                stopped("merchant_not_revoked", f"merchant {command.merchant_id} revoked"),
             ), mandate
         cleared("merchant_not_revoked", command.merchant_id)
         if instrument_revoked:
             return self._reject(
                 "instrument_revoked",
-                "Instrumento revogado para este mandato.",
-                stopped("instrument_not_revoked", f"instrumento {instrument_id} revogado"),
+                "Instrument revoked for this mandate.",
+                stopped("instrument_not_revoked", f"instrument {instrument_id} revoked"),
             ), mandate
         if instrument_id is not None:
             cleared("instrument_not_revoked", instrument_id)
@@ -2022,17 +2022,17 @@ class AuthorizationCore:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
                 "budget_revoked",
-                "Orçamento do mandato foi zerado; aprovação humana necessária.",
-                trace=stopped("budget_not_zeroed", "orçamento zerado por revogação de escopo"),
+                "The mandate budget was zeroed; human approval required.",
+                trace=stopped("budget_not_zeroed", "budget zeroed by a scope revocation"),
             ), mandate
         cleared("budget_not_zeroed")
         if mandate.status is MandateStatus.EXPIRED or self._clock() >= mandate.expires_at:
             return self._reject(
                 "mandate_expired",
-                "Mandato expirado.",
+                "Mandate expired.",
                 stopped(
                     "mandate_not_expired",
-                    f"validade {mandate.expires_at.isoformat()} já passou",
+                    f"validity {mandate.expires_at.isoformat()} has already passed",
                 ),
             ), mandate
         cleared("mandate_not_expired", mandate.expires_at.isoformat())
@@ -2043,10 +2043,10 @@ class AuthorizationCore:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
                 "merchant_out_of_scope",
-                "Merchant fora do escopo do mandato; aprovação humana necessária.",
+                "Merchant outside the mandate scope; human approval required.",
                 trace=stopped(
                     "merchant_in_scope",
-                    f"{command.merchant_id} fora de {sorted(mandate.allowed_merchant_ids)}",
+                    f"{command.merchant_id} not in {sorted(mandate.allowed_merchant_ids)}",
                 ),
             ), mandate
         cleared("merchant_in_scope", command.merchant_id)
@@ -2057,10 +2057,10 @@ class AuthorizationCore:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
                 "category_not_allowed",
-                "Categoria fora do escopo do mandato; aprovação humana necessária.",
+                "Category outside the mandate scope; human approval required.",
                 trace=stopped(
                     "category_in_scope",
-                    f"{command.category} fora de {sorted(mandate.allowed_categories)}",
+                    f"{command.category} not in {sorted(mandate.allowed_categories)}",
                 ),
             ), mandate
         cleared("category_in_scope", command.category)
@@ -2079,14 +2079,14 @@ class AuthorizationCore:
             if named is None or command.instrument_id != named:
                 return self._reject(
                     "instrument_not_in_mandate",
-                    "Meio de pagamento não é o que o mandato nomeia.",
+                    "The payment method is not the one the mandate names.",
                     stopped(
                         "instrument_in_mandate",
-                        "o mandato não nomeia meio de pagamento"
+                        "the mandate names no payment method"
                         if named is None
-                        else "nenhum instrumento apresentado"
+                        else "no instrument presented"
                         if command.instrument_id is None
-                        else "instrumento apresentado não é o do mandato",
+                        else "the instrument presented is not the mandate's",
                     ),
                 ), mandate
             assert mandate.instrument is not None
@@ -2095,7 +2095,7 @@ class AuthorizationCore:
         if (command.total.currency, command.total.scale) != (limit.currency, limit.scale):
             return self._reject(
                 "money_unit_mismatch",
-                "Moeda ou escala incompatível com o mandato.",
+                "Currency or scale incompatible with the mandate.",
                 stopped(
                     "money_unit_matches",
                     f"{command.total.currency}/{command.total.scale} != "
@@ -2106,8 +2106,8 @@ class AuthorizationCore:
         if command.total.minor_units <= 0:
             return self._reject(
                 "invalid_amount",
-                "Valor de captura inválido.",
-                stopped("amount_positive", f"valor {command.total.minor_units} não é positivo"),
+                "Invalid capture amount.",
+                stopped("amount_positive", f"amount {command.total.minor_units} is not positive"),
             ), mandate
         cleared("amount_positive", str(command.total.minor_units))
         # The ceiling is fixed when the mandate is created. A live limit change moves the
@@ -2115,16 +2115,16 @@ class AuthorizationCore:
         if mandate.ceiling is not None and command.total.minor_units > mandate.ceiling.minor_units:
             return self._reject(
                 "mandate_ceiling",
-                "Valor acima do teto do mandato.",
+                "Amount above the mandate ceiling.",
                 stopped(
                     "below_ceiling",
-                    f"valor {command.total.minor_units} acima do teto "
+                    f"amount {command.total.minor_units} above the ceiling "
                     f"{mandate.ceiling.minor_units}",
                 ),
             ), mandate
         cleared(
             "below_ceiling",
-            None if mandate.ceiling is None else f"teto {mandate.ceiling.minor_units}",
+            None if mandate.ceiling is None else f"ceiling {mandate.ceiling.minor_units}",
         )
         ledger = SqliteLedgerRepository(connection)
         # Griefing, not overspending. Every rung above this one answers "you may not
@@ -2139,11 +2139,11 @@ class AuthorizationCore:
         # allowance; this protects them from their own agent, so it is a property of
         # the layer and not a field the mandate grants.
         live = ledger.live_reservations(mandate.id)
-        slot_detail = f"{live} reserva(s) viva(s) contra o teto de {self._max_live_reservations}"
+        slot_detail = f"{live} live reservation(s) against a cap of {self._max_live_reservations}"
         if live >= self._max_live_reservations:
             return self._reject(
                 "reservation_limit",
-                "Reservas em aberto demais neste mandato; reconcilie antes de comprar.",
+                "Too many open reservations on this mandate; reconcile before buying.",
                 stopped("reservation_slot_free", slot_detail),
             ), mandate
         cleared("reservation_slot_free", slot_detail)
@@ -2155,36 +2155,36 @@ class AuthorizationCore:
             window = timedelta(seconds=mandate.usage_limit.window_seconds)
             used = ledger.uses_since(mandate.id, self._clock() - window)
             usage_detail = (
-                f"{used} uso{'s' if used != 1 else ''} em "
-                f"{mandate.usage_limit.window_seconds}s {{}} o máximo de "
+                f"{used} use{'s' if used != 1 else ''} in "
+                f"{mandate.usage_limit.window_seconds}s {{}} the maximum of "
                 f"{mandate.usage_limit.max_uses}"
             )
             if used >= mandate.usage_limit.max_uses and "usage_limit_exceeded" not in approved_reasons:
                 return AuthorizationResult(
                     AuthorizationDecision.AWAITING_HUMAN,
                     "usage_limit_exceeded",
-                    "Compra excede a frequência permitida pelo mandato.",
-                    trace=stopped("within_usage_window", usage_detail.format("atinge")),
+                    "Purchase exceeds the frequency the mandate allows.",
+                    trace=stopped("within_usage_window", usage_detail.format("reaches")),
                 ), mandate
-            cleared("within_usage_window", usage_detail.format("cabe no"))
+            cleared("within_usage_window", usage_detail.format("fits under"))
         spent = ledger.spent_for(mandate.id, limit)
         over_budget = spent.add(command.total).minor_units > limit.minor_units
         budget_detail = (
-            f"gasto {spent.minor_units} + {command.total.minor_units} "
-            f"{{}} o limite {limit.minor_units}"
+            f"spent {spent.minor_units} + {command.total.minor_units} "
+            f"{{}} the limit {limit.minor_units}"
         )
         if over_budget and "budget_exceeded" not in approved_reasons:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
                 "budget_exceeded",
-                "Compra excede o orçamento vivo do mandato.",
-                trace=stopped("within_budget", budget_detail.format("excede")),
+                "Purchase exceeds the mandate's live budget.",
+                trace=stopped("within_budget", budget_detail.format("exceeds")),
             ), mandate
-        cleared("within_budget", budget_detail.format("cabe em"))
+        cleared("within_budget", budget_detail.format("fits within"))
         return AuthorizationResult(
             AuthorizationDecision.AUTHORIZED,
             "authorized",
-            "Compra autorizada.",
+            "Purchase authorized.",
             trace=tuple(walked),
         ), mandate
 
@@ -2274,7 +2274,7 @@ class AuthorizationCore:
             SqliteAuditLedger(connection).append(
                 mandate_id=command.mandate_id,
                 event_type="purchase_committed",
-                human_summary=f"Compra autorizada e comprometida ({reservation.id}).",
+                human_summary=f"Purchase authorized and committed ({reservation.id}).",
                 actor="aval-core",
                 detail=self._purchase_detail(
                     command,
@@ -2330,9 +2330,9 @@ class AuthorizationCore:
                 mandate_id=command.mandate_id,
                 event_type="purchase_settled" if result.approved else "purchase_declined",
                 human_summary=(
-                    "Pagamento liquidado."
+                    "Payment settled."
                     if result.approved
-                    else "Pagamento recusado pelo processador."
+                    else "Payment declined by the processor."
                 ),
                 actor="psp:demo",
                 detail={
@@ -2381,7 +2381,7 @@ class AuthorizationCore:
             SqliteAuditLedger(connection).append(
                 mandate_id=mandate_id,
                 event_type="payment_in_doubt",
-                human_summary="Pagamento em confirmação: o processador não respondeu.",
+                human_summary="Payment in confirmation: the processor did not answer.",
                 actor="psp:demo",
                 detail={
                     "agent_id": agent_id,

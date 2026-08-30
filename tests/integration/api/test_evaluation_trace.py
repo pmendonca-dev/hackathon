@@ -66,7 +66,7 @@ def test_a_refused_purchase_stops_the_trace_at_the_check_that_failed(harness: Ha
     assert trace[-1] == {
         "check": "below_ceiling",
         "passed": False,
-        "detail": "valor 90000 acima do teto 50000",
+        "detail": "amount 90000 above the ceiling 50000",
     }
     # The ladder stops where it failed; it does not report checks it never ran.
     assert "within_budget" not in names_of(response)
@@ -83,7 +83,7 @@ def test_the_trace_names_the_numbers_that_were_compared(harness: Harness) -> Non
 
     assert response.json()["reason_code"] == "budget_exceeded"
     failed = [step for step in steps_of(response) if not step["passed"]]
-    assert failed[0]["detail"] == "gasto 0 + 30000 excede o limite 20000"
+    assert failed[0]["detail"] == "spent 0 + 30000 exceeds the limit 20000"
 
 
 def test_a_revoked_mandate_stops_the_ladder_before_any_money_check(harness: Harness) -> None:
@@ -126,7 +126,7 @@ def test_the_agent_purchase_publishes_the_ladder_its_attempt_ran_into(
 
     response = harness.client.post(
         "/agent/purchase",
-        json={"mandate_id": mandate_id, "instruction": "compre a passagem executiva"},
+        json={"mandate_id": mandate_id, "instruction": "buy the business class ticket to Córdoba"},
     )
 
     body = response.json()

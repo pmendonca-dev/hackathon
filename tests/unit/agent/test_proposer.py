@@ -101,8 +101,8 @@ def test_a_model_answer_becomes_a_proposal_naming_a_signed_offer() -> None:
     model = FakeModel(
         {
             "sku": "FL-B",
-            "motivo": "direto, e a diferença de doze dólares paga sete horas a menos.",
-            "descartadas": [{"sku": "FL-A", "motivo": "duas escalas"}],
+            "reason": "direto, e a diferença de doze dólares paga sete horas a menos.",
+            "rejected": [{"sku": "FL-A", "reason": "duas escalas"}],
         }
     )
 
@@ -119,7 +119,7 @@ def test_a_model_answer_becomes_a_proposal_naming_a_signed_offer() -> None:
 def test_the_model_may_propose_the_offer_the_rules_never_would() -> None:
     """The whole point. The core is what refuses it, not the agent."""
     proposal = ModelProposer(
-        FakeModel({"sku": "HT-A", "motivo": "achei melhor um hotel", "descartadas": []})
+        FakeModel({"sku": "HT-A", "reason": "achei melhor um hotel", "rejected": []})
     ).propose("um voo pra Córdoba", CATALOG)
 
     assert proposal is not None
@@ -140,9 +140,9 @@ def test_a_model_timeout_falls_back_to_the_rules_instead_of_failing_the_purchase
     "answer",
     [
         "não é um objeto",
-        {"motivo": "esqueci o sku", "descartadas": []},
-        {"sku": "FL-INEXISTENTE", "motivo": "inventei", "descartadas": []},
-        {"sku": "FL-B", "motivo": "ok", "descartadas": "não é lista"},
+        {"reason": "esqueci o sku", "rejected": []},
+        {"sku": "FL-INEXISTENTE", "reason": "inventei", "rejected": []},
+        {"sku": "FL-B", "reason": "ok", "rejected": "não é lista"},
     ],
     ids=["not-an-object", "no-sku", "invented-sku", "malformed-alternatives"],
 )
@@ -157,8 +157,8 @@ def test_an_alternative_naming_an_unknown_sku_is_dropped_not_fatal() -> None:
         FakeModel(
             {
                 "sku": "FL-B",
-                "motivo": "direto",
-                "descartadas": [{"sku": "NAO-EXISTE", "motivo": "?"}, {"sku": "FL-A", "motivo": "escalas"}],
+                "reason": "direto",
+                "rejected": [{"sku": "NAO-EXISTE", "reason": "?"}, {"sku": "FL-A", "reason": "escalas"}],
             }
         )
     ).propose("um voo pra Córdoba", CATALOG)
@@ -177,7 +177,7 @@ def test_the_model_is_never_handed_the_mandate() -> None:
     parameters = set(inspect.signature(ModelProposer.propose).parameters)
     assert parameters == {"self", "instruction", "offers"}
 
-    model = FakeModel({"sku": "FL-A", "motivo": "mais barato", "descartadas": []})
+    model = FakeModel({"sku": "FL-A", "reason": "mais barato", "rejected": []})
     ModelProposer(model).propose("um voo pra Córdoba", CATALOG)
 
     instruction, candidates = model.calls[0]
@@ -200,12 +200,12 @@ def test_an_offer_line_carries_the_attributes_that_decide_between_two_fares() ->
     )
 
     assert "152.00 USD" in line
-    assert "direto" in line and "3h05" in line and "parte 10:45" in line
-    assert "com bagagem" in line and "reembolsável" in line
+    assert "nonstop" in line and "3h05" in line and "departs 10:45" in line
+    assert "checked bag" in line and "refundable" in line
 
 
 def test_an_offer_line_omits_attributes_its_category_cannot_have() -> None:
-    """A hotel row reading "sem bagagem" is noise on every line the model reads."""
+    """A hotel row reading "no checked bag" is noise on every line the model reads."""
     hotel = offer_line(
         {
             "merchant_id": "vuelaya",
@@ -216,8 +216,8 @@ def test_an_offer_line_omits_attributes_its_category_cannot_have() -> None:
         }
     )
 
-    assert "3 noites" in hotel
-    assert "bagagem" not in hotel and "direto" not in hotel
+    assert "3 nights" in hotel
+    assert "bag" not in hotel and "nonstop" not in hotel
 
 
 # ── the switch ──────────────────────────────────────────────────────────────
@@ -243,7 +243,7 @@ def test_a_request_that_names_no_destination_is_asked_about_not_guessed() -> Non
     answer = RuleProposer().propose("compre um voo", CATALOG)
 
     assert isinstance(answer, Question)
-    assert "Para onde" in answer.text
+    assert "Where to" in answer.text
 
 
 def test_a_request_naming_something_nobody_sells_is_asked_about_too() -> None:
@@ -259,7 +259,7 @@ def test_a_request_that_names_a_destination_is_answered_not_questioned() -> None
 
 
 def test_the_model_may_ask_instead_of_choosing() -> None:
-    answer = ModelProposer(FakeModel({"pergunta": "Para Córdoba ou Buenos Aires?"})).propose(
+    answer = ModelProposer(FakeModel({"question": "Para Córdoba ou Buenos Aires?"})).propose(
         "quero viajar em setembro", CATALOG
     )
 
@@ -268,7 +268,7 @@ def test_the_model_may_ask_instead_of_choosing() -> None:
 
 def test_an_empty_question_is_not_an_answer_and_falls_back() -> None:
     """A model that asks nothing has not asked. The rules take the wheel back."""
-    answer = ModelProposer(FakeModel({"pergunta": "   "})).propose(
+    answer = ModelProposer(FakeModel({"question": "   "})).propose(
         "compre um voo pra Córdoba", CATALOG
     )
 

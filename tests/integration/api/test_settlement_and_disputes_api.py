@@ -112,7 +112,7 @@ def test_a_dispute_over_a_settled_purchase_resolves_for_the_mandate(harness):
 
     assert opened.status_code == 201, opened.text
     assert resolved.json()["status"] == "MANDATE_HELD"
-    assert "prova" in resolved.json()["resolution"].lower()
+    assert "proof" in resolved.json()["resolution"].lower()
 
 
 def test_a_dispute_over_an_unknown_purchase_is_refused(harness):

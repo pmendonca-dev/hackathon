@@ -46,7 +46,7 @@ async def _require_edge(request: Request, secret: str, method: str, path: str) -
     except EdgeAuthError as error:
         # Says it was refused and never why. A caller learns nothing about the secret,
         # the clock, or whether the route it guessed exists.
-        raise ApiError(401, "edge_unauthenticated", "Não autenticado.") from error
+        raise ApiError(401, "edge_unauthenticated", "Not authenticated.") from error
 
 
 def _now(request: Request) -> datetime:

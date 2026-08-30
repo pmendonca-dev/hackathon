@@ -10,4 +10,4 @@ def test_unknown_payment_receipt_reference_is_inconclusive() -> None:
 
     assert verdict.status == "INCONCLUSIVE"
     assert verdict.reason_code == "payment_receipt_reference_unknown"
-    assert "não corresponde" in verdict.human_summary
+    assert "does not match" in verdict.human_summary

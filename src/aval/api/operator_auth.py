@@ -92,17 +92,17 @@ def authenticated_operator(request: Request) -> str:
                 raise ApiError(
                     403,
                     str(error),
-                    "Sessão de operador inválida ou expirada.",
+                    "Invalid or expired operator session.",
                 ) from error
         return f"operator:session:{session_id}"
 
     presented = request.headers.get(OPERATOR_HEADER, "")
     if not presented:
-        raise ApiError(401, "operator_token_missing", "Credencial de operador ausente.")
+        raise ApiError(401, "operator_token_missing", "Operator credential missing.")
     # Constant-time: a byte-by-byte comparison would let a caller find the token one
     # character at a time.
     if not hmac.compare_digest(presented, runtime.operator_token):
-        raise ApiError(403, "operator_token_invalid", "Credencial de operador inválida.")
+        raise ApiError(403, "operator_token_invalid", "Invalid operator credential.")
     return "operator:token"
 
 

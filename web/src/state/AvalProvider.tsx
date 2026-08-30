@@ -137,8 +137,8 @@ export function AvalProvider({
       .catch(() => {
         if (active) {
           setError(
-            'Não foi possível abrir a carteira do titular neste navegador. Sem ela nenhuma ' +
-              'autoridade de gasto pode ser assinada.',
+            'The holder wallet could not be opened in this browser. Without it no ' +
+              'spending authority can be signed.',
           );
         }
       });
@@ -247,7 +247,7 @@ export function AvalProvider({
   }, [reload]);
 
   const requireWallet = useCallback((): HolderWallet => {
-    if (!wallet) throw new Error('A carteira do titular ainda não está pronta.');
+    if (!wallet) throw new Error('The holder wallet is not ready yet.');
     return wallet;
   }, [wallet]);
 
@@ -318,15 +318,15 @@ export function AvalProvider({
             creation_jws: await signCompactJws(mandateCreationClaims(terms), holder),
           });
           setSelectedMandateId(created.mandate_id);
-          // O mandato nasce sem fundo: autoridade para gastar, e nenhum meio de pagar.
-          // Registrar o cartão aqui mantém isso como uma ação só para a pessoa, e as
-          // três chamadas que ele custa são assinadas por esta chave como todo o resto.
+          // A mandate is born unfunded: authority to spend, and no means of paying.
+          // Registering the card here keeps that a single action for the person, and the
+          // three calls it costs are signed by this key like everything else.
           const card = await gateway.registerCard(created.mandate_id, (claims) =>
             signCompactJws(claims, holder),
           );
           return (
-            `Mandato ${created.mandate_id} criado na versão de política ${created.policy_version}` +
-            (card ? `, pagando com ${card}.` : '. Nenhum cartão registrado: ele ainda não pode pagar.')
+            `Mandate ${created.mandate_id} created at policy version ${created.policy_version}` +
+            (card ? `, paying with ${card}.` : '. No card registered: it cannot pay yet.')
           );
         });
         if (accepted) await reload();
@@ -335,7 +335,7 @@ export function AvalProvider({
       async runAgent(instruction: string) {
         const mandateId = selectedRef.current;
         if (!mandateId) return;
-        await run('Instrução ao agente', async () => {
+        await run('Instruction to the agent', async () => {
           const result = await gateway.agentPurchase(mandateId, instruction);
           setLastRun(result);
           return `${result.outcome} · ${result.reason_code}`;
@@ -348,7 +348,7 @@ export function AvalProvider({
         if (!mandateId) return;
         const accepted = await run('Deixar o agente vigiando', async () => {
           const watch = await gateway.registerWatch(mandateId, instruction);
-          return `Vigília ${watch.watch_id} aberta. O agente tenta sozinho até ${watch.expires_at}.`;
+          return `Watch ${watch.watch_id} opened. The agent keeps trying on its own until ${watch.expires_at}.`;
         });
         if (accepted) await reload();
       },
@@ -356,14 +356,14 @@ export function AvalProvider({
       async tickWatches() {
         const mandateId = selectedRef.current;
         if (!mandateId) return;
-        const accepted = await run('Tentar as vigílias agora', async () => {
+        const accepted = await run('Try the watches now', async () => {
           const { fired } = await gateway.tickWatches(mandateId);
           // A tick that fired nothing is not a failure: the standing order is still
           // standing. Saying "nada aconteceu" is the honest reading of a watch whose
           // condition the catalogue has not met yet.
           return fired.length === 0
-            ? 'Nenhuma vigília encontrou oferta. Continuam abertas.'
-            : `${fired.length} vigília(s) dispararam; o registro abaixo mostra o quê.`;
+            ? 'No watch found an offer. They stay open.'
+            : `${fired.length} watch(es) fired; the record below shows what they did.`;
         });
         if (accepted) await reload();
       },
@@ -373,7 +373,7 @@ export function AvalProvider({
         const escalation = escalations.find((item) => item.id === escalationId);
         if (!escalation) return;
         const accepted = await run(
-          decision === 'approve' ? 'Aprovar escalação' : 'Recusar escalação',
+          decision === 'approve' ? 'Approve the escalation' : 'Refuse the escalation',
           async () => {
             // The signature names the exact purchase, so an approval lifted from one
             // decision cannot be replayed onto a larger one.
@@ -388,8 +388,8 @@ export function AvalProvider({
             );
             const answer = await gateway.decideEscalation(escalationId, decision, approval);
             return (answer as { resumed?: boolean }).resumed
-              ? 'Aprovação assinada; a compra retomou.'
-              : 'Decisão assinada registrada.';
+              ? 'Approval signed; the purchase resumed.'
+              : 'Signed decision recorded.';
           },
         );
         if (accepted) await reload();
@@ -417,7 +417,7 @@ export function AvalProvider({
             { minor_units: minorUnits, currency: mandate.limit.currency, scale: mandate.limit.scale },
             authorization,
           );
-          return `Limite vale a partir da política ${answer.policy_version}.`;
+          return `The limit applies from policy version ${answer.policy_version}.`;
         });
         if (accepted) await reload();
       },
@@ -437,7 +437,7 @@ export function AvalProvider({
             holder,
           );
           const answer = await gateway.revokeMandate(mandate.mandate_id, token);
-          return `Revogado na época ${answer.epoch}. A próxima tentativa falha.`;
+          return `Revoked at epoch ${answer.epoch}. The next attempt fails.`;
         });
         if (accepted) await reload();
       },
@@ -449,7 +449,7 @@ export function AvalProvider({
             {
               principal_id: principalId,
               scope: 'mandate',
-              reason: 'interrupção total pelo titular',
+              reason: 'full stop by the holder',
               epoch: 1,
             },
             holder,
@@ -461,10 +461,10 @@ export function AvalProvider({
       },
 
       async openOperatorSession(token: string) {
-        const accepted = await run('Abrir sessão de operador', async () => {
+        const accepted = await run('Open an operator session', async () => {
           const issued = await gateway.openOperatorSession(token);
           setOperatorSessionExpiresAt(issued.expires_at);
-          return `Sessão ${issued.session_id} aberta até ${issued.expires_at}.`;
+          return `Session ${issued.session_id} open until ${issued.expires_at}.`;
         });
         // The typed token is not kept anywhere — not in state, not in storage. What
         // this tab holds from here on is a credential that dies on its own.
@@ -472,20 +472,20 @@ export function AvalProvider({
       },
 
       async closeOperatorSession() {
-        await run('Encerrar sessão de operador', async () => {
+        await run('End the operator session', async () => {
           await gateway.closeOperatorSession();
-          return 'Sessão encerrada. As superfícies de operador voltam a pedir o token.';
+          return 'Session ended. The operator surfaces ask for the token again.';
         });
         setOperatorSessionExpiresAt(null);
         setOperatorJournal(null);
       },
 
       async loadOperatorJournal() {
-        const accepted = await run('Ler o diário do operador', async () => {
+        const accepted = await run('Read the operator journal', async () => {
           const journal = await gateway.operatorJournal();
           setOperatorJournal(journal);
           return `${journal.entries.length} ato(s) de operador, cadeia ${
-            journal.chain.intact ? 'íntegra' : `quebrada em ${journal.chain.broken_at}`
+            journal.chain.intact ? 'intact' : `broken at ${journal.chain.broken_at}`
           }.`;
         });
         if (!accepted) {
@@ -498,7 +498,7 @@ export function AvalProvider({
 
       async disputePurchase(reservationId: string, reason: string) {
         const holder = requireWallet();
-        const accepted = await run('Não reconheço esta compra', async () => {
+        const accepted = await run('I do not recognise this purchase', async () => {
           // Signed here for the same reason revoking is: the trail is about to record
           // that *this person* denied the purchase, and it should be true.
           const opened = await gateway.openDispute(
@@ -527,7 +527,7 @@ export function AvalProvider({
       async rogueCharge(minorUnits: number) {
         const mandateId = selectedRef.current;
         if (!mandateId) return;
-        const accepted = await run('Cobrança por fora do núcleo', async () => {
+        const accepted = await run('Charge that bypasses the core', async () => {
           const charged = await gateway.rogueCharge(mandateId, minorUnits);
           return `${charged.reservation_id} cobrada sem passar pelo mandato. Nenhuma prova foi emitida.`;
         });
@@ -544,23 +544,23 @@ export function AvalProvider({
       async reconcile() {
         await run('Reconciliar', async () => {
           const answer = await gateway.reconcile();
-          return `Reconciliação concluída: ${JSON.stringify(answer)}`;
+          return `Reconciliation complete: ${JSON.stringify(answer)}`;
         });
         await reload();
       },
 
       async advanceClock(seconds: number) {
-        await run('Avançar relógio', async () => {
+        await run('Advance the clock', async () => {
           const answer = await gateway.advanceClock(seconds);
-          return `Agora é ${answer.now} (deslocamento de ${answer.offset_seconds}s).`;
+          return `It is now ${answer.now} (offset of ${answer.offset_seconds}s).`;
         });
         await reload();
       },
 
       async repriceOffer(sku: string, minorUnits: number) {
-        await run('Derrubar preço', async () => {
+        await run('Drop the price', async () => {
           const answer = await gateway.repriceOffer(sku, minorUnits);
-          return `${answer.sku} agora a ${answer.minor_units} centavos. As vigílias abertas passam a poder disparar.`;
+          return `${answer.sku} is now ${answer.minor_units} cents. Open watches can fire from here.`;
         });
         await reload();
       },
@@ -570,7 +570,7 @@ export function AvalProvider({
         if (!mandateId) return;
         await run('Adulterar trilha', async () => {
           await gateway.tamperLedger(mandateId, sequence);
-          return `Evento ${sequence} reescrito. A cadeia deve acusar a posição.`;
+          return `Event ${sequence} rewritten. The chain should now name that position.`;
         });
         await reload();
       },

@@ -66,7 +66,7 @@ class StripePspAdapter:
         timeout: int = 20,
     ) -> None:
         if not secret_key:
-            raise StripeConfigError("uma chave secreta da Stripe é obrigatória")
+            raise StripeConfigError("a Stripe secret key is required")
         self._secret_key = secret_key
         self._mandate_for = mandate_for
         self._proof_verifier = proof_verifier
@@ -97,11 +97,11 @@ class StripePspAdapter:
             # A currency this file cannot convert is a configuration mistake, and a
             # mistake about how much to charge must never resolve into a charge.
             logger.error(
-                "moeda %s com escala %s não é conversível para a Stripe",
+                "currency %s with scale %s is not convertible for Stripe",
                 reservation.amount.currency,
                 reservation.amount.scale,
             )
-            raise PspUnreachable("a moeda da reserva não é conversível")
+            raise PspUnreachable("the reservation currency is not convertible")
 
         payment_method = mandate.instrument.token
         customer = self._customer_of(payment_method)
@@ -139,16 +139,16 @@ class StripePspAdapter:
             # Anything that is not `succeeded` needs someone at the keyboard —
             # `requires_action` is 3-D Secure, which an off-session purchase cannot do.
             # Not a decline to retry silently, and not money that moved.
-            logger.info("PaymentIntent em %s, não liquidado", payload.get("status"))
+            logger.info("PaymentIntent in %s, not settled", payload.get("status"))
             return SettlementResult(approved=False)
         error = payload.get("error", {}) if isinstance(payload, dict) else {}
         if status == 402 or error.get("type") == "card_error":
             # The issuer answered, and the answer is no.
-            logger.info("cartão recusado: %s", error.get("code", "sem código"))
+            logger.info("card declined: %s", error.get("code", "no code"))
             return SettlementResult(approved=False)
         # 4xx that is not a card error is our own request being wrong, and 5xx is Stripe
         # having a bad day. Neither is a decline, and neither may release the hold.
-        raise PspUnreachable(f"a Stripe respondeu {status}: {error.get('code', 'sem código')}")
+        raise PspUnreachable(f"Stripe answered {status}: {error.get('code', 'no code')}")
 
     def _customer_of(self, payment_method: str) -> str:
         """Which customer this card is attached to.
@@ -163,7 +163,7 @@ class StripePspAdapter:
         status, payload = self._call(f"/payment_methods/{payment_method}", None)
         customer = payload.get("customer") if status == 200 else None
         if not customer:
-            raise PspUnreachable("o cartão do mandato não está vinculado a um cliente")
+            raise PspUnreachable("the mandate card is not linked to a customer")
         return str(customer)
 
     # ── card registration ──────────────────────────────────────────────────
@@ -196,7 +196,7 @@ class StripePspAdapter:
             },
         )
         if status != 200:
-            raise PspUnreachable("a Stripe não abriu a página de cadastro")
+            raise PspUnreachable("Stripe did not open the registration page")
         return {"session_id": str(payload["id"]), "url": str(payload["url"])}
 
     def _customer_for(self, mandate_id: str) -> str:
@@ -212,7 +212,7 @@ class StripePspAdapter:
             "/customers", {"metadata[mandate_id]": mandate_id}
         )
         if status != 200:
-            raise PspUnreachable("a Stripe não criou o cliente do mandato")
+            raise PspUnreachable("Stripe did not create the mandate customer")
         return str(payload["id"])
 
     def read_setup_session(self, session_id: str, *, mandate_id: str) -> dict[str, str] | None:
@@ -224,7 +224,7 @@ class StripePspAdapter:
         """
         status, session = self._call(f"/checkout/sessions/{session_id}", None)
         if status != 200:
-            raise PspUnreachable("a Stripe não devolveu a sessão de cadastro")
+            raise PspUnreachable("Stripe did not return the registration session")
         if (session.get("metadata") or {}).get("mandate_id") != mandate_id:
             return None
         setup_intent = session.get("setup_intent")
@@ -274,7 +274,7 @@ class StripePspAdapter:
                 return error.code, {}
         except OSError as error:
             # Never a decline. The reservation stays held and `reconcile` asks again.
-            raise PspUnreachable(f"a Stripe não respondeu: {error}") from error
+            raise PspUnreachable(f"Stripe did not answer: {error}") from error
 
     @staticmethod
     def _stripe_amount(reservation: Reservation) -> int | None:
