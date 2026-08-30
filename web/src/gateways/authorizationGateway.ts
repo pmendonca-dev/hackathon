@@ -118,16 +118,31 @@ export interface AuthorizationGatewayOptions {
 export class AuthorizationGateway {
   readonly #baseUrl: string;
   readonly #fetch: typeof globalThis.fetch;
-  readonly #operatorToken?: string;
+  /**
+   * Held in the instance, not frozen at construction, because the token is a *runtime*
+   * credential the operator types in — never a build-time constant. A value baked into
+   * the bundle ships to every visitor, and this one switches off the processor, moves
+   * the demo clock and (with the flag on) corrupts the audit trail.
+   */
+  #operatorToken?: string;
 
   constructor({ baseUrl, fetch, operatorToken }: AuthorizationGatewayOptions) {
     this.#baseUrl = baseUrl.replace(/\/$/, '');
     this.#fetch = fetch ?? globalThis.fetch.bind(globalThis);
-    this.#operatorToken = operatorToken;
+    this.#operatorToken = operatorToken || undefined;
   }
 
   get hasOperatorToken(): boolean {
     return Boolean(this.#operatorToken);
+  }
+
+  /**
+   * Adopt the credential for this session. There is deliberately no getter: the token
+   * goes in and is used, and nothing in the UI can read it back out to display, log or
+   * serialise it.
+   */
+  adoptOperatorToken(token: string | null): void {
+    this.#operatorToken = token?.trim() || undefined;
   }
 
   async #request<T>(

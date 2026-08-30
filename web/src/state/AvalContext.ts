@@ -34,8 +34,14 @@ export interface AvalContextValue {
   view: View;
   loading: boolean;
   error: string | null;
-  /** Present only when an operator token was configured for this session. */
+  /** Whether this session currently holds an operator credential. */
   operatorAvailable: boolean;
+  /**
+   * Adopt or clear the operator credential for this tab. There is no matching getter:
+   * the token is typed in, used, and never rendered back — a built bundle never carries
+   * one, so the only copy is the one the operator just entered.
+   */
+  adoptOperatorToken(token: string | null): void;
 
   mandates: MandateView[];
   selectedMandateId: string | null;

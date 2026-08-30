@@ -19,19 +19,72 @@ import {
   type View,
 } from './AvalContext.ts';
 
-const environment = import.meta.env;
+/**
+ * Every environment value below is read as `import.meta.env.VITE_…` at its use site,
+ * never through an alias.
+ *
+ * That is load-bearing, not style. Vite substitutes `import.meta.env.SOME_KEY` key by
+ * key at build time, but `const environment = import.meta.env` inlines the **whole
+ * object** — every `VITE_*` the build was given, including ones no branch reaches.
+ * Aliasing it is how a credential ends up in a shipped bundle even though the only code
+ * reading it is behind a `DEV` check that was eliminated.
+ */
+
+/** Where this session remembers the operator credential: this tab, and nowhere else. */
+const OPERATOR_TOKEN_KEY = 'aval.operator-token';
 
 /**
- * Built once, outside render. The gateway holds the operator token and the base URL;
- * rebuilding it per render would reopen the question of which instance a command went
- * to every time React re-rendered.
+ * The operator credential a build may start with — **in development only**.
+ *
+ * `import.meta.env.DEV` is folded to a literal at build time, so in a production bundle
+ * this whole branch is dead code and the token never reaches the shipped JavaScript.
+ * That distinction is the point: a `VITE_*` value is compiled into the file every
+ * visitor downloads, and this particular value switches off the processor, moves the
+ * demo clock, reconciles, and — with `AVAL_DEMO_TAMPER` on — corrupts the audit trail.
+ * Shipping it would mean anyone who opened the page held the operator role, which is
+ * the exact separation the trial-by-fire console exists to demonstrate.
+ *
+ * In a built app the token is typed in instead, by whoever is operating the instance.
+ */
+function initialOperatorToken(): string | null {
+  const remembered = readRememberedToken();
+  if (remembered) return remembered;
+  if (import.meta.env.DEV) return import.meta.env.VITE_AVAL_OPERATOR_TOKEN ?? null;
+  return null;
+}
+
+/**
+ * `sessionStorage`, not `localStorage`: the credential dies with the tab. Wrapped
+ * because a browser with site data blocked throws on access rather than returning null,
+ * and a console that cannot start is worse than one that forgets.
+ */
+function readRememberedToken(): string | null {
+  try {
+    return globalThis.sessionStorage?.getItem(OPERATOR_TOKEN_KEY) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberToken(token: string | null): void {
+  try {
+    if (token) globalThis.sessionStorage?.setItem(OPERATOR_TOKEN_KEY, token);
+    else globalThis.sessionStorage?.removeItem(OPERATOR_TOKEN_KEY);
+  } catch {
+    // A session that cannot persist the token still works; it just asks again on reload.
+  }
+}
+
+/**
+ * Built once, outside render. The gateway holds the base URL; rebuilding it per render
+ * would reopen the question of which instance a command went to every time React
+ * re-rendered.
  */
 const DEFAULT_GATEWAY = new AuthorizationGateway({
-  baseUrl: environment.VITE_AVAL_API_BASE_URL ?? 'http://127.0.0.1:8099',
-  operatorToken: environment.VITE_AVAL_OPERATOR_TOKEN,
+  baseUrl: import.meta.env.VITE_AVAL_API_BASE_URL ?? 'http://127.0.0.1:8099',
 });
 
-const DEFAULT_PRINCIPAL = environment.VITE_AVAL_PRINCIPAL_ID ?? 'usr_marta';
+const DEFAULT_PRINCIPAL = import.meta.env.VITE_AVAL_PRINCIPAL_ID ?? 'usr_marta';
 
 function describe(error: unknown): { reasonCode: string | null; message: string } {
   if (error instanceof GatewayError) return { reasonCode: error.reasonCode, message: error.message };
@@ -46,6 +99,15 @@ export function AvalProvider({
   gateway?: AuthorizationGateway;
 }) {
   const [principalId, setPrincipalIdState] = useState(DEFAULT_PRINCIPAL);
+  // Tracked in state only so the console re-renders when the credential arrives. The
+  // value itself lives in the gateway, which has no getter — nothing can read it back.
+  // Seeded during the first render rather than in an effect: the credential either
+  // exists when this session starts or it does not, and routing that through a render
+  // pass would flash the console's "no token" state at an operator who has one.
+  const [operatorAvailable, setOperatorAvailable] = useState(() => {
+    gateway.adoptOperatorToken(initialOperatorToken());
+    return gateway.hasOperatorToken;
+  });
   const [view, setView] = useState<View>('human');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +136,16 @@ export function AvalProvider({
   const note = useCallback((receipt: CommandReceipt) => {
     setReceipts((previous) => [receipt, ...previous].slice(0, 12));
   }, []);
+
+  const adoptOperatorToken = useCallback(
+    (token: string | null) => {
+      const trimmed = token?.trim() || null;
+      gateway.adoptOperatorToken(trimmed);
+      rememberToken(trimmed);
+      setOperatorAvailable(gateway.hasOperatorToken);
+    },
+    [gateway],
+  );
 
   /**
    * Every command reports what the runtime actually answered — including "no answer".
@@ -201,7 +273,8 @@ export function AvalProvider({
       view,
       loading,
       error,
-      operatorAvailable: gateway.hasOperatorToken,
+      operatorAvailable,
+      adoptOperatorToken,
       mandates,
       selectedMandateId,
       escalations,
@@ -409,6 +482,8 @@ export function AvalProvider({
       reload,
       requireWallet,
       run,
+      operatorAvailable,
+      adoptOperatorToken,
     ],
   );
 

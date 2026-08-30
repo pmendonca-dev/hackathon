@@ -20,6 +20,7 @@ export function TrialByFireConsole() {
     selectedMandateId,
     walletReady,
     operatorAvailable,
+    adoptOperatorToken,
     receipts,
     changeLimit,
     revokeSelected,
@@ -31,6 +32,9 @@ export function TrialByFireConsole() {
 
   const [newLimit, setNewLimit] = useState('100');
   const [hours, setHours] = useState('24');
+  // Held only until it is handed to the gateway, then cleared. The console never keeps
+  // a readable copy of the credential it just adopted.
+  const [operatorToken, setOperatorToken] = useState('');
   const [busy, setBusy] = useState(false);
   const selected = mandates.find((item) => item.mandate_id === selectedMandateId) ?? null;
 
@@ -101,10 +105,39 @@ export function TrialByFireConsole() {
           action={<PlugZap size={18} className="text-hold" aria-hidden="true" />}
         >
           {!operatorAvailable ? (
-            <p className="text-[13px] leading-relaxed text-fg-mute">
-              Nenhum token de operador configurado nesta sessão. Estes comandos não são
-              enviados, e nada é simulado no navegador.
-            </p>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                adoptOperatorToken(operatorToken);
+                setOperatorToken('');
+              }}
+            >
+              <p className="mb-4 text-[13px] leading-relaxed text-fg-mute">
+                Esta sessão não tem token de operador. Ele não vem no aplicativo: uma
+                credencial embutida no build seria baixada por todo mundo que abrisse a
+                página. Digite o valor de <code>AVAL_OPERATOR_TOKEN</code> desta
+                instância — ele fica nesta aba e some quando ela fechar.
+              </p>
+              <label className="block">
+                <span className="eyebrow">Token de operador</span>
+                <input
+                  className="form-control"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={operatorToken}
+                  onChange={(event) => setOperatorToken(event.target.value)}
+                  placeholder="AVAL_OPERATOR_TOKEN"
+                />
+              </label>
+              <Button type="submit" variant="ghost" className="mt-2 w-full" disabled={!operatorToken.trim()}>
+                Assumir o papel de operador
+              </Button>
+              <p className="mt-3 text-[12px] leading-relaxed text-fg-mute">
+                Nada aqui move dinheiro. Aumentar limite, aprovar escalação e revogar
+                continuam exigindo a chave do titular, que este token não substitui.
+              </p>
+            </form>
           ) : (
             <>
               <p className="mb-4 text-[13px] leading-relaxed text-fg-mute">
