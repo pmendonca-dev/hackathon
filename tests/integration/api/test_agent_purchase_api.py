@@ -259,3 +259,42 @@ def test_a_model_naming_something_nobody_sells_decides_nothing(harness, model):
     assert body["outcome"] == "settled", body
     assert body["proposed_by"] == "rules"
     assert body["offer"]["item"]["sku"] == "FL-SAO-COR-0918"
+
+
+def test_an_instruction_that_names_nothing_asks_instead_of_buying(harness):
+    """The case forbids a silent approval, and buying the cheapest thing in the
+    catalogue because nobody said where to is exactly that.
+
+    Note which brake this is. The mandate was never consulted — there was nothing to
+    put to it — so the trace is empty and the budget is untouched.
+    """
+    mandate_id = harness.create_mandate()
+
+    body = instruct(harness, mandate_id, "compre uma passagem").json()
+
+    assert body["outcome"] == "needs_clarification"
+    assert body["reason_code"] == "instruction_ambiguous"
+    assert body["evaluation_trace"] == []
+    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+
+
+def test_answering_the_question_buys(harness):
+    """Ambiguity asks, and the answer is an ordinary purchase."""
+    mandate_id = harness.create_mandate()
+    assert instruct(harness, mandate_id, "compre um voo").json()["outcome"] == "needs_clarification"
+
+    body = instruct(harness, mandate_id, "compre um voo pra Córdoba").json()
+
+    assert body["outcome"] == "settled", body
+
+
+def test_the_model_asking_is_not_the_mandate_refusing(harness, model):
+    """Two different brakes, and the demo has to be able to tell them apart."""
+    model({"pergunta": "Córdoba ou Buenos Aires?"})
+    mandate_id = harness.create_mandate()
+
+    body = instruct(harness, mandate_id, "me leva pra algum lugar").json()
+
+    assert body["outcome"] == "needs_clarification"
+    assert body["human_summary"] == "Córdoba ou Buenos Aires?"
+    assert body["escalation_id"] is None, "a question is not an approval request"

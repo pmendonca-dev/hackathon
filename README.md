@@ -25,7 +25,7 @@ python -m venv .venv
 # source .venv/bin/activate && pip install -e .  # Linux/macOS
 
 .venv/Scripts/python.exe -m pip install pytest httpx uvicorn
-.venv/Scripts/python.exe -m pytest -q             # 383 testes
+.venv/Scripts/python.exe -m pytest -q             # 404 testes
 
 AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe -m uvicorn aval.main:app --port 8099
 ```
@@ -374,6 +374,17 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
   **O modelo nunca é informado do limite, do teto ou do saldo**, então um modelo com
   prompt injetado não tem número privado para repetir — e tampouco consegue se
   autocensurar para dentro do mandato, que é o que mantém a recusa demonstrável.
+- **Pedido incompleto vira pergunta, não compra.** *"compre uma passagem"* não nomeia
+  nada à venda, e comprar o voo mais barato do catálogo seria aprovar em silêncio algo
+  que ninguém pediu. O agente tem uma terceira saída além de propor e não achar: ele
+  pergunta, e a resposta é um toque nos mesmos botões de sempre. **Ambiguidade pergunta,
+  mandato recusa** — dois freios, em duas coisas diferentes.
+- **O mandato nomeia o cartão, e o cartão pode ser cancelado sozinho.** O número é
+  lido uma vez na criação do mandato, tokenizado na borda e esquecido; o mandato guarda
+  um token e quatro dígitos. O agente apresenta o token e nunca viu o cartão, e o núcleo
+  recusa uma captura que apresente outro — ou nenhum. Cancelar o cartão **não** revoga o
+  mandato: o agente continua autorizado a decidir e fica sem com o que pagar, o que é
+  uma recusa diferente e um botão diferente.
 - **O catálogo é local e assinado, não raspado da web.** Preço raspado não é oferta: sem
   assinatura do vendedor não há `terms_hash` para a autorização vincular nem nada para o
   merchant verificar. Integração real é trocar `merchant/catalog.py` por um cliente HTTP,

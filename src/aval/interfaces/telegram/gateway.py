@@ -53,6 +53,8 @@ class MandateView:
     expires_at: datetime
     policy_version: int
     revocation_epoch: int
+    # The card the mandate names, as four digits. The token behind it is never served.
+    instrument_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -196,7 +198,8 @@ class AvalGateway:
         limit: MoneyView,
         ceiling: MoneyView | None,
         valid_for: timedelta,
-    ) -> str:
+        card_number: str | None = None,
+    ) -> tuple[str, str | None]:
         payload = self._call(
             "POST",
             ENDPOINTS["mandates"],
@@ -210,6 +213,11 @@ class AvalGateway:
                 "limit": _money_body(limit),
                 "ceiling": None if ceiling is None else _money_body(ceiling),
                 "expires_at": (datetime.now(UTC) + valid_for).isoformat(),
+                # The number is typed here and forgotten there. What comes back is a
+                # token the agent may present and four digits the holder recognises.
+                **(
+                    {} if not card_number else {"payment_method": {"card_number": card_number}}
+                ),
                 # The holder key lives in this bot, so the mandate is revocable by
                 # the person who created it and by nobody else.
                 "authorities": [
@@ -223,7 +231,7 @@ class AvalGateway:
                 ],
             },
         )
-        return str(payload["mandate_id"])
+        return str(payload["mandate_id"]), payload.get("instrument_revocation_scope")
 
     def purchase(self, mandate_id: str, instruction: str) -> PurchaseView:
         payload = self._call(
@@ -286,6 +294,32 @@ class AvalGateway:
             "POST", ENDPOINTS["revocation"].format(mandate_id=mandate_id), body={"token": token}
         )
         return f"Mandato revogado (epoch {payload.get('epoch', epoch + 1)})."
+
+    def cancel_instrument(
+        self, identity: ChatIdentity, mandate_id: str, *, scope: str, epoch: int
+    ) -> str:
+        """End the card without ending the agent.
+
+        Authority and payment are separate things, so they are revoked separately: the
+        mandate stays active, the budget stays where it was, and the next purchase is
+        refused for the reason that is actually true.
+        """
+        token = self._identities.sign(
+            identity,
+            {
+                "mandate_id": mandate_id,
+                "scope": scope,
+                "reason": "cartão cancelado pelo titular",
+                "epoch": epoch + 1,
+            },
+        )
+        payload = self._call(
+            "POST", ENDPOINTS["revocation"].format(mandate_id=mandate_id), body={"token": token}
+        )
+        return (
+            "Cartão cancelado. O mandato segue ativo — o agente pode decidir, "
+            f"mas não tem com o que pagar (epoch {payload.get('epoch', epoch + 1)})."
+        )
 
     def replace_limit(self, identity: ChatIdentity, mandate_id: str, limit: MoneyView) -> str:
         # The live version is read first because the signature has to name it: a token
@@ -383,6 +417,7 @@ def _mandate(payload: Mapping[str, Any]) -> MandateView:
         expires_at=_instant(payload["expires_at"]),
         policy_version=int(payload.get("policy_version", 1)),
         revocation_epoch=int(payload.get("revocation_epoch", 0)),
+        instrument_label=payload.get("instrument_label"),
     )
 
 

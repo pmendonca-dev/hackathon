@@ -5,7 +5,13 @@ from datetime import UTC
 
 from sqlalchemy import Connection, select, update
 
-from aval.domain.entities import Mandate, Principal, RevocationAuthority, UsageLimit
+from aval.domain.entities import (
+    Mandate,
+    PaymentInstrument,
+    Principal,
+    RevocationAuthority,
+    UsageLimit,
+)
 from aval.domain.enums import MandateStatus, RevocationRole
 from aval.domain.money import Money
 from aval.infrastructure.sqlite.models import mandates, revocation_authorities
@@ -36,6 +42,8 @@ class SqliteMandateRepository:
             "limit_minor_units": mandate.limit.minor_units,
             "expires_at": mandate.expires_at,
             "policy_version": mandate.policy_version,
+            "instrument_token": None if mandate.instrument is None else mandate.instrument.token,
+            "instrument_label": None if mandate.instrument is None else mandate.instrument.label,
             "revocation_epoch": int(mandate.revocation_metadata.get("epoch", 0)),
             "revocation_metadata": json.dumps(dict(mandate.revocation_metadata)),
         }
@@ -96,6 +104,11 @@ class SqliteMandateRepository:
                 None
                 if row["max_uses"] is None or row["usage_window_seconds"] is None
                 else UsageLimit(row["max_uses"], row["usage_window_seconds"])
+            ),
+            instrument=(
+                None
+                if row["instrument_token"] is None or row["instrument_label"] is None
+                else PaymentInstrument(row["instrument_token"], row["instrument_label"])
             ),
             expires_at=_aware(row["expires_at"]), policy_version=row["policy_version"],
             revocation_metadata=metadata, authorities=authorities, status=MandateStatus(row["status"]),

@@ -222,7 +222,7 @@ class Bot:
             if existing is not None and existing.status == "ACTIVE":
                 return views.mandate_card(existing)
         defaults = self._config.mandate_defaults
-        mandate_id = self._gateway.create_mandate(
+        mandate_id, instrument_scope = self._gateway.create_mandate(
             identity,
             merchants=defaults.merchants,
             categories=defaults.categories,
@@ -233,8 +233,11 @@ class Bot:
                 else MoneyView(defaults.ceiling_minor_units, defaults.currency, defaults.scale)
             ),
             valid_for=defaults.valid_for,
+            card_number=defaults.card_number,
         )
-        self._identities.bind_mandate(chat_id, mandate_id)
+        # The scope is stored because the API never serves the instrument token back:
+        # the only way to hold it is to have been told it once, here.
+        self._identities.bind_mandate(chat_id, mandate_id, instrument_scope=instrument_scope)
         mandate = self._gateway.mandate(mandate_id)
         assert mandate is not None
         return views.welcome(display_name=identity.display_name, mandate=mandate)
@@ -254,6 +257,15 @@ class Bot:
             return (views.plain("Diga o que comprar: /comprar um voo pra Córdoba"),)
         assert identity.mandate_id is not None
         result = self._gateway.purchase(identity.mandate_id, instruction)
+        if result.outcome == "needs_clarification":
+            # One screen, not two: the question and the answers belong together.
+            return (
+                views.clarification(
+                    result,
+                    self._gateway.catalogue(),
+                    mandate=self._gateway.mandate(identity.mandate_id),
+                ),
+            )
         screens: list[View] = [views.purchase_result(result)]
         if result.escalation_id:
             escalation = self._gateway.escalation(result.escalation_id)
@@ -355,6 +367,26 @@ class Bot:
             return (views.mandate_card(mandate) if mandate else views.no_mandate(),)
         if verb == views.CALLBACK_RECEIPT:
             return (views.receipt(self._gateway.receipt(argument)),)
+        if verb == views.CALLBACK_CARD_MENU:
+            mandate = self._gateway.mandate(argument)
+            if mandate is None or mandate.instrument_label is None:
+                return (views.plain("Esse mandato não tem cartão para cancelar."),)
+            return (views.cancel_card_menu(mandate),)
+        if verb == views.CALLBACK_CARD_CONFIRM:
+            mandate = self._gateway.mandate(argument)
+            if mandate is None:
+                return (views.no_mandate(),)
+            if identity.instrument_scope is None:
+                # Without the scope there is nothing to sign, and the bot must not
+                # invent one: a guessed scope is a signature over the wrong thing.
+                return (views.plain("Não tenho o escopo do cartão deste mandato."),)
+            message = self._gateway.cancel_instrument(
+                identity,
+                argument,
+                scope=identity.instrument_scope,
+                epoch=mandate.revocation_epoch,
+            )
+            return (views.signed_note("Cartão cancelado", message),)
         if verb == views.CALLBACK_REVOKE_MENU:
             mandate = self._gateway.mandate(argument)
             return (views.revoke_menu(mandate) if mandate else views.no_mandate(),)

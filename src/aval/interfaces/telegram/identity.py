@@ -52,6 +52,10 @@ class ChatIdentity:
     principal_id: str
     display_name: str
     mandate_id: str | None = None
+    # The revocation scope that cancels this mandate's card, handed back once at
+    # creation. The API never serves the instrument token — a client that could read it
+    # could present it — so the only way to hold it is to have been told it.
+    instrument_scope: str | None = None
 
     @property
     def actor(self) -> str:
@@ -101,9 +105,11 @@ class IdentityStore:
         self._save()
         return identity
 
-    def bind_mandate(self, chat_id: int, mandate_id: str) -> ChatIdentity:
+    def bind_mandate(
+        self, chat_id: int, mandate_id: str, *, instrument_scope: str | None = None
+    ) -> ChatIdentity:
         identity = self._identities[chat_id]
-        identity = replace(identity, mandate_id=mandate_id)
+        identity = replace(identity, mandate_id=mandate_id, instrument_scope=instrument_scope)
         self._identities[chat_id] = identity
         self._save()
         return identity
@@ -139,6 +145,7 @@ class IdentityStore:
                 principal_id=str(entry["principal_id"]),
                 display_name=str(entry["display_name"]),
                 mandate_id=entry.get("mandate_id"),
+                instrument_scope=entry.get("instrument_scope"),
             )
             self._custody.adopt(identity.kid, private_key)
             self._identities[identity.chat_id] = identity
@@ -152,6 +159,7 @@ class IdentityStore:
                     "principal_id": identity.principal_id,
                     "display_name": identity.display_name,
                     "mandate_id": identity.mandate_id,
+                    "instrument_scope": identity.instrument_scope,
                     "private_key_pem": self._custody.export_pem(identity.kid),
                 }
                 for identity in self._identities.values()

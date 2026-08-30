@@ -3,7 +3,7 @@
 ## Estado
 
 **Verde.** A suíte pública de E2E passa (`uv run pytest tests/integration/e2e -q` →
-11/11), a suíte completa passa (383 testes), a do navegador passa (32 testes) e a
+11/11), a suíte completa passa (404 testes), a do navegador passa (32 testes) e a
 jornada ao vivo do navegador passa 14/14 contra um servidor HTTP real.
 
 > Este documento substitui a versão anterior, que registrava *"RED — 5 passed, 6

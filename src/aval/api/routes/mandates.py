@@ -23,7 +23,14 @@ from aval.api.schemas import (
     RevocationRequest,
     RevocationResponse,
 )
-from aval.domain.entities import Mandate, Principal, RevocationAuthority, UsageLimit
+from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
+from aval.domain.entities import (
+    Mandate,
+    PaymentInstrument,
+    Principal,
+    RevocationAuthority,
+    UsageLimit,
+)
 from aval.domain.enums import RevocationRole
 
 router = APIRouter(tags=["mandates"])
@@ -72,6 +79,19 @@ def create_mandate(request: Request, body: CreateMandateRequest) -> CreateMandat
         roles = [RevocationRole(authority.role) for authority in body.authorities]
     except ValueError as error:
         raise ApiError(422, "unknown_revocation_role", "Papel de autoridade desconhecido.") from error
+
+    # The card is read here and forgotten here. `instrument` carries a token and four
+    # digits from this line onwards; the number itself is not stored, logged or passed
+    # on, and the request object holding it dies with this call.
+    instrument: PaymentInstrument | None = None
+    if body.payment_method is not None:
+        try:
+            token = OpaqueTestCredentialTokenizer().tokenize(body.payment_method.card_number)
+        except ValueError as error:
+            raise ApiError(
+                422, "payment_method_invalid", "Número de cartão inválido."
+            ) from error
+        instrument = PaymentInstrument(token, f"•••• {body.payment_method.card_number[-4:]}")
     mandate = Mandate(
         id=mandate_id,
         principal=Principal(id=body.principal.id, display_name=body.principal.display_name),
@@ -84,6 +104,7 @@ def create_mandate(request: Request, body: CreateMandateRequest) -> CreateMandat
             if body.usage_limit is None
             else UsageLimit(body.usage_limit.max_uses, body.usage_limit.window_seconds)
         ),
+        instrument=instrument,
         expires_at=body.expires_at,
         policy_version=1,
         revocation_metadata={"revocation_id": revocation_id, "epoch": 0},
@@ -95,13 +116,29 @@ def create_mandate(request: Request, body: CreateMandateRequest) -> CreateMandat
                 kid=authority.kid,
                 role=role,
                 public_jwk=dict(authority.public_jwk),
-                allowed_scopes=frozenset(authority.allowed_scopes),
+                # The instrument scope is added here rather than asked for, because the
+                # token is minted a few lines above and the caller could not have named
+                # it. A holder who authorized a card is by construction allowed to
+                # cancel that card; anything narrower would be authority nobody holds.
+                allowed_scopes=frozenset(authority.allowed_scopes)
+                | (
+                    {f"instrument:{instrument.token}"}
+                    if instrument is not None and role is RevocationRole.HOLDER
+                    else set()
+                ),
             )
             for authority, role in zip(body.authorities, roles, strict=True)
         ),
     )
     runtime.core.register_mandate(mandate)
-    return CreateMandateResponse(mandate_id=mandate_id, policy_version=1, revocation_id=revocation_id)
+    return CreateMandateResponse(
+        mandate_id=mandate_id,
+        policy_version=1,
+        revocation_id=revocation_id,
+        instrument_revocation_scope=(
+            None if instrument is None else f"instrument:{instrument.token}"
+        ),
+    )
 
 
 @router.post("/principals/{principal_id}/revocations")

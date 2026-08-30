@@ -27,7 +27,12 @@ Three properties make this safe to put on a stage:
    ceiling or balance. A model told the budget could be talked into repeating it; this
    one has never been told. It also means the model cannot self-censor to stay inside
    the mandate, which is what keeps the refusal demonstrable.
-3. **It cannot break the demo.** Any failure — no key, a timeout, a rate limit, a
+3. **It has a third answer.** An instruction that does not determine a choice is
+   not a purchase and not a dead end — it is a question. Buying the cheapest flight in
+   the catalogue because somebody typed "compre uma passagem" is approving something
+   nobody asked for, and the case is explicit that nothing may be approved silently.
+   Ambiguity asks; the mandate refuses. Two different brakes, on two different things.
+4. **It cannot break the demo.** Any failure — no key, a timeout, a rate limit, a
    malformed answer, an invented sku — falls back to the rules. The default with no
    configuration *is* the rule proposer, so a clean clone runs the whole case with no
    account and no network.
@@ -54,6 +59,7 @@ SYSTEM = """Você é o agente de compras de uma pessoa. Você escolhe UMA oferta
 Regras da sua escolha:
 - O mais barato quase nunca é o melhor. Compare escalas, duração, horário de partida, bagagem e reembolso contra o que a pessoa pediu.
 - Respeite o que a pessoa pediu explicitamente. Se ela pediu a executiva, proponha a executiva.
+- Se o pedido não determina a escolha — não diz para onde, ou serve a qualquer oferta da lista — NÃO escolha. Devolva {"pergunta": "<uma pergunta curta>"} e nada mais. Escolher no lugar da pessoa é decidir por ela.
 - Escolha a melhor resposta ao pedido. Não é você quem decide se a compra pode acontecer.
 - Escreva o motivo em uma frase curta, em português, como quem explica para o dono do dinheiro.
 
@@ -79,6 +85,26 @@ _ANSWER_SCHEMA = {
     "additionalProperties": False,
 }
 
+# The model answers with one shape or the other: a choice, or a question.
+_ANSWER_OR_QUESTION = {
+    "anyOf": [
+        _ANSWER_SCHEMA,
+        {
+            "type": "object",
+            "properties": {"pergunta": {"type": "string"}},
+            "required": ["pergunta"],
+            "additionalProperties": False,
+        },
+    ]
+}
+
+
+@dataclass(frozen=True)
+class Question:
+    """The agent does not know enough to choose, so it asks instead of guessing."""
+
+    text: str
+
 
 @dataclass(frozen=True)
 class Proposal:
@@ -94,7 +120,7 @@ class Proposal:
 class OfferProposer(Protocol):
     def propose(
         self, instruction: str, offers: list[dict[str, Any]]
-    ) -> Proposal | None: ...
+    ) -> Proposal | Question | None: ...
 
 
 # ── the deterministic floor ─────────────────────────────────────────────────
@@ -167,11 +193,34 @@ def choose_offer(offers: list[dict[str, Any]], intent: PurchaseIntent) -> dict[s
     )[2]
 
 
+def names_nothing_on_sale(offers: list[dict[str, Any]], intent: PurchaseIntent) -> bool:
+    """Whether the words the person used identify anything at all.
+
+    Two sentences land here. One says too little — *compre uma passagem* — and every
+    word in it is a stop word, so nothing narrows the catalogue and the cheapest fare
+    wins by default. The other says something the catalogue has never heard of. Both
+    mean the same thing: the agent cannot tell which offer is wanted, and picking one
+    anyway would be deciding on the buyer behalf.
+    """
+    haystacks = [fold(f"{o['item']['title']} {o['item']['sku']}") for o in offers]
+    return not any(
+        keyword in haystack for haystack in haystacks for keyword in intent.keywords
+    )
+
+
+ASK_WHERE = "Para onde? Sem um destino eu estaria escolhendo por você — e a escolha é sua."
+
+
 class RuleProposer:
     """The default. No network, no key, no possible timeout on stage."""
 
-    def propose(self, instruction: str, offers: list[dict[str, Any]]) -> Proposal | None:
-        offer = choose_offer(offers, parse_intent(instruction))
+    def propose(
+        self, instruction: str, offers: list[dict[str, Any]]
+    ) -> Proposal | Question | None:
+        intent = parse_intent(instruction)
+        if offers and names_nothing_on_sale(offers, intent):
+            return Question(ASK_WHERE)
+        offer = choose_offer(offers, intent)
         return None if offer is None else Proposal(offer=offer)
 
 
@@ -217,7 +266,9 @@ class ModelProposer:
         self._model = model
         self._fallback = fallback or RuleProposer()
 
-    def propose(self, instruction: str, offers: list[dict[str, Any]]) -> Proposal | None:
+    def propose(
+        self, instruction: str, offers: list[dict[str, Any]]
+    ) -> Proposal | Question | None:
         candidates = shortlist(offers, parse_intent(instruction))
         if not candidates:
             return self._fallback.propose(instruction, offers)
@@ -230,9 +281,12 @@ class ModelProposer:
             return self._fallback.propose(instruction, offers)
 
     @staticmethod
-    def _coerce(answer: Any, candidates: list[dict[str, Any]]) -> Proposal:
+    def _coerce(answer: Any, candidates: list[dict[str, Any]]) -> Proposal | Question:
         if not isinstance(answer, dict):
             raise ValueError("model answer is not an object")
+        asked = answer.get("pergunta")
+        if isinstance(asked, str) and asked.strip():
+            return Question(asked.strip())
         by_sku = {offer["item"]["sku"]: offer for offer in candidates}
         chosen = by_sku.get(str(answer.get("sku", "")))
         if chosen is None:
@@ -272,7 +326,7 @@ def _anthropic_model(timeout_seconds: float) -> Callable[[str, list[dict[str, An
             # it travels as ordinary user content. It cannot reach anything but this
             # one call: the reply is coerced into a Proposal and nothing else.
             messages=[{"role": "user", "content": content}],
-            output_config={"format": {"type": "json_schema", "schema": _ANSWER_SCHEMA}},
+            output_config={"format": {"type": "json_schema", "schema": _ANSWER_OR_QUESTION}},
         )
         text = next((block.text for block in response.content if block.type == "text"), "")
         return json.loads(text)
