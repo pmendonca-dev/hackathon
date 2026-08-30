@@ -36,6 +36,23 @@ class MandateDefaults:
 
 
 @dataclass(frozen=True)
+class EdgeCredentials:
+    """The two transport secrets between Computer A and Computer B.
+
+    They authenticate a *hop*, never a purchase. Nothing signed with either can create
+    a mandate, authorize a spend or capture a payment — that authority is a holder's
+    ES256 JWS and lives on B alone — so both computers holding both secrets costs
+    nothing. The directions are kept apart anyway, so that a compromise of the public
+    discovery endpoint cannot also drain the event outbox.
+    """
+
+    # A signs, B verifies: watch commands, event polling, acknowledgement.
+    edge_to_core_secret: str
+    # B signs, A verifies: the discovery call that reaches the open web.
+    core_to_edge_secret: str
+
+
+@dataclass(frozen=True)
 class BotConfig:
     token: str
     api_base_url: str
@@ -46,6 +63,9 @@ class BotConfig:
     poll_timeout_seconds: int
     request_timeout_seconds: int
     escalation_poll_seconds: int
+    # None on a single machine, where A and B are the same process and there is no hop
+    # to authenticate. Present only when the deployment said the halves are apart.
+    edge: EdgeCredentials | None
 
     def may_act(self, chat_id: int) -> bool:
         """Open mode is safe here: each chat holds its own key and its own mandate,
@@ -87,7 +107,39 @@ class BotConfig:
             poll_timeout_seconds=_positive_int(env, "TELEGRAM_POLL_TIMEOUT_SECONDS", 30),
             request_timeout_seconds=_positive_int(env, "AVAL_REQUEST_TIMEOUT_SECONDS", 15),
             escalation_poll_seconds=_positive_int(env, "AVAL_ESCALATION_POLL_SECONDS", 8),
+            edge=_edge_credentials(env),
         )
+
+
+def _edge_credentials(env: Mapping[str, str]) -> EdgeCredentials | None:
+    """The secrets for the two-computer split, demanded only when it was asked for.
+
+    Fail-closed by omission: `AVAL_EDGE_MODE=remote` is the deployment saying the
+    halves are on different machines, and a remote deployment missing a secret must
+    refuse to boot. Signing with an empty string would "work" on both sides and leave
+    B's private endpoints open to anyone who found the port.
+    """
+    if env.get("AVAL_EDGE_MODE", "").strip().lower() != "remote":
+        return None
+    edge_to_core = env.get("AVAL_EDGE_TO_CORE_SECRET", "").strip()
+    core_to_edge = env.get("AVAL_CORE_TO_EDGE_SECRET", "").strip()
+    missing = [
+        name
+        for name, value in (
+            ("AVAL_EDGE_TO_CORE_SECRET", edge_to_core),
+            ("AVAL_CORE_TO_EDGE_SECRET", core_to_edge),
+        )
+        if not value
+    ]
+    if missing:
+        raise ConfigError(f"AVAL_EDGE_MODE=remote exige {' e '.join(missing)}")
+    if edge_to_core == core_to_edge:
+        # One secret for both directions means a captured discovery credential also
+        # reads the outbox. The whole point of two is that they are two.
+        raise ConfigError(
+            "AVAL_EDGE_TO_CORE_SECRET e AVAL_CORE_TO_EDGE_SECRET devem ser diferentes"
+        )
+    return EdgeCredentials(edge_to_core_secret=edge_to_core, core_to_edge_secret=core_to_edge)
 
 
 def _csv(raw: str) -> tuple[str, ...]:
