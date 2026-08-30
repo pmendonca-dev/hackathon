@@ -89,14 +89,15 @@ export function TrialConsole({
         </Panel>
 
         <Panel eyebrow="Boundary de comando" title={selected.label} action={<LockKeyhole size={18} className={commandAvailable ? 'text-verify' : 'text-fg-mute'} aria-hidden="true" />}>
-          <form onSubmit={(event) => void submit(event)} className="space-y-4">
-            <label className="block">
+          <form onSubmit={(event) => void submit(event)} className="space-y-4" aria-busy={submitting}>
+            <label className="block" htmlFor="trial-target-id">
               <span className="eyebrow">Alvo canônico</span>
-              <input className="form-control" value={targetId} onChange={(event) => setTargetId(event.target.value)} required disabled={!commandAvailable} />
+              <input id="trial-target-id" className="form-control" value={targetId} onChange={(event) => setTargetId(event.target.value)} required disabled={!commandAvailable} />
             </label>
-            <label className="block">
+            <label className="block" htmlFor="trial-idempotency-key">
               <span className="eyebrow">Idempotency-Key</span>
               <input
+                id="trial-idempotency-key"
                 className="form-control"
                 type="text"
                 autoComplete="off"
@@ -120,18 +121,20 @@ export function TrialConsole({
       </section>
 
       <Panel eyebrow="Resultado da boundary" title="Resposta sem inferência local">
-        {receipt ? (
-          <dl>
-            <Field label="Request ID">{safeDisplayText(receipt.requestId)}</Field>
-            <Field label="Origem">{receipt.dataSource}</Field>
-            <Field label="Resultado">{receipt.outcome}</Field>
-            <Field label="Estado alterado">{receipt.canonicalStateChanged ? 'sim' : 'não'}</Field>
-            <Field label="Effective at">{receipt.effectiveAt ?? 'não informado pela API'}</Field>
-            <Field label="Mensagem" mono={false}>{safeDisplayText(receipt.message)}</Field>
-          </dl>
-        ) : (
-          <p className="py-5 text-center text-[13px] text-fg-mute">Nenhum comando real foi executado nesta sessão.</p>
-        )}
+        <div role="status" aria-live="polite" aria-atomic="true">
+          {receipt ? (
+            <dl>
+              <Field label="Request ID">{safeDisplayText(receipt.requestId)}</Field>
+              <Field label="Origem">{receipt.dataSource}</Field>
+              <Field label="Resultado">{receipt.outcome}</Field>
+              <Field label="Estado alterado">{receipt.canonicalStateChanged ? 'sim' : 'não'}</Field>
+              <Field label="Effective at">{receipt.effectiveAt ?? 'não informado pela API'}</Field>
+              <Field label="Mensagem" mono={false}>{safeDisplayText(receipt.message)}</Field>
+            </dl>
+          ) : (
+            <p className="py-5 text-center text-[13px] text-fg-mute">Nenhum comando real foi executado nesta sessão.</p>
+          )}
+        </div>
       </Panel>
     </div>
   );

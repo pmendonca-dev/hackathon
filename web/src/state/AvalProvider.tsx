@@ -26,6 +26,7 @@ import {
   type AvalErrorPresentation,
 } from '../errors/avalError.ts';
 import { AvalContext, type AvalContextValue, type View } from './AvalContext.ts';
+import { sessionRecovery } from './sessionRecovery.ts';
 
 type BrowserGateway = AvalGateway | UiBffGatewayContract;
 
@@ -68,6 +69,23 @@ export function AvalProvider({
   const [view, setView] = useState<View>('human');
   const [lastCommandReceipt, setLastCommandReceipt] = useState<TrialCommandReceipt | null>(null);
 
+  const clearProtectedState = useCallback(() => {
+    setSession(null);
+    setWorkspace(null);
+    setAudit(null);
+    setDispute(null);
+    setLastCommandReceipt(null);
+    setView('human');
+  }, []);
+
+  const handleFailure = useCallback((failure: unknown, fallback: string) => {
+    const presentation = safeFailure(failure, fallback);
+    if (apiGateway && sessionRecovery(presentation).clearSession) {
+      clearProtectedState();
+    }
+    setError(presentation);
+  }, [apiGateway, clearProtectedState]);
+
   const loadBffWorkspace = useCallback(async (role: UiRole) => {
     if (!apiGateway) return;
     const nextWorkspace = await apiGateway.loadWorkspace();
@@ -98,29 +116,26 @@ export function AvalProvider({
       setView(defaultView(issuedSession.role));
       await loadBffWorkspace(issuedSession.role);
     } catch (loginError) {
-      setError(safeFailure(loginError, 'Não foi possível iniciar a sessão local.'));
+      handleFailure(loginError, 'Não foi possível iniciar a sessão local.');
     } finally {
       setLoading(false);
     }
-  }, [apiGateway, loadBffWorkspace]);
+  }, [apiGateway, handleFailure, loadBffWorkspace]);
 
   const logout = useCallback(async () => {
     if (!apiGateway || !session) return;
+    const csrfToken = session.csrfToken;
     setLoading(true);
     setError(null);
+    clearProtectedState();
     try {
-      await apiGateway.logout(session.csrfToken);
-      setSession(null);
-      setWorkspace(null);
-      setAudit(null);
-      setDispute(null);
-      setLastCommandReceipt(null);
+      await apiGateway.logout(csrfToken);
     } catch (logoutError) {
-      setError(safeFailure(logoutError, 'Não foi possível encerrar a sessão no servidor.'));
+      handleFailure(logoutError, 'A sessão local foi encerrada, mas o servidor não confirmou o logout.');
     } finally {
       setLoading(false);
     }
-  }, [apiGateway, session]);
+  }, [apiGateway, clearProtectedState, handleFailure, session]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -133,11 +148,11 @@ export function AvalProvider({
         setSnapshot(await mockGateway!.loadWorkspace());
       }
     } catch (reloadError) {
-      setError(safeFailure(reloadError, 'Não foi possível carregar a projeção canônica.'));
+      handleFailure(reloadError, 'Não foi possível carregar a projeção canônica.');
     } finally {
       setLoading(false);
     }
-  }, [apiGateway, loadBffWorkspace, mockGateway, session]);
+  }, [apiGateway, handleFailure, loadBffWorkspace, mockGateway, session]);
 
   useEffect(() => {
     if (apiGateway) return;
@@ -182,9 +197,9 @@ export function AvalProvider({
       });
       await loadBffWorkspace(session.role);
     } catch (commandError) {
-      setError(safeFailure(commandError, 'O BFF não confirmou a revogação. Nenhuma alteração foi presumida pelo browser.'));
+      handleFailure(commandError, 'O BFF não confirmou a revogação. Nenhuma alteração foi presumida pelo browser.');
     }
-  }, [apiGateway, loadBffWorkspace, mockGateway, session]);
+  }, [apiGateway, handleFailure, loadBffWorkspace, mockGateway, session]);
 
   const sessionSummary = useMemo(
     () => session ? { role: session.role, expiresAt: session.expiresAt } : null,

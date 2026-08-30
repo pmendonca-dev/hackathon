@@ -1,3 +1,4 @@
+import { useEffect, useId, useRef } from 'react';
 import { AlertTriangle, FileSearch, RefreshCw, ShieldAlert } from 'lucide-react';
 
 import type { AvalErrorPresentation } from '../errors/avalError.ts';
@@ -32,24 +33,37 @@ export function RuntimeFailure({
   const isOperationPreserved = error.status === 409;
   const isSafeBlock = error.status === 503;
   const Icon = isSafeBlock ? ShieldAlert : isOperationPreserved ? FileSearch : AlertTriangle;
+  const regionRef = useRef<HTMLElement>(null);
+  const titleId = useId();
+  const messageId = useId();
+  const recoveryId = useId();
+
+  useEffect(() => {
+    regionRef.current?.focus();
+  }, [error]);
 
   return (
     <section
+      ref={regionRef}
       className={`rounded-2xl border ${toneClass[error.tone]} ${compact ? 'p-4' : 'p-5'}`}
       role="alert"
-      aria-live="polite"
+      aria-live="assertive"
+      aria-atomic="true"
+      aria-labelledby={titleId}
+      aria-describedby={`${messageId} ${recoveryId}`}
+      tabIndex={-1}
     >
       <div className="flex items-start gap-3">
         <Icon className="mt-0.5 shrink-0" size={20} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-display text-base font-semibold text-fg">{error.title}</h2>
+            <h2 id={titleId} className="font-display text-base font-semibold text-fg">{error.title}</h2>
             <span className="mono text-[10px] uppercase tracking-wider opacity-75">
               {safeDisplayText(error.status ? `HTTP ${error.status} · ${error.code}` : error.code)}
             </span>
           </div>
-          <p className="mt-1 text-[13px] leading-relaxed text-fg-dim">{safeDisplayText(error.message)}</p>
-          <p className="mt-2 text-[12px] leading-relaxed opacity-90">{safeDisplayText(error.recovery)}</p>
+          <p id={messageId} className="mt-1 text-[13px] leading-relaxed text-fg-dim">{safeDisplayText(error.message)}</p>
+          <p id={recoveryId} className="mt-2 text-[12px] leading-relaxed opacity-90">{safeDisplayText(error.recovery)}</p>
           {label && onAction && (
             <Button className="mt-4" variant="ghost" onClick={onAction}>
               <RefreshCw size={14} aria-hidden="true" />{label}
