@@ -11,7 +11,7 @@ import urllib.error
 import pytest
 
 from aval.agent.intent import fold, parse_intent
-from aval.interfaces.telegram import views
+from aval.interfaces.telegram import conversation, views
 from aval.interfaces.telegram.bot import Bot, TelegramApi, _display_name
 from aval.interfaces.telegram.config import BotConfig, ConfigError
 from aval.interfaces.telegram.gateway import AvalGateway, GatewayError, MoneyView
@@ -1471,3 +1471,63 @@ def test_confirming_a_spec_the_bot_no_longer_holds_issues_nothing(world) -> None
 
     assert identities.get(MARTA).mandate_id == first
     assert "Descreva o mandato de novo" in api.last_text
+
+
+# ── conversation ────────────────────────────────────────────────────────────
+class ScriptedTalker:
+    """A model that says what the test needs, in the order the test needs it."""
+
+    def __init__(self, *drafts) -> None:
+        self.drafts = list(drafts)
+        self.seen: list[tuple[str, ...]] = []
+        self.categories: tuple[str, ...] = ()
+
+    def respond(self, history, *, categories, defaults):
+        self.seen.append(tuple(turn.text for turn in history))
+        self.categories = tuple(categories)
+        return self.drafts.pop(0)
+
+
+def test_free_text_is_answered_in_chat_until_the_mandate_is_complete(tmp_path) -> None:
+    """The bot converses, then always lands on a spec the person can sign."""
+    talker = ScriptedTalker(
+        conversation.Draft("Até quanto você quer poder gastar?", None),
+        conversation.Draft(
+            "Hotel até 300 dólares, por 7 dias.",
+            views.MandateSpec(("lodging",), MoneyView(30_000, "USD", 2), 7, 2),
+        ),
+    )
+    bot, api, aval, identities = _build(tmp_path, FakeAval())
+    bot._talker = talker
+    bot.handle_update(message("/start"))
+    first = identities.get(MARTA).mandate_id
+    api.sent.clear()
+
+    bot.handle_update(message("queria poder reservar hotel"))
+    assert api.last_text == "Até quanto você quer poder gastar?"
+    assert not api.sent[-1][1].buttons
+    # Nothing was granted from words alone.
+    assert aval.mandates[first]["status"] == "ACTIVE"
+    assert identities.get(MARTA).mandate_id == first
+
+    api.sent.clear()
+    bot.handle_update(message("até 300, por uma semana"))
+    preview = api.sent[-1][1]
+    assert "confira antes" in preview.text
+    assert "US$ 300,00" in preview.text and "7 dia" in preview.text
+    confirm = [label for row in preview.buttons for label, _ in row]
+    assert confirm == ["✅ Emitir este mandato"]
+
+    # The whole exchange, and only the catalogue's own categories, reached the model.
+    assert talker.seen[-1] == (
+        "queria poder reservar hotel",
+        "Até quanto você quer poder gastar?",
+        "até 300, por uma semana",
+    )
+    assert "lodging" in talker.categories
+
+    bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
+    second = identities.get(MARTA).mandate_id
+    assert second != first
+    assert aval.mandates[first]["status"] == "REVOKED"
+    assert aval.mandates[second]["limit"]["minor_units"] == 30_000

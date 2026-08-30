@@ -23,8 +23,9 @@ import time
 import urllib.error
 import urllib.request
 
-from aval.interfaces.telegram import views
+from aval.interfaces.telegram import conversation, views
 from aval.interfaces.telegram.config import BotConfig
+from aval.interfaces.telegram.conversation import SpecTalker, Turn, build_talker
 from aval.interfaces.telegram.gateway import AvalGateway, GatewayError, MandateView, MoneyView
 from aval.interfaces.telegram.identity import ChatIdentity, IdentityStore
 from aval.interfaces.telegram.views import View
@@ -127,11 +128,13 @@ class Bot:
         gateway: AvalGateway,
         identities: IdentityStore,
         api: TelegramApi,
+        talker: SpecTalker | None = None,
     ) -> None:
         self._config = config
         self._gateway = gateway
         self._identities = identities
         self._api = api
+        self._talker = talker or build_talker()
         self._notified: set[tuple[int, str]] = set()
         # ponytail: the last unmet request per chat, in memory. A restart forgets it and
         # the person is asked to type again — the alternative is a standing order the
@@ -154,6 +157,10 @@ class Bot:
         # and /cartao opens a new one — the card itself is safe at the processor either
         # way, so the worst a restart costs is one abandoned form.
         self._card_session: dict[int, str] = {}
+        # ponytail: the conversation each chat is having, in memory and trimmed. A
+        # restart forgets it and the person restates what they want — which is the
+        # right way to lose a draft nobody signed.
+        self._history: dict[int, list[Turn]] = {}
 
     # ── updates ────────────────────────────────────────────────────────────
     def dispatch(self, update: Mapping[str, Any]) -> None:
@@ -187,7 +194,10 @@ class Bot:
     def _handle_message(self, message: Mapping[str, Any]) -> None:
         chat_id = int(message.get("chat", {}).get("id", 0))
         text = str(message.get("text", "")).strip()
-        if not chat_id or not text.startswith("/"):
+        if not chat_id or not text:
+            return
+        if not text.startswith("/"):
+            self._reply(chat_id, text)
             return
         head, _, argument = text.partition(" ")
         command = head.split("@", 1)[0].lower()
@@ -205,6 +215,42 @@ class Bot:
         try:
             for view in self._command_views(command, argument, chat_id, display_name):
                 self._send(chat_id, view)
+        except GatewayError as error:
+            self._send(chat_id, views.unavailable(str(error), error.reason_code))
+
+    def _reply(self, chat_id: int, text: str) -> None:
+        """Answer plain words, and always land on something signable.
+
+        The model converses; it never grants. Every path out of here is either a
+        question in the chat or a spec drawn in full with a confirm button — and
+        the button is where the person's own key finally signs.
+        """
+        if not self._config.may_act(chat_id):
+            self._send(chat_id, views.denied())
+            return
+        identity = self._identities.get(chat_id)
+        if identity is None:
+            self._send(chat_id, views.no_mandate())
+            return
+        history = self._history.setdefault(chat_id, [])
+        history.append(Turn("user", text))
+        del history[:-conversation.HISTORY_LIMIT]
+        try:
+            categories = sorted({offer.category for offer in self._gateway.catalogue()})
+            draft = self._talker.respond(
+                history, categories=categories, defaults=self._config.mandate_defaults
+            )
+            history.append(Turn("assistant", draft.reply))
+            self._send(chat_id, views.plain(draft.reply))
+            if draft.spec is None:
+                return
+            self._pending_spec[chat_id] = draft.spec
+            current = (
+                self._gateway.mandate(identity.mandate_id)
+                if identity.mandate_id is not None
+                else None
+            )
+            self._send(chat_id, views.new_mandate_preview(draft.spec, current))
         except GatewayError as error:
             self._send(chat_id, views.unavailable(str(error), error.reason_code))
 
@@ -524,6 +570,7 @@ class Bot:
 
         if verb == views.CALLBACK_NEW_CONFIRM:
             spec = self._pending_spec.pop(identity.chat_id, None)
+            self._history.pop(identity.chat_id, None)
             if spec is None:
                 return (views.plain("Descreva o mandato de novo: /novo hotel até 300 por 7 dias"),)
             return self._issue_mandate(identity, spec)

@@ -699,6 +699,9 @@ def help_text() -> View:
         "\n".join(
             [
                 "<b>Comandos</b>",
+                "<i>Ou simplesmente diga o que o agente pode fazer — eu pergunto o que "
+                "faltar e te mostro o mandato para confirmar.</i>",
+                "",
                 "/comprar &lt;pedido&gt; — o agente tenta comprar em texto livre",
                 "/mandato — orçamento vivo e estado",
                 "/catalogo — o que está à venda",
