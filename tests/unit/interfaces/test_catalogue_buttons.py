@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from aval.agent.intent import parse_intent
-from aval.agent.purchasing_agent import choose_offer
+from aval.agent.proposer import choose_offer
 from aval.interfaces.telegram import views
 from aval.interfaces.telegram.gateway import MoneyView, OfferView
 from aval.merchant.catalog import CATALOG
@@ -46,11 +46,18 @@ def test_every_button_delivers_the_price_it_advertises(wish: views.Wish) -> None
 
 
 def test_no_button_exists_for_something_the_agent_cannot_be_asked_for() -> None:
-    """`parse_intent` only ever answers travel or lodging."""
+    """A button for a category `parse_intent` cannot produce is a dead button.
+
+    Asserted against the parser rather than against today's catalogue: what the
+    merchant sells is not this lane's business, but whether the agent can be asked
+    for it is.
+    """
     offered = {wish.category for wish in views.wishes(_offers())}
-    catalogued = {item.category for item in CATALOG}
-    assert offered == {"travel", "lodging"}
-    assert catalogued - offered, "the catalogue has more than the agent can express"
+    reachable = {parse_intent(wish.instruction).category for wish in views.wishes(_offers())}
+    assert offered <= reachable, f"no way to ask the agent for {offered - reachable}"
+    # And the converse is expected: the catalogue sells packages nobody can ask for,
+    # which is the offer the agent must never be able to reach by tapping a button.
+    assert {item.category for item in CATALOG} - offered
 
 
 def test_a_wish_slug_survives_a_round_trip() -> None:

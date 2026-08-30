@@ -5,7 +5,7 @@ from datetime import UTC
 
 from sqlalchemy import Connection, select, update
 
-from aval.domain.entities import Mandate, Principal, RevocationAuthority
+from aval.domain.entities import Mandate, Principal, RevocationAuthority, UsageLimit
 from aval.domain.enums import MandateStatus, RevocationRole
 from aval.domain.money import Money
 from aval.infrastructure.sqlite.models import mandates, revocation_authorities
@@ -26,6 +26,10 @@ class SqliteMandateRepository:
             "allowed_merchant_ids": json.dumps(sorted(mandate.allowed_merchant_ids)),
             "allowed_categories": json.dumps(sorted(mandate.allowed_categories)),
             "ceiling_minor_units": None if mandate.ceiling is None else mandate.ceiling.minor_units,
+            "max_uses": None if mandate.usage_limit is None else mandate.usage_limit.max_uses,
+            "usage_window_seconds": (
+                None if mandate.usage_limit is None else mandate.usage_limit.window_seconds
+            ),
             "status": mandate.status.value,
             "currency": mandate.limit.currency,
             "scale": mandate.limit.scale,
@@ -50,6 +54,16 @@ class SqliteMandateRepository:
     def get(self, mandate_id: str) -> Mandate | None:
         row = self._connection.execute(select(mandates).where(mandates.c.id == mandate_id)).mappings().one_or_none()
         return self._to_mandate(row) if row else None
+
+    def for_principal(self, principal_id: str) -> list[Mandate]:
+        """Every mandate one buyer holds. Scoped by construction: there is no query
+        here that answers "all mandates", because no caller is entitled to that."""
+        rows = self._connection.execute(
+            select(mandates)
+            .where(mandates.c.principal_id == principal_id)
+            .order_by(mandates.c.id)
+        ).mappings().all()
+        return [self._to_mandate(row) for row in rows]
 
     def for_authority_kid(self, kid: str) -> list[Mandate]:
         rows = self._connection.execute(
@@ -78,6 +92,11 @@ class SqliteMandateRepository:
             ceiling=None
             if row["ceiling_minor_units"] is None
             else Money(row["ceiling_minor_units"], row["currency"], row["scale"]),
+            usage_limit=(
+                None
+                if row["max_uses"] is None or row["usage_window_seconds"] is None
+                else UsageLimit(row["max_uses"], row["usage_window_seconds"])
+            ),
             expires_at=_aware(row["expires_at"]), policy_version=row["policy_version"],
             revocation_metadata=metadata, authorities=authorities, status=MandateStatus(row["status"]),
         )

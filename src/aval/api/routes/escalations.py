@@ -50,13 +50,34 @@ def escalation_view(escalation: Escalation) -> dict[str, Any]:
 
 
 @router.get("/escalations")
-def list_escalations(request: Request, mandate_id: str) -> dict[str, Any]:
+def list_escalations(
+    request: Request, mandate_id: str | None = None, principal_id: str | None = None
+) -> dict[str, Any]:
+    """What is waiting on a person, by mandate or across every mandate they hold.
+
+    One of the two scopes is required. An unscoped listing would be a feed of what
+    everybody is about to buy — amount, merchant and item — to anyone who asks, so
+    there is no such call. `principal_id` is what the bot and the browser use to poll
+    for new approvals without knowing a mandate id in advance.
+    """
     core = runtime_of(request).core
-    if core.mandate(mandate_id) is None:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
+    if mandate_id is None and principal_id is None:
+        raise ApiError(
+            422,
+            "escalation_scope_required",
+            "Informe mandate_id ou principal_id; não existe listagem global.",
+        )
+    if mandate_id is not None:
+        if core.mandate(mandate_id) is None:
+            raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
+        escalations = core.open_escalations(mandate_id)
+    else:
+        assert principal_id is not None
+        escalations = core.open_escalations_for_principal(principal_id)
     return {
         "mandate_id": mandate_id,
-        "escalations": [escalation_view(item) for item in core.open_escalations(mandate_id)],
+        "principal_id": principal_id,
+        "escalations": [escalation_view(item) for item in escalations],
     }
 
 

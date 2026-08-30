@@ -157,7 +157,10 @@ class Harness:
         digest = content_digest_sha256(raw)
         params = build_params(
             keyid=announce_kid or signing_kid,
-            created=created if created is not None else int(self.clock.instant.timestamp()),
+            # The runtime clock, not the raw provider: once the demo clock has been
+            # advanced, a signature stamped from the un-offset instant is genuinely
+            # stale and the edge is right to refuse it.
+            created=created if created is not None else int(self.runtime.clock.now().timestamp()),
             nonce=nonce or secrets.token_hex(8),
         )
         if not cover_body:

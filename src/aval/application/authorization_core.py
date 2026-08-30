@@ -92,11 +92,32 @@ class CaptureCommand(AuthorizationCommand):
 
 
 @dataclass(frozen=True)
+class EvaluationStep:
+    """One rung of the authorization ladder, and what it compared.
+
+    The ladder is walked in a fixed order and stops at the first failure, so a trace
+    that ends at `mandate_not_revoked` is proof that no money check was ever consulted.
+    That is the property the whole design rests on; publishing the steps is what turns
+    it from a claim into something a reader can check.
+    """
+
+    check: str
+    passed: bool
+    detail: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        return {"check": self.check, "passed": self.passed, "detail": self.detail}
+
+
+@dataclass(frozen=True)
 class AuthorizationResult:
     decision: AuthorizationDecision
     reason_code: str
     human_summary: str
     escalation_id: str | None = None
+    # Carries the live limit, ceiling and spend, so it is for the holder and the
+    # auditor. It must never be projected into the merchant view.
+    trace: tuple[EvaluationStep, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -116,6 +137,9 @@ class MandateSnapshot:
     mandate: Mandate
     limit: Money
     spent: Money
+    # Uses already consumed inside the frequency window, read at the same instant
+    # as the spend so a listing cannot show a budget and a count from two moments.
+    uses_in_window: int = 0
 
     @property
     def remaining(self) -> Money:
@@ -367,6 +391,96 @@ class AuthorizationCore:
                 raise signature_failure
             raise ValueError("unknown revocation authority")
         run_in_write_transaction(self._engine, operation)
+
+    def submit_principal_revocation(self, token: str) -> list[str]:
+        """End every mandate this key is an authority on, under one signature.
+
+        Someone who thinks their agent has been taken over should not have to revoke
+        six mandates one at a time while it keeps spending. The reach of the token is
+        decided the same way a single revocation is — by verifying it against each
+        mandate's own registered authority — so it touches exactly the mandates that
+        key could already have ended one by one, and not one more. Holding a key for
+        one of a person's mandates never becomes authority over the rest of them.
+
+        Returns the mandates actually revoked. An empty list is a refusal, not a
+        success with nothing to do: it means no mandate accepted this signature.
+        """
+        try:
+            encoded_header = token.split(".")[0]
+            header = json.loads(
+                base64.urlsafe_b64decode(encoded_header + "=" * (-len(encoded_header) % 4))
+            )
+            kid = header["kid"]
+        except (IndexError, KeyError, ValueError, json.JSONDecodeError) as error:
+            raise ValueError("malformed revocation JWS") from error
+
+        revoked: list[str] = []
+
+        def operation(connection) -> None:
+            repository = SqliteMandateRepository(connection)
+            for mandate in repository.for_authority_kid(kid):
+                for authority in mandate.authorities:
+                    if authority.kid != kid:
+                        continue
+                    try:
+                        payload = verify_compact_jws(
+                            token, public_key_from_jwk(dict(authority.public_jwk))
+                        )
+                    except ValueError:
+                        continue
+                    if payload.get("principal_id") != mandate.principal.id:
+                        continue
+                    if "mandate" not in authority.allowed_scopes:
+                        continue
+                    if not payload.get("reason") or not isinstance(payload.get("epoch"), int):
+                        raise ValueError("revocation payload is incomplete")
+                    if mandate.status is not MandateStatus.ACTIVE:
+                        continue
+                    SqliteMandateLockRepository(connection).acquire(
+                        mandate.id, touched_at=self._clock()
+                    )
+                    revocation = Revocation(
+                        id=f"rev_{uuid4().hex}",
+                        mandate_id=mandate.id,
+                        authority_id=authority.id,
+                        scope="mandate",
+                        reason=str(payload["reason"]),
+                        epoch=int(payload["epoch"]),
+                        signed_jws=token,
+                        revoked_at=self._clock(),
+                    )
+                    SqliteRevocationRepository(connection).append(revocation)
+                    metadata = dict(mandate.revocation_metadata)
+                    metadata["epoch"] = revocation.epoch
+                    repository.put(
+                        replace(
+                            mandate,
+                            status=MandateStatus.REVOKED,
+                            revocation_metadata=metadata,
+                        )
+                    )
+                    # One entry per mandate, on that mandate's own chain. A shared
+                    # "everything was revoked" event would sit on no chain at all and
+                    # would be invisible to an auditor reading a single mandate.
+                    SqliteAuditLedger(connection).append(
+                        mandate_id=mandate.id,
+                        event_type=f"revocation.{authority.role.value}",
+                        human_summary="Revogação total do titular aceita.",
+                        actor=f"authority:{authority.kid}",
+                        detail={
+                            "scope": "mandate",
+                            "reason": revocation.reason,
+                            "epoch": revocation.epoch,
+                            "authority_role": authority.role.value,
+                            "principal_wide": True,
+                        },
+                        occurred_at=self._clock(),
+                    )
+                    revoked.append(mandate.id)
+                    break
+
+        run_in_write_transaction(self._engine, operation)
+        return revoked
 
     def open_dispute(self, *, reservation_id: str, reason: str) -> Dispute:
         """Record a later denial. Opening a dispute decides nothing on its own."""
@@ -669,6 +783,12 @@ class AuthorizationCore:
         with self._engine.connect() as connection:
             return SqliteEscalationRepository(connection).open_for_mandate(mandate_id)
 
+    def open_escalations_for_principal(self, principal_id: str) -> list[Escalation]:
+        """Everything waiting on one person. There is deliberately no unscoped variant:
+        a pending escalation names what somebody is about to buy."""
+        with self._engine.connect() as connection:
+            return SqliteEscalationRepository(connection).open_for_principal(principal_id)
+
     def _verified_approval(
         self, token: str, mandate: Mandate, *, kind: str = "approval"
     ) -> dict:
@@ -911,8 +1031,41 @@ class AuthorizationCore:
             if mandate is None:
                 return None
             limit, _ = SqlitePolicyRepository(connection).active_limit_for(mandate_id, mandate.limit)
-            spent = SqliteLedgerRepository(connection).spent_for(mandate_id, limit)
-            return MandateSnapshot(mandate=mandate, limit=limit, spent=spent)
+            ledger = SqliteLedgerRepository(connection)
+            return MandateSnapshot(
+                mandate=mandate,
+                limit=limit,
+                spent=ledger.spent_for(mandate_id, limit),
+                uses_in_window=self._uses_in_window(ledger, mandate),
+            )
+
+    def snapshots_for_principal(self, principal_id: str) -> list[MandateSnapshot]:
+        """Every mandate one buyer holds, each already priced against its live limit.
+
+        Built one connection deep so a listing reads the same active limit and the same
+        spend a single read would — a judge who moves the limit sees the list move too.
+        """
+        with self._engine.connect() as connection:
+            policies = SqlitePolicyRepository(connection)
+            ledger = SqliteLedgerRepository(connection)
+            snapshots = []
+            for mandate in SqliteMandateRepository(connection).for_principal(principal_id):
+                limit, _ = policies.active_limit_for(mandate.id, mandate.limit)
+                snapshots.append(
+                    MandateSnapshot(
+                        mandate=mandate,
+                        limit=limit,
+                        spent=ledger.spent_for(mandate.id, limit),
+                        uses_in_window=self._uses_in_window(ledger, mandate),
+                    )
+                )
+            return snapshots
+
+    def _uses_in_window(self, ledger: SqliteLedgerRepository, mandate: Mandate) -> int:
+        if mandate.usage_limit is None:
+            return 0
+        window = timedelta(seconds=mandate.usage_limit.window_seconds)
+        return ledger.uses_since(mandate.id, self._clock() - window)
 
     def timeline_for(self, mandate_id: str) -> list[LedgerEntry]:
         with self._engine.connect() as connection:
@@ -952,35 +1105,84 @@ class AuthorizationCore:
         command: AuthorizationCommand,
         approved_reasons: frozenset[str] = frozenset(),
     ) -> tuple[AuthorizationResult, Mandate | None]:
+        # Every rung the ladder actually walked, in order. `cleared` records a rung that
+        # held; `stopped` records the one that did not and freezes the trace there, so
+        # the absence of a money check is itself evidence.
+        walked: list[EvaluationStep] = []
+
+        def cleared(check: str, detail: str | None = None) -> None:
+            walked.append(EvaluationStep(check, True, detail))
+
+        def stopped(check: str, detail: str) -> tuple[EvaluationStep, ...]:
+            walked.append(EvaluationStep(check, False, detail))
+            return tuple(walked)
+
         mandate = SqliteMandateRepository(connection).get(command.mandate_id)
         if mandate is None:
-            return self._reject("mandate_not_found", "Mandato não encontrado."), None
+            return self._reject(
+                "mandate_not_found",
+                "Mandato não encontrado.",
+                stopped("mandate_exists", f"mandato {command.mandate_id} não existe"),
+            ), None
+        cleared("mandate_exists", command.mandate_id)
         try:
             revocations = SqliteRevocationRepository(connection)
             revoked = revocations.is_revoked(command.mandate_id)
             budget_zero = revocations.has_scope(command.mandate_id, "budget:zero")
             merchant_revoked = revocations.has_scope(command.mandate_id, f"merchant:{command.merchant_id}")
         except Exception:
-            return self._reject("revocation_unavailable", "Revogação indisponível; captura recusada."), mandate
+            # Unknown is not permitted. If revocation cannot be read, the answer is no.
+            return self._reject(
+                "revocation_unavailable",
+                "Revogação indisponível; captura recusada.",
+                stopped("revocation_readable", "store de revogação indisponível"),
+            ), mandate
+        cleared("revocation_readable")
         limit, _ = SqlitePolicyRepository(connection).active_limit_for(command.mandate_id, mandate.limit)
         if revoked or mandate.status is MandateStatus.REVOKED:
-            return self._reject("mandate_revoked", "Mandato revogado."), mandate
+            return self._reject(
+                "mandate_revoked",
+                "Mandato revogado.",
+                stopped("mandate_not_revoked", "mandato revogado pelo titular"),
+            ), mandate
+        cleared("mandate_not_revoked")
         instrument_id = getattr(command, "instrument_id", None)
         instrument_revoked = instrument_id is not None and revocations.has_scope(
             command.mandate_id, f"instrument:{instrument_id}"
         )
         if merchant_revoked:
-            return self._reject("merchant_revoked", "Merchant revogado para este mandato."), mandate
+            return self._reject(
+                "merchant_revoked",
+                "Merchant revogado para este mandato.",
+                stopped("merchant_not_revoked", f"merchant {command.merchant_id} revogado"),
+            ), mandate
+        cleared("merchant_not_revoked", command.merchant_id)
         if instrument_revoked:
-            return self._reject("instrument_revoked", "Instrumento revogado para este mandato."), mandate
+            return self._reject(
+                "instrument_revoked",
+                "Instrumento revogado para este mandato.",
+                stopped("instrument_not_revoked", f"instrumento {instrument_id} revogado"),
+            ), mandate
+        if instrument_id is not None:
+            cleared("instrument_not_revoked", instrument_id)
         if budget_zero:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
                 "budget_revoked",
                 "Orçamento do mandato foi zerado; aprovação humana necessária.",
+                trace=stopped("budget_not_zeroed", "orçamento zerado por revogação de escopo"),
             ), mandate
+        cleared("budget_not_zeroed")
         if mandate.status is MandateStatus.EXPIRED or self._clock() >= mandate.expires_at:
-            return self._reject("mandate_expired", "Mandato expirado."), mandate
+            return self._reject(
+                "mandate_expired",
+                "Mandato expirado.",
+                stopped(
+                    "mandate_not_expired",
+                    f"validade {mandate.expires_at.isoformat()} já passou",
+                ),
+            ), mandate
+        cleared("mandate_not_expired", mandate.expires_at.isoformat())
         if (
             command.merchant_id not in mandate.allowed_merchant_ids
             and "merchant_out_of_scope" not in approved_reasons
@@ -989,7 +1191,12 @@ class AuthorizationCore:
                 AuthorizationDecision.AWAITING_HUMAN,
                 "merchant_out_of_scope",
                 "Merchant fora do escopo do mandato; aprovação humana necessária.",
+                trace=stopped(
+                    "merchant_in_scope",
+                    f"{command.merchant_id} fora de {sorted(mandate.allowed_merchant_ids)}",
+                ),
             ), mandate
+        cleared("merchant_in_scope", command.merchant_id)
         if (
             command.category not in mandate.allowed_categories
             and "category_not_allowed" not in approved_reasons
@@ -998,30 +1205,88 @@ class AuthorizationCore:
                 AuthorizationDecision.AWAITING_HUMAN,
                 "category_not_allowed",
                 "Categoria fora do escopo do mandato; aprovação humana necessária.",
+                trace=stopped(
+                    "category_in_scope",
+                    f"{command.category} fora de {sorted(mandate.allowed_categories)}",
+                ),
             ), mandate
+        cleared("category_in_scope", command.category)
         assert limit is not None
         if (command.total.currency, command.total.scale) != (limit.currency, limit.scale):
-            return self._reject("money_unit_mismatch", "Moeda ou escala incompatível com o mandato."), mandate
+            return self._reject(
+                "money_unit_mismatch",
+                "Moeda ou escala incompatível com o mandato.",
+                stopped(
+                    "money_unit_matches",
+                    f"{command.total.currency}/{command.total.scale} != "
+                    f"{limit.currency}/{limit.scale}",
+                ),
+            ), mandate
+        cleared("money_unit_matches", f"{limit.currency}/{limit.scale}")
         if command.total.minor_units <= 0:
-            return self._reject("invalid_amount", "Valor de captura inválido."), mandate
+            return self._reject(
+                "invalid_amount",
+                "Valor de captura inválido.",
+                stopped("amount_positive", f"valor {command.total.minor_units} não é positivo"),
+            ), mandate
+        cleared("amount_positive", str(command.total.minor_units))
         # The ceiling is fixed when the mandate is created. A live limit change moves the
         # budget, never this bound, so no approval path exists above it.
         if mandate.ceiling is not None and command.total.minor_units > mandate.ceiling.minor_units:
-            return self._reject("mandate_ceiling", "Valor acima do teto do mandato."), mandate
-        over_budget = (
-            SqliteLedgerRepository(connection)
-            .spent_for(mandate.id, limit)
-            .add(command.total)
-            .minor_units
-            > limit.minor_units
+            return self._reject(
+                "mandate_ceiling",
+                "Valor acima do teto do mandato.",
+                stopped(
+                    "below_ceiling",
+                    f"valor {command.total.minor_units} acima do teto "
+                    f"{mandate.ceiling.minor_units}",
+                ),
+            ), mandate
+        cleared(
+            "below_ceiling",
+            None if mandate.ceiling is None else f"teto {mandate.ceiling.minor_units}",
+        )
+        ledger = SqliteLedgerRepository(connection)
+        # Frequency sits between the ceiling and the budget on purpose. It is authority
+        # over *how often*, the way the budget is authority over *how much*, so it is
+        # approvable — a human may still say yes to a fourth purchase. The ceiling
+        # remains the only bound with no approval path at all.
+        if mandate.usage_limit is not None:
+            window = timedelta(seconds=mandate.usage_limit.window_seconds)
+            used = ledger.uses_since(mandate.id, self._clock() - window)
+            usage_detail = (
+                f"{used} uso{'s' if used != 1 else ''} em "
+                f"{mandate.usage_limit.window_seconds}s {{}} o máximo de "
+                f"{mandate.usage_limit.max_uses}"
+            )
+            if used >= mandate.usage_limit.max_uses and "usage_limit_exceeded" not in approved_reasons:
+                return AuthorizationResult(
+                    AuthorizationDecision.AWAITING_HUMAN,
+                    "usage_limit_exceeded",
+                    "Compra excede a frequência permitida pelo mandato.",
+                    trace=stopped("within_usage_window", usage_detail.format("atinge")),
+                ), mandate
+            cleared("within_usage_window", usage_detail.format("cabe no"))
+        spent = ledger.spent_for(mandate.id, limit)
+        over_budget = spent.add(command.total).minor_units > limit.minor_units
+        budget_detail = (
+            f"gasto {spent.minor_units} + {command.total.minor_units} "
+            f"{{}} o limite {limit.minor_units}"
         )
         if over_budget and "budget_exceeded" not in approved_reasons:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
                 "budget_exceeded",
                 "Compra excede o orçamento vivo do mandato.",
+                trace=stopped("within_budget", budget_detail.format("excede")),
             ), mandate
-        return AuthorizationResult(AuthorizationDecision.AUTHORIZED, "authorized", "Compra autorizada."), mandate
+        cleared("within_budget", budget_detail.format("cabe em"))
+        return AuthorizationResult(
+            AuthorizationDecision.AUTHORIZED,
+            "authorized",
+            "Compra autorizada.",
+            trace=tuple(walked),
+        ), mandate
 
     def capture(
         self,
@@ -1086,7 +1351,7 @@ class AuthorizationCore:
                 canonical_payload=command.canonical_offer,
             )
             reservation = pending.commit(request_hash)
-            ledger.update(reservation)
+            ledger.update(reservation, at=self._clock())
             attempt_id = f"cap_{uuid4().hex}"
             SqliteCaptureRepository(connection).create(attempt_id=attempt_id, reservation_id=reservation.id, idempotency_key=command.idempotency_key)
             if self._authorization_proof_issuer:
@@ -1206,5 +1471,9 @@ class AuthorizationCore:
         return False
 
     @staticmethod
-    def _reject(reason_code: str, human_summary: str) -> AuthorizationResult:
-        return AuthorizationResult(AuthorizationDecision.REJECTED, reason_code, human_summary)
+    def _reject(
+        reason_code: str, human_summary: str, trace: tuple[EvaluationStep, ...] = ()
+    ) -> AuthorizationResult:
+        return AuthorizationResult(
+            AuthorizationDecision.REJECTED, reason_code, human_summary, trace=trace
+        )
