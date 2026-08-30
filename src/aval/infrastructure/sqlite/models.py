@@ -215,6 +215,43 @@ audit_events = Table(
     UniqueConstraint("mandate_id", "sequence", name="audit_event_mandate_sequence"),
 )
 
+operator_sessions = Table(
+    # A short-lived stand-in for the operator token.
+    #
+    # The token is a permanent secret, and a permanent secret shipped into a browser
+    # bundle is a permanent secret published. What the console holds instead is one of
+    # these: minted from the token, expiring on its own, revocable, and named in every
+    # line it writes to the journal. Only the hash is stored — a stolen database does
+    # not hand anyone a working session.
+    "operator_sessions",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("token_hash", String, nullable=False, unique=True),
+    Column("issued_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("revoked_at", DateTime(timezone=True)),
+)
+
+operator_journal = Table(
+    # What the operator did, chained the way the mandate trail is chained.
+    #
+    # The holder signs to spend; nobody signs to operate, so the operator's own actions
+    # are the one authority in this system with no cryptographic author. A hash chain is
+    # the honest substitute: it cannot prove who typed, and it can prove nothing was
+    # quietly removed afterwards.
+    "operator_journal",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("sequence", Integer, nullable=False, unique=True),
+    Column("action", String, nullable=False),
+    Column("actor", String, nullable=False),
+    Column("detail", Text, nullable=False),
+    Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column("sha256", String, nullable=False),
+    Column("previous_sha256", String, nullable=False),
+    Column("canonical_payload", Text, nullable=False),
+)
+
 agent_profiles = Table(
     "agent_profiles",
     metadata,
