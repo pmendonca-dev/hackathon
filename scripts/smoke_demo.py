@@ -167,20 +167,29 @@ class Smoke:
             str(unsigned.status_code),
         )
 
+        def signed_limit(minor_units: int, policy_version: int) -> str:
+            return sign_compact_jws(
+                {
+                    "mandate_id": mandate_id,
+                    "limit_minor_units": minor_units,
+                    "currency": "USD",
+                    "scale": 2,
+                    "policy_version": policy_version,
+                },
+                self.custody,
+                HOLDER_KID,
+            )
+
+        def policy_version() -> int:
+            return int(self.client.get(f"/mandates/{mandate_id}").json()["policy_version"])
+
+        before_change = policy_version()
+        stale_token = signed_limit(50_000, before_change)
         self.client.patch(
             f"/mandates/{mandate_id}/limit",
             json={
                 "limit": {"minor_units": 100, "currency": "USD", "scale": 2},
-                "authorization_jws": sign_compact_jws(
-                    {
-                        "mandate_id": mandate_id,
-                        "limit_minor_units": 100,
-                        "currency": "USD",
-                        "scale": 2,
-                    },
-                    self.custody,
-                    HOLDER_KID,
-                ),
+                "authorization_jws": signed_limit(100, before_change),
             },
         )
         after_change = self.buy(mandate_id, "compre um voo para Buenos Aires")
@@ -188,6 +197,23 @@ class Smoke:
             "a signed limit change binds the next decision",
             after_change["reason_code"] in ("budget_exceeded", "no_offer_matched"),
             after_change["reason_code"],
+        )
+
+        # A limit change is reversible, so its authorization has to be single-use.
+        # Without that, anyone who captured the earlier token could undo the holder
+        # lowering the budget — which is exactly the move the trial by fire invites.
+        replayed = self.client.patch(
+            f"/mandates/{mandate_id}/limit",
+            json={
+                "limit": {"minor_units": 50_000, "currency": "USD", "scale": 2},
+                "authorization_jws": stale_token,
+            },
+        )
+        self.check(
+            "an old limit authorization cannot be replayed",
+            replayed.status_code == 403
+            and replayed.json()["reason_code"] == "limit_change_version_stale",
+            f"{replayed.status_code} {replayed.json().get('reason_code')}",
         )
 
         anonymous = httpx.Client(base_url=str(self.client.base_url), timeout=15.0)

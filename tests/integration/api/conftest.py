@@ -112,13 +112,31 @@ class Harness:
             body["idempotency_key"] = idempotency_key
         return body
 
-    def limit_token(self, mandate_id: str, minor_units: int, *, kid: str | None = None) -> str:
+    def policy_version(self, mandate_id: str) -> int:
+        return int(self.client.get(f"/mandates/{mandate_id}").json()["policy_version"])
+
+    def limit_token(
+        self,
+        mandate_id: str,
+        minor_units: int,
+        *,
+        kid: str | None = None,
+        policy_version: int | None = None,
+    ) -> str:
+        """The holder's authorization to move the budget.
+
+        `policy_version` defaults to the live one, which is what a real holder signs.
+        Passing an older one is how the replay test builds a token that must be refused.
+        """
         return sign_compact_jws(
             {
                 "mandate_id": mandate_id,
                 "limit_minor_units": minor_units,
                 "currency": "USD",
                 "scale": 2,
+                "policy_version": (
+                    self.policy_version(mandate_id) if policy_version is None else policy_version
+                ),
             },
             self.custody,
             kid or self.HOLDER_KID,

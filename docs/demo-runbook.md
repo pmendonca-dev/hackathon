@@ -37,7 +37,7 @@ $env:ANTHROPIC_API_KEY = "..."      # sem chave, ele volta às regras sozinho
 ## Verificação limpa
 
 ```powershell
-uv run pytest -q                    # 331 testes
+uv run pytest -q                    # 404 testes
 uv run python scripts/smoke_demo.py
 
 Set-Location web

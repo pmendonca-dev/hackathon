@@ -103,7 +103,11 @@ linhas dizem. Por isso:
 
 Ambas exigem JWS ES256 do titular, verificado contra as autoridades **daquele** mandato.
 A revogação casa `mandate_id` do payload com o da URL; a mudança de limite casa
-`mandate_id`, `limit_minor_units`, `currency` e `scale`.
+`mandate_id`, `limit_minor_units`, `currency`, `scale` e `policy_version`.
+O último é a versão que a mudança substitui, e é o que torna o token de uso único:
+uma revogação é irreversível, então repeti-la não muda nada, mas um limite pode
+voltar a subir — sem essa amarração, quem capturasse a autorização antiga desfaria
+a redução que o titular acabou de fazer. Recusa: `limit_change_version_stale`.
 
 Um token assinado para o mandato A não funciona no mandato B
 (`limit_change_mandate_mismatch`, `revocation_mandate_mismatch`), e um token assinado

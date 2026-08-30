@@ -14,6 +14,19 @@ import test from 'node:test';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * Read with line endings normalised.
+ *
+ * These assertions slice source on `}\n\n` to find where a method ends. On a Windows
+ * checkout (`core.autocrlf=true`) the file arrives with CRLF, that marker is never
+ * found, and the slice runs to the end of the file — which made the holder-authority
+ * assertion fail and, worse, made the operator-authority assertion pass for the wrong
+ * reason. A structural test must not depend on how the repository was checked out.
+ */
+function read(path) {
+  return readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
+}
+
 function sourceFiles() {
   function walk(path) {
     return readdirSync(path).flatMap((name) => {
@@ -25,7 +38,7 @@ function sourceFiles() {
 }
 
 function allSource() {
-  return sourceFiles().map((path) => readFileSync(path, 'utf8')).join('\n');
+  return sourceFiles().map(read).join('\n');
 }
 
 test('browser source contains no client-side policy engine', () => {
@@ -52,7 +65,7 @@ test('the holder private key has no export path anywhere in the browser source',
   assert.equal(source.includes("exportKey('jwk', pair.privateKey)"), false);
   assert.equal(source.includes('exportKey("jwk", pair.privateKey)'), false);
 
-  const holderKey = readFileSync(join(root, 'src/wallet/holderKey.ts'), 'utf8');
+  const holderKey = read(join(root, 'src/wallet/holderKey.ts'));
   // Generated non-extractable. The `false` argument is the whole guarantee.
   assert.match(holderKey, /generateKey\(ES256, false, \['sign', 'verify'\]\)/);
 });
@@ -73,7 +86,7 @@ test('the wallet is never uploaded, logged, or placed in a request body', () => 
 });
 
 test('provider builds one gateway outside render and never falls back to fixtures', () => {
-  const providerSource = readFileSync(join(root, 'src/state/AvalProvider.tsx'), 'utf8');
+  const providerSource = read(join(root, 'src/state/AvalProvider.tsx'));
 
   assert.match(providerSource, /const DEFAULT_GATEWAY = new AuthorizationGateway\(/);
   assert.match(providerSource, /gateway = DEFAULT_GATEWAY/);
@@ -84,8 +97,8 @@ test('provider builds one gateway outside render and never falls back to fixture
 });
 
 test('an unreachable runtime is surfaced as unreachable rather than as a refusal', () => {
-  const gatewaySource = readFileSync(join(root, 'src/gateways/authorizationGateway.ts'), 'utf8');
-  const appSource = readFileSync(join(root, 'src/App.tsx'), 'utf8');
+  const gatewaySource = read(join(root, 'src/gateways/authorizationGateway.ts'));
+  const appSource = read(join(root, 'src/App.tsx'));
 
   assert.match(gatewaySource, /runtime_unreachable/);
   assert.match(appSource, /Runtime indisponível/);
@@ -93,7 +106,7 @@ test('an unreachable runtime is surfaced as unreachable rather than as a refusal
 });
 
 test('the operator token is confined to routes that cannot move money', () => {
-  const gatewaySource = readFileSync(join(root, 'src/gateways/authorizationGateway.ts'), 'utf8');
+  const gatewaySource = read(join(root, 'src/gateways/authorizationGateway.ts'));
 
   // Every holder-signed command must carry a JWS argument and must not request the
   // operator header. If one of these ever flips to `operator: true`, an operator
@@ -112,7 +125,7 @@ test('the operator token is confined to routes that cannot move money', () => {
 });
 
 test('the evaluation ladder shows unreached rungs instead of hiding them', () => {
-  const ladder = readFileSync(join(root, 'src/components/EvaluationLadder.tsx'), 'utf8');
+  const ladder = read(join(root, 'src/components/EvaluationLadder.tsx'));
 
   // A refusal that stopped early must look like an early answer, not a shorter rule
   // set. Dropping the unwalked rungs would erase the ordering the trace exists to show.

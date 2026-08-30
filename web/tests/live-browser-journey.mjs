@@ -84,16 +84,36 @@ check(
 );
 
 // 5 — the holder moves the live limit with a browser signature.
-const limitJws = await signCompactJws(
-  { mandate_id: mandateId, limit_minor_units: 30000, currency: 'USD', scale: 2 },
+const beforeMove = (await gateway.listMandates(principalId)).mandates
+  .find((item) => item.mandate_id === mandateId);
+const signLimit = (minorUnits, policyVersion) => signCompactJws(
+  {
+    mandate_id: mandateId,
+    limit_minor_units: minorUnits,
+    currency: 'USD',
+    scale: 2,
+    policy_version: policyVersion,
+  },
   wallet,
 );
+const staleJws = await signLimit(90000, beforeMove.policy_version);
 const moved = await gateway.changeLimit(
   mandateId,
   { minor_units: 30000, currency: 'USD', scale: 2 },
-  limitJws,
+  await signLimit(30000, beforeMove.policy_version),
 );
 check('o limite muda com assinatura do navegador', moved.policy_version >= 2, `v${moved.policy_version}`);
+
+// 5b — and the authorization that moved it is spent. A limit change can be undone,
+// so a replayable one would let an old, higher budget come back after the holder
+// lowered it — the trial-by-fire move, reversed by whoever kept the token.
+let replayReason = 'aceito';
+try {
+  await gateway.changeLimit(mandateId, { minor_units: 90000, currency: 'USD', scale: 2 }, staleJws);
+} catch (error) {
+  replayReason = error.reasonCode ?? String(error);
+}
+check('a autorização de limite não pode ser reusada', replayReason === 'limit_change_version_stale', replayReason);
 
 // 6 — the trail verifies, and the three projections answer.
 const auditor = await gateway.auditorLedger(mandateId);

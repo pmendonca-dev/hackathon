@@ -289,7 +289,7 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 ## F. Riscos operacionais
 
 - [x] **Ambiente resolvido.** `pyproject.toml` agora aceita Python 3.12 e 3.13; a suíte
-  roda nesta máquina. **161 testes passando.**
+  roda nesta máquina. **404 testes passando.**
 - [x] **Ambiente limpo verificado** — `scripts/smoke_demo.py` roda o case inteiro contra
   um servidor HTTP real e passa. Rodar de novo a partir de um clone do zero antes do freeze.
 - [x] **LLM sem dependência de rede** — o proponente cai para regras em qualquer falha

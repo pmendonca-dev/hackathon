@@ -322,6 +322,12 @@ class AvalGateway:
         )
 
     def replace_limit(self, identity: ChatIdentity, mandate_id: str, limit: MoneyView) -> str:
+        # The live version is read first because the signature has to name it: a token
+        # that did not would stay valid forever, and could be replayed to restore a
+        # limit the holder had already lowered.
+        current = self.mandate(mandate_id)
+        if current is None:
+            raise GatewayError("mandate_not_found", "Mandato não encontrado.")
         authorization_jws = self._identities.sign(
             identity,
             {
@@ -329,6 +335,7 @@ class AvalGateway:
                 "limit_minor_units": limit.minor_units,
                 "currency": limit.currency,
                 "scale": limit.scale,
+                "policy_version": current.policy_version,
             },
         )
         payload = self._call(
