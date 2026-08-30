@@ -107,12 +107,12 @@ def test_core_issued_proof_is_single_use_at_the_mock_psp_boundary(tmp_path):
         clock=lambda: now, engine=engine, settlement_adapter=psp, authorization_proof_issuer=proof_service,
     )
     core.register_mandate(Mandate(
-        "m1", Principal("p1", "Marta"), frozenset({"merchant"}), Money(1_000, "BRL", 2),
+        "m1", Principal("p1", "Marta"), frozenset({"merchant"}), frozenset({"travel"}), Money(1_000, "BRL", 2),
         datetime(2026, 8, 30, tzinfo=UTC), 1, {"revocation_id": "r1", "epoch": 0},
         (RevocationAuthority("a1", "holder-key", RevocationRole.HOLDER, custody.public_jwk("holder-key"), frozenset({"mandate"})),),
     ))
 
-    result = core.capture(CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "capture-1"))
+    result = core.capture(CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "travel", "capture-1"))
 
     assert result.approved is True
     assert result.reservation is not None

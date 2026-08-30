@@ -374,3 +374,17 @@ Distinguish a Core-only commit from a PSP-approved settlement
 **What we chose:** The Core emits `capture.committed` only when no settlement adapter runs, and emits `capture.settled` when the PSP returns an approved settlement reference.
 
 **Why:** The audit timeline must not erase the difference between a durable reservation commit and a completed settlement. This aligns the runtime receipt boundary and `status: settled` response with the underlying event.
+
+## Runtime database path consistency
+
+**Decision:** Default persistence used by the application factory
+
+**Options considered (one per line):**
+
+Use a hidden `.aval/runtime.sqlite3` only from the factory
+Let the factory and ASGI entrypoint independently select their defaults
+Use the configured `AVAL_DATABASE_PATH` in both entrypoints
+
+**What we chose:** `create_app()` now uses the same configured durable database path as the ASGI entrypoint whenever a caller does not explicitly supply one.
+
+**Why:** A restarted runtime must reopen the database that operators migrated and verified. Divergent implicit locations can leave one entrypoint on an obsolete schema and break durable authorization facts.
