@@ -64,6 +64,15 @@ class CaptureResult:
     settlement_reference: str | None = None
 
 
+@dataclass(frozen=True)
+class LiveAuthorizationContext:
+    """Current Core facts safe to project into a short-lived edge allowance."""
+
+    mandate_ceiling: Money
+    live_balance: Money
+    expires_at: datetime
+
+
 class AuthorizationCore:
     """The sole writer for the in-process authorization state used by the MVP."""
 
@@ -156,6 +165,24 @@ class AuthorizationCore:
     def evaluate(self, command: AuthorizationCommand) -> AuthorizationResult:
         with self._engine.connect() as connection:
             return self._evaluate_with(connection, command)[0]
+
+    def live_delegation_context(
+        self, command: AuthorizationCommand
+    ) -> tuple[AuthorizationResult, LiveAuthorizationContext | None]:
+        """Return the current, authoritative allowance inputs for one checkout."""
+        with self._engine.connect() as connection:
+            decision, mandate = self._evaluate_with(connection, command)
+            if decision.decision is not AuthorizationDecision.AUTHORIZED or mandate is None:
+                return decision, None
+            live_limit, _ = SqlitePolicyRepository(connection).active_limit_for(
+                mandate.id, mandate.limit
+            )
+            spent = SqliteLedgerRepository(connection).spent_for(mandate.id, live_limit)
+            return decision, LiveAuthorizationContext(
+                mandate_ceiling=mandate.limit,
+                live_balance=live_limit.subtract(spent),
+                expires_at=mandate.expires_at,
+            )
 
     def _evaluate_with(self, connection, command: AuthorizationCommand) -> tuple[AuthorizationResult, Mandate | None]:
         mandate = SqliteMandateRepository(connection).get(command.mandate_id)

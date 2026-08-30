@@ -177,7 +177,19 @@ vault_tokens = Table(
     Column("merchant_id", String, nullable=False),
     Column("max_amount_minor_units", Integer, nullable=False),
     Column("currency", String(3), nullable=False),
+    Column("scale", Integer, nullable=False, default=2),
     Column("expires_at", DateTime(timezone=True), nullable=False),
+)
+
+payment_runtime_captures = Table(
+    "payment_runtime_captures",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("mandate_id", ForeignKey("mandates.id"), nullable=False),
+    Column("checkout_intent_id", ForeignKey("checkout_intents.id"), nullable=False),
+    Column("settlement_reference", String, nullable=False),
+    Column("checkout_receipt", Text, nullable=False),
+    Column("payment_receipt", Text, nullable=False),
 )
 
 CORE_TABLE_NAMES = (
@@ -195,4 +207,5 @@ CORE_TABLE_NAMES = (
     "audit_events",
     "agent_profiles",
     "vault_tokens",
+    "payment_runtime_captures",
 )

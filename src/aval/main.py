@@ -13,8 +13,24 @@ from aval.adapters.ucp.http_signatures import Rfc9421Verifier
 from aval.api.middleware.raw_body import RawBodyMiddleware
 from aval.api.routers.ucp_checkout import create_ucp_checkout_router
 from aval.api.routers.ucp_discovery import create_ucp_discovery_router
+from aval.api.routers.delegate_payment import create_delegate_payment_router
+from aval.api.routers.payment_capture import create_payment_capture_router
+from aval.api.routers.audit import create_audit_router
 from aval.application.authorization_core import AuthorizationCore
 from aval.application.services.checkout import CheckoutService
+from aval.application.services.delegation import CoreDelegationAuthorizer, DurableDelegationService
+from aval.application.services.vault import VaultService
+from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
+from aval.adapters.settlement.mock_card_psp import MockCardPSP
+from aval.application.services.payment_runtime import PaymentRuntime
+from aval.application.services.receipts import ReceiptService
+from aval.application.services.dispute import DisputeService
+from aval.adapters.ap2.receipts import Ap2ReceiptIssuer
+from aval.infrastructure.sqlite.dispute_evidence_reader import SqliteDisputeEvidenceReader
+from aval.security.jws import verify_compact_jws
+from aval.security.key_custody import public_key_from_jwk
+from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
+from aval.security.authorization_proof import AuthorizationProofService
 from aval.domain.entities import AgentIdentity, Mandate, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
@@ -23,6 +39,7 @@ from aval.infrastructure.sqlite.agent_registry_repository import (
     SqliteTrustedAgentRegistry,
 )
 from aval.infrastructure.sqlite.checkout_repository import SqliteCheckoutRepository
+from aval.infrastructure.sqlite.mandate_repository import SqliteMandateRepository
 from aval.infrastructure.sqlite.engine import create_sqlite_engine
 from aval.infrastructure.sqlite.models import metadata
 from aval.infrastructure.sqlite.transaction import run_in_write_transaction
@@ -32,6 +49,7 @@ from aval.security.key_custody import KeyCustodyService
 @dataclass(frozen=True)
 class AvalRuntime:
     custody: KeyCustodyService
+    core: AuthorizationCore
 
 
 def _now() -> datetime:
@@ -39,26 +57,29 @@ def _now() -> datetime:
 
 
 def _seed_runtime(*, core: AuthorizationCore, custody: KeyCustodyService, engine, clock: Callable[[], datetime]) -> None:
-    core.register_mandate(
-        Mandate(
-            id="mandate_01",
-            principal=Principal("principal_01", "Marta"),
-            allowed_merchant_ids=frozenset({"merchant_01"}),
-            limit=Money(10_000, "BRL", 2),
-            expires_at=clock() + timedelta(days=1),
-            policy_version=1,
-            revocation_metadata={"revocation_id": "revocation_01", "epoch": 0},
-            authorities=(
-                RevocationAuthority(
-                    id="authority_01",
-                    kid="holder-key",
-                    role=RevocationRole.HOLDER,
-                    public_jwk=custody.public_jwk("holder-key"),
-                    allowed_scopes=frozenset({"mandate"}),
+    with engine.connect() as connection:
+        mandate_exists = SqliteMandateRepository(connection).get("mandate_01") is not None
+    if not mandate_exists:
+        core.register_mandate(
+            Mandate(
+                id="mandate_01",
+                principal=Principal("principal_01", "Marta"),
+                allowed_merchant_ids=frozenset({"merchant_01"}),
+                limit=Money(10_000, "BRL", 2),
+                expires_at=clock() + timedelta(days=1),
+                policy_version=1,
+                revocation_metadata={"revocation_id": "revocation_01", "epoch": 0},
+                authorities=(
+                    RevocationAuthority(
+                        id="authority_01",
+                        kid="holder-key",
+                        role=RevocationRole.HOLDER,
+                        public_jwk=custody.public_jwk("holder-key"),
+                        allowed_scopes=frozenset({"mandate"}),
+                    ),
                 ),
             ),
         )
-    )
     identity = AgentIdentity(
         id="agent_01",
         profile_url="https://agent.aval.local/.well-known/ucp",
@@ -79,9 +100,27 @@ def create_app(
     metadata.create_all(engine)
     if custody is None:
         custody = KeyCustodyService()
-        for key_id in ("merchant-key", "agent-key", "issuer-key", "holder-key"):
+        for key_id in ("merchant-key", "agent-key", "issuer-key", "holder-key", "proof-key", "psp-key"):
             custody.generate_es256(key_id)
-    core = AuthorizationCore(clock=clock, engine=engine)
+    proof_service = AuthorizationProofService(
+        clock=clock, custody=custody, kid="proof-key",
+        consume_jti=lambda jti: run_in_write_transaction(
+            engine, lambda connection: SqliteIdempotencyRepository(connection).consume_once("authorization_proof", jti)
+        ),
+    )
+    def verify_proof_for_psp(proof: str, reservation) -> object:
+        claims = verify_compact_jws(proof, public_key_from_jwk(custody.public_jwk("proof-key")))
+        return proof_service.verify_and_consume(
+            proof, reservation=reservation,
+            policy_version=int(claims["policy_version"]),
+            revocation_epoch=int(claims["revocation_epoch"]),
+        )
+
+    psp = MockCardPSP(proof_verifier=verify_proof_for_psp)
+    core = AuthorizationCore(
+        clock=clock, engine=engine, settlement_adapter=psp,
+        authorization_proof_issuer=proof_service,
+    )
     _seed_runtime(core=core, custody=custody, engine=engine, clock=clock)
     checkout_service = CheckoutService(
         core=core,
@@ -95,8 +134,17 @@ def create_app(
         ),
         clock=clock,
     )
+    delegation_authorizer = CoreDelegationAuthorizer(
+        core=core, checkouts=SqliteCheckoutRepository(engine)
+    )
+    delegation_service = DurableDelegationService(
+        vault=VaultService(
+            authorizer=delegation_authorizer, tokenizer=OpaqueTestCredentialTokenizer()
+        ),
+        engine=engine,
+    )
     app = FastAPI(title="AVAL")
-    app.state.runtime = AvalRuntime(custody=custody)
+    app.state.runtime = AvalRuntime(custody=custody, core=core)
     app.add_middleware(RawBodyMiddleware)
     app.include_router(create_ucp_discovery_router(custody=custody, key_id="merchant-key"))
     app.include_router(
@@ -105,6 +153,18 @@ def create_app(
             verifier=Rfc9421Verifier(SqliteTrustedAgentRegistry(engine)),
         )
     )
+    app.include_router(create_delegate_payment_router(delegation_service))
+    receipt_service = ReceiptService(
+        checkout_issuer=Ap2ReceiptIssuer(issuer="merchant_aval", custody=custody, kid="merchant-key", clock=clock),
+        payment_issuer=Ap2ReceiptIssuer(issuer="psp_mock", custody=custody, kid="psp-key", clock=clock),
+    )
+    payment_runtime = PaymentRuntime(core=core, engine=engine, clock=clock, receipts=receipt_service)
+    app.include_router(create_payment_capture_router(payment_runtime))
+    app.include_router(create_audit_router(DisputeService(
+        reader=SqliteDisputeEvidenceReader(engine),
+        checkout_receipt_verifier=lambda token: verify_compact_jws(token, public_key_from_jwk(custody.public_jwk("merchant-key"))),
+        payment_receipt_verifier=lambda token: verify_compact_jws(token, public_key_from_jwk(custody.public_jwk("psp-key"))),
+    )))
 
     @app.get("/health")
     def health() -> dict[str, str]:
