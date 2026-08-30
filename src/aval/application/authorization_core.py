@@ -55,7 +55,27 @@ from aval.infrastructure.sqlite.transaction import run_in_write_transaction
 # Only these three refusals are a question for a person. The others are answers.
 # A ceiling, a revocation, an expiry and a malformed amount are not negotiable, and
 # offering an approve button beside them would be a lie about what the mandate says.
-APPROVABLE_REASONS = frozenset({"merchant_out_of_scope", "category_not_allowed", "budget_exceeded"})
+# Every reason the ladder answers with AWAITING_HUMAN has to appear here, or the holder
+# taps Aprovar, the escalation closes as APPROVED, and the resumed capture is refused by
+# the very rung that opened it — a purchase that can never complete and can never be
+# retried. What is *not* approvable must be REJECTED on the ladder instead of escalated:
+# the ceiling, a mandate revocation, an expiry and a broken amount are refusals, and they
+# are deliberately absent from this set because they never reach it.
+APPROVABLE_REASONS = frozenset(
+    {
+        "merchant_out_of_scope",
+        "category_not_allowed",
+        "budget_exceeded",
+        # Authority over *how often*, the way the budget is authority over *how much*.
+        # A human may say yes to a fourth purchase.
+        "usage_limit_exceeded",
+        # `budget:zero` is the scope a holder picks when they want spending frozen but
+        # not the agent killed — so the holder who froze it is the one who may still
+        # wave a single purchase through. Revoking the mandate itself remains the hard
+        # stop, and it is refused, never escalated.
+        "budget_revoked",
+    }
+)
 
 ESCALATION_WINDOW = timedelta(hours=1)
 
@@ -1214,7 +1234,7 @@ class AuthorizationCore:
             ), mandate
         if instrument_id is not None:
             cleared("instrument_not_revoked", instrument_id)
-        if budget_zero:
+        if budget_zero and "budget_revoked" not in approved_reasons:
             return AuthorizationResult(
                 AuthorizationDecision.AWAITING_HUMAN,
                 "budget_revoked",
