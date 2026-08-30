@@ -707,3 +707,17 @@ Declare Uvicorn as a runtime dependency and resolve it in the committed lockfile
 **What we chose:** Declare Uvicorn as a direct runtime dependency and commit its resolved lockfile entries.
 
 **Why:** The published same-origin launch command is part of the application delivery path. A clean `uv sync` must make that command available without an operator adding an undeclared, unreviewed package at launch time.
+
+## Idempotency retention purge boundary
+
+**Decision:** Eligibility for explicit idempotency-record removal
+
+**Options considered (one per line):**
+
+Delete all records past `retained_until`, regardless of state
+Delete completed records only after a startup sweep
+Delete completed records only when an operator invokes maintenance at or after `retained_until`
+
+**What we chose:** The explicit maintenance operation deletes only `COMPLETED` records with `retained_until <= now` and returns only the count removed.
+
+**Why:** A completed record must remain available for the full replay window, while an `IN_FLIGHT` record protects an unfinished side effect indefinitely. A caller-supplied UTC cutoff makes the operation deterministic and prevents retention cleanup from becoming an implicit startup side effect.
