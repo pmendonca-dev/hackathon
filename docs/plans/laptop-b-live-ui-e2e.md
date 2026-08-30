@@ -99,3 +99,20 @@ Laptop A merge and a final rebase on `origin/main`, is:
 
 Task 12 must remain explicitly not green until all listed E2E scenarios use the
 real integrated runtime APIs.
+
+## Direct runtime validation amendment — 2026-08-30
+
+The user replaced the earlier wait-for-main gate with a direct validation of
+Laptop A commit `3191d3e647e52180fe2367bf0d1a2e3740ea2ad0`. The Laptop B
+branch is therefore rebased on `origin/codex/laptop-a-live-payments`, not on
+`origin/main`, and no merge to main or final PR is part of this phase.
+
+The corrected capture contract removes client-supplied mandate, merchant,
+amount, and payment-mandate fields. E2E now signs the canonical request bytes
+with RFC 9421 and proves downstream absence through public audit and later
+successful capture, never through database inspection. Direct SQLite access is
+limited to creating the required revocation-storage outage.
+
+The validation remains red for contract mismatches. Laptop B will document
+their exact public requests and responses and will not patch Laptop A backend
+implementation inside this branch.

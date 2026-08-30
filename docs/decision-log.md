@@ -262,3 +262,60 @@ Keep public E2E assertions red until the integrated runtime implements the publi
 **What we chose:** Task 12 stays red until tests in `tests/integration/e2e/` pass against `origin/main` after the Laptop A merge, using public HTTP calls and stable contract responses.
 
 **Why:** Runtime commit `9904b06` currently accepts unauthenticated delegation, omits the signed revocation route, and rejects the contract's capture `ap2` object. Weakening the tests would turn implementation drift into a second de facto contract and would make the demo evidence misleading.
+
+## Direct Task 12 validation target
+
+**Decision:** Git base for the corrected runtime validation
+
+**Options considered (one per line):**
+
+Wait for the runtime PR to merge into main
+Merge the runtime branch into Laptop B locally
+Rebase Laptop B directly onto the exact published runtime commit requested by the user
+
+**What we chose:** Rebase onto
+`origin/codex/laptop-a-live-payments` at
+`3191d3e647e52180fe2367bf0d1a2e3740ea2ad0` without merging main.
+
+**Why:** This validates the precise corrected artifact while preserving a linear,
+reviewable Laptop B history and respecting the instruction not to merge or open
+the final PR yet.
+
+## Public E2E evidence boundary
+
+**Decision:** How Task 12 proves absence of downstream payment effects
+
+**Options considered (one per line):**
+
+Inspect reservation, receipt, and audit tables after each request
+Call Core services directly from the E2E suite
+Observe only signed HTTP responses, receipts, audit, and dispute projections
+
+**What we chose:** Use authenticated public HTTP as the assertion boundary.
+After invalid AP2 or divergent capture input, compare the signed audit timeline
+and prove that the same delegated token can still complete one canonical
+capture. Direct SQLite access is permitted only to inject revocation-store
+unavailability, never to establish the outcome.
+
+**Why:** Database assertions or direct Core calls would bypass the deployed
+composition and could hide missing routers, authentication dependencies, or
+response mapping defects.
+
+## Browser signing trust boundary
+
+**Decision:** Behavior when no safe RFC 9421 browser signer is published
+
+**Options considered (one per line):**
+
+Embed local runtime private keys in Vite configuration
+Treat cookies as equivalent to the contract's RFC 9421 identity
+Keep the live browser state unavailable until a server-side signing bridge or browser-owned registered key is defined
+
+**What we chose:** Do not ship trusted runtime private keys or simulate signed
+success in the browser. The HTTP gateway remains the default transport, but a
+direct browser session may surface authentication/unavailable state until a
+safe signer boundary is published.
+
+**Why:** Vite variables are public client assets, and cookie-only requests do
+not satisfy the runtime contract. Either shortcut would weaken the identity
+boundary precisely where Task 12 is intended to test it.
