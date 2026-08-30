@@ -131,6 +131,9 @@ class Bot:
         command = head.split("@", 1)[0].lower()
         argument = argument.strip()
 
+        # A silent terminal during a demo reads as a hang; say what arrived.
+        logger.info("%s de %s", command, chat_id)
+
         if command == "/start":
             self._send(chat_id, views.welcome(
                 chat_id=chat_id,
@@ -194,6 +197,7 @@ class Bot:
             return
 
         actor = _actor(query, chat_id)
+        logger.info("botao %s:%s de %s", verb, argument, chat_id)
         try:
             view = self._callback_view(verb, argument, actor=actor, chat_id=chat_id)
         except GatewayError as error:
@@ -315,4 +319,8 @@ def build_bot(env: Mapping[str, str] | None = None) -> Bot:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    build_bot().run()
+    try:
+        build_bot().run()
+    except KeyboardInterrupt:
+        # Ctrl+C is how the bot is meant to be stopped, not a crash to report.
+        logger.info("bot encerrado")
