@@ -101,6 +101,8 @@ cobrança em cartão real nem pedido enviado a um vendedor. Para testar descober
 ofertas públicas e Stripe em modo de teste, siga o
 [ensaio de duas máquinas](docs/verification/two-computer-telegram-rehearsal.md).
 
+Abra o bot em [@nuyobot no Telegram](https://t.me/nuyobot) para iniciar a conversa.
+
 ### 1. Suba o núcleo e o bot
 
 Em Git Bash ou WSL no Windows, copie o ambiente e informe somente o token do bot:
