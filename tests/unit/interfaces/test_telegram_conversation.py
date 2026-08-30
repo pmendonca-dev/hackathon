@@ -25,7 +25,6 @@ DEFAULTS = MandateDefaults(
     valid_for=timedelta(days=30),
     max_uses=3,
     usage_window=timedelta(days=30),
-    card_number="4242424242424242",
 )
 
 

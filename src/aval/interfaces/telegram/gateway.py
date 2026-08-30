@@ -335,7 +335,6 @@ class AvalGateway:
         limit: MoneyView,
         ceiling: MoneyView | None,
         valid_for: timedelta,
-        card_number: str | None = None,
         max_uses: int | None = None,
         usage_window: timedelta | None = None,
     ) -> tuple[str, str | None]:
@@ -359,11 +358,6 @@ class AvalGateway:
                     }
                 ),
                 "expires_at": (datetime.now(UTC) + valid_for).isoformat(),
-                # The number is typed here and forgotten there. What comes back is a
-                # token the agent may present and four digits the holder recognises.
-                **(
-                    {} if not card_number else {"payment_method": {"card_number": card_number}}
-                ),
                 # The holder key lives in this bot, so the mandate is revocable by
                 # the person who created it and by nobody else.
                 "authorities": [

@@ -238,15 +238,12 @@ class FakeAval:
             "uses_in_window": 0,
             "_jwk": body["authorities"][0]["public_jwk"],
         }
+        # A mandate is born unfunded. The fake used to tokenize a number sent at
+        # creation; there is no such request any more — the card arrives through the
+        # processor's own session, which `/cartao` drives, so nothing here has a
+        # number to tokenize.
         scope = None
-        card = (body.get("payment_method") or {}).get("card_number")
-        if card:
-            # Tokenized here the way the edge does it: the number does not survive
-            # the call, and what the mandate keeps is a token and four digits.
-            token = f"vt_{mandate_id}"
-            scope = f"instrument:{token}"
-            self.mandates[mandate_id]["instrument_label"] = f"•••• {card[-4:]}"
-            self.mandates[mandate_id]["_instrument_scope"] = scope
+        self.mandates[mandate_id]["_instrument_scope"] = scope
         return {
             "mandate_id": mandate_id,
             "policy_version": 1,

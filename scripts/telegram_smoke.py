@@ -63,6 +63,23 @@ class Smoke:
         if not ok:
             self.failures += 1
 
+    def register_card(self, identity, mandate_id: str) -> str | None:
+        """O cartão como a pessoa o registra: na página do processador.
+
+        Três chamadas e nenhuma carrega um número. É o caminho que `/cartao` percorre
+        no bot, e o único que existe desde que `payment_method.card_number` saiu do
+        contrato — um mandato sem isto é autoridade para gastar sem meio de pagar, e o
+        núcleo recusa a captura com `instrument_not_in_mandate`.
+        """
+        session = self.gateway.open_card_session(identity, mandate_id)
+        registered = self.gateway.read_card_session(identity, mandate_id, session.session_id)
+        if registered is None:
+            return None
+        token, label = registered
+        return self.gateway.bind_instrument(
+            identity, mandate_id, token=token, label=label, supersedes=None
+        )
+
     def run(self) -> int:
         print("\n== AVAL telegram smoke ==\n")
 
@@ -70,8 +87,9 @@ class Smoke:
 
         # /start — the chat mints its own P-256 key and a mandate in its own name.
         identity = self.store.enrol(CHAT_ID, "Marta Silva")
-        # The card is typed once here and forgotten there: what survives is a token
-        # the agent may present and four digits the holder recognises.
+        # O mandato nasce sem fundo: autoridade para gastar não é meio de pagar. O
+        # cartão entra depois, pelo processador, e nenhuma destas chamadas carrega um
+        # número — foi por isso que `payment_method.card_number` saiu do contrato.
         mandate_id, instrument_scope = self.gateway.create_mandate(
             identity,
             merchants=["vuelaya"],
@@ -79,10 +97,12 @@ class Smoke:
             limit=USD(20_000),
             ceiling=USD(50_000),
             valid_for=timedelta(days=7),
-            card_number="4242424242424242",
         )
         identity = self.store.bind_mandate(CHAT_ID, mandate_id)
         self.check("/start cria chave do chat e mandato", bool(mandate_id), mandate_id)
+
+        instrument_label = self.register_card(identity, mandate_id)
+        self.check("/cartao registra no processador, sem número nenhum", bool(instrument_label), instrument_label)
 
         mandate = self.gateway.mandate(mandate_id)
         self.check(
@@ -150,8 +170,9 @@ class Smoke:
             limit=USD(20_000),
             ceiling=USD(50_000),
             valid_for=timedelta(days=7),
-            card_number="4242424242424242",
         )
+        watcher = self.store.bind_mandate(WATCH_CHAT_ID, watch_mandate)
+        self.register_card(watcher, watch_mandate)
         watching = self.gateway.register_watch(
             watch_mandate, "um voo para Córdoba abaixo de $100"
         )
@@ -197,8 +218,12 @@ class Smoke:
             limit=USD(20_000),
             ceiling=USD(50_000),
             valid_for=timedelta(days=7),
-            card_number="4242424242424242",
         )
+        revoked_watcher = self.store.bind_mandate(REVOKED_CHAT_ID, revoked_mandate)
+        # Com cartão, de propósito: sem ele a recusa seria por falta de meio de pagar, e
+        # o passo passaria verde pelo motivo errado. O que tem de recusar aqui é a
+        # autoridade que acabou.
+        self.register_card(revoked_watcher, revoked_mandate)
         self.gateway.register_watch(revoked_mandate, "um voo para Córdoba abaixo de $100")
         revoked_view = self.gateway.mandate(revoked_mandate)
         self.gateway.revoke(

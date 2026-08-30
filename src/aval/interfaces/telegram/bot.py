@@ -342,7 +342,6 @@ class Bot:
             # No card. A mandate is authority to spend, and the means of payment is
             # the person's to provide — /cartao is where they do. Emitting one from the
             # environment was the system deciding, on their behalf, what pays.
-            card_number=None,
             max_uses=defaults.max_uses,
             usage_window=defaults.usage_window,
         )
@@ -499,7 +498,6 @@ class Bot:
                 else MoneyView(defaults.ceiling_minor_units, defaults.currency, defaults.scale)
             ),
             valid_for=timedelta(days=spec.valid_for_days),
-            card_number=None,
             max_uses=spec.max_uses,
             usage_window=defaults.usage_window,
         )
