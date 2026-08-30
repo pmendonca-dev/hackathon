@@ -277,7 +277,8 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 - [ ] Slides (URL)
 - [ ] Demo (URL de vídeo ou experiência ao vivo)
 - [x] Repositório público com README legível por quem não participou
-- [x] Diagrama de arquitetura — `docs/architecture.md` (exportar para PDF/PNG antes do envio)
+- [x] Diagrama de arquitetura — `docs/architecture.pdf`, 10 páginas e 0,34 MB, gerado de
+  `docs/architecture.md` por `scripts/export_architecture.py`
 - [x] Decision log exportado em `.md` — `docs/decision-log.md`
 
 ## E2. Diferenciais construídos além do pedido

@@ -534,7 +534,8 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
 
 ## Referências
 
-- [Diagrama de arquitetura](docs/architecture.md) — a tese em cinco diagramas
+- [Diagrama de arquitetura](docs/architecture.md) — a tese em seis diagramas
+  ([PDF](docs/architecture.pdf), o que vai no Mission Control)
 - [Modelo de segurança](docs/security-model.md) — quem pode o quê, e como é provado
 - [Roteiro da demo](docs/demo-runbook.md) — como subir tudo e o que mostrar, na ordem
 - [Regras, entregáveis e avaliação](docs/hackathon-rules.md)

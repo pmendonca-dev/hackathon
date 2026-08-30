@@ -1,8 +1,12 @@
 # Arquitetura do AVAL
 
-Entregável do Mission Control. Para exportar em PDF/PNG (< 25 MB), abra este arquivo em
-qualquer visualizador que renderize Mermaid e imprima em PDF, ou cole os blocos em
-<https://mermaid.live>.
+Entregável do Mission Control. O PDF que vai no formulário é
+[`architecture.pdf`](architecture.pdf), gerado deste arquivo — regenere depois de
+qualquer edição, para que a imagem enviada e o documento versionado não divirjam:
+
+```bash
+uv run --with markdown python scripts/export_architecture.py
+```
 
 ---
 
