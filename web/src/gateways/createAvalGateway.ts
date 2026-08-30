@@ -1,5 +1,4 @@
 import type { AvalGateway } from '../contracts/avalGateway.ts';
-import { createMockAvalGateway } from '../fixtures/mockAvalGateway.ts';
 import { HttpAvalGateway } from './httpAvalGateway.ts';
 
 export interface AvalGatewayEnvironment {
@@ -10,9 +9,33 @@ export interface AvalGatewayEnvironment {
   VITE_AVAL_USE_MOCK?: string;
 }
 
+function createDevelopmentMockGateway(): AvalGateway {
+  let gatewayPromise: Promise<AvalGateway> | null = null;
+
+  function loadGateway(): Promise<AvalGateway> {
+    gatewayPromise ??= import('../fixtures/mockAvalGateway.ts')
+      .then(({ createMockAvalGateway }) => createMockAvalGateway());
+    return gatewayPromise;
+  }
+
+  return {
+    async loadWorkspace() {
+      return (await loadGateway()).loadWorkspace();
+    },
+    async submitTrialCommand(command) {
+      return (await loadGateway()).submitTrialCommand(command);
+    },
+  };
+}
+
 export function createAvalGateway(environment: AvalGatewayEnvironment): AvalGateway {
-  if (environment.DEV === true && environment.VITE_AVAL_USE_MOCK === 'true') {
-    return createMockAvalGateway();
+  const productionBuild = import.meta.env?.PROD === true;
+  if (
+    !productionBuild
+    && environment.DEV === true
+    && environment.VITE_AVAL_USE_MOCK === 'true'
+  ) {
+    return createDevelopmentMockGateway();
   }
   return new HttpAvalGateway({
     baseUrl: environment.VITE_AVAL_API_BASE_URL ?? '',

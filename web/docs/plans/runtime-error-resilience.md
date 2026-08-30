@@ -94,3 +94,18 @@ No backend, migration, runtime contract, or Task 12 E2E file is modified.
 - Signed trial evidence is masked, never logged, and cleared after submission.
 - The mock remains explicit development-only behavior; an absent live
   configuration fails visibly instead of loading fixture state.
+
+## Production bundle hardening amendment — 2026-08-30
+
+The public seam for this correction is the emitted production artifact, not a
+source-code grep. A build-level regression must run a real Vite production
+build into an isolated output directory and inspect every emitted JavaScript
+asset for the mock module marker and synthetic `vt_`/`proof_` values.
+
+The gateway factory will become asynchronous only at application bootstrap so
+the explicit development path can use a dynamic import. Production and every
+configuration other than `DEV === true` plus
+`VITE_AVAL_USE_MOCK === "true"` must instantiate the HTTP gateway without
+loading the fixture chunk. Missing runtime configuration continues to produce
+the existing visible unavailable state. This amendment does not add browser
+authentication, a proxy, signing code, or key material.
