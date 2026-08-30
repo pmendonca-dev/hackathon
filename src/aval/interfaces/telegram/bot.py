@@ -16,6 +16,8 @@ from typing import Any
 import json
 import logging
 import os
+import queue
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -135,8 +137,38 @@ class Bot:
         # bot registered from something it could not show them.
         self._unmet: dict[int, str] = {}
         self._watched: set[str] = set()
+        # One inbox and one thread per chat. Serial within a chat, because a person's
+        # own messages have to be answered in the order they sent them; parallel
+        # across chats, because a room of judges is several people, and a purchase
+        # that takes seconds must not be the reason someone else's tap is ignored.
+        # ponytail: threads are never reaped — one per chat that ever spoke, parked on
+        # an empty queue. Fine for a demo; a pool with idle timeouts if it outlives one.
+        self._inboxes: dict[int, queue.Queue] = {}
+        self._inboxes_lock = threading.Lock()
 
     # ── updates ────────────────────────────────────────────────────────────
+    def dispatch(self, update: Mapping[str, Any]) -> None:
+        """Hand the update to its own chat's worker and go back to polling."""
+        chat_id = _chat_of(update)
+        if chat_id is None:
+            return
+        with self._inboxes_lock:
+            inbox = self._inboxes.get(chat_id)
+            if inbox is None:
+                inbox = self._inboxes[chat_id] = queue.Queue()
+                threading.Thread(
+                    target=self._drain, args=(chat_id, inbox), daemon=True, name=f"chat-{chat_id}"
+                ).start()
+        inbox.put(update)
+
+    def _drain(self, chat_id: int, inbox: "queue.Queue") -> None:
+        while True:
+            update = inbox.get()
+            try:
+                self.handle_update(update)
+            except Exception:  # noqa: BLE001 - one bad update must not kill a chat
+                logger.exception("update %s de %s falhou", update.get("update_id"), chat_id)
+
     def handle_update(self, update: Mapping[str, Any]) -> None:
         if "callback_query" in update:
             self._handle_callback(update["callback_query"])
@@ -176,6 +208,16 @@ class Bot:
             return (views.help_text(),)
         if command in {"/catalogo", "/catálogo"}:
             return (self._catalogue(chat_id),)
+        if command == "/agente":
+            identity = self._identities.get(chat_id)
+            return (
+                views.agent_card(
+                    self._gateway.agent_profile(),
+                    holder_name=identity.display_name if identity else display_name,
+                    holder_kid=identity.kid if identity else "—",
+                    principal_id=identity.principal_id if identity else "—",
+                ),
+            )
         if command == "/status":
             identity = self._identities.get(chat_id)
             pending = (
@@ -507,8 +549,6 @@ class Bot:
             self._config.api_base_url,
             "aberto" if self._config.open_mode else "lista de autorizados",
         )
-        # ponytail: one update at a time, so a slow call holds the next ones. One
-        # human per chat, one demo. A per-chat queue is the upgrade path.
         offset: int | None = None
         last_push = 0.0
         while True:
@@ -520,10 +560,7 @@ class Bot:
                 continue
             for update in updates:
                 offset = int(update["update_id"]) + 1
-                try:
-                    self.handle_update(update)
-                except Exception:  # noqa: BLE001 - one bad update must not stop the bot
-                    logger.exception("update %s falhou", update.get("update_id"))
+                self.dispatch(update)
             if time.monotonic() - last_push >= self._config.escalation_poll_seconds:
                 last_push = time.monotonic()
                 try:
@@ -534,6 +571,13 @@ class Bot:
 
     def _send(self, chat_id: int, view: View) -> None:
         self._api.send_message(chat_id, view)
+
+
+def _chat_of(update: Mapping[str, Any]) -> int | None:
+    """Which conversation this update belongs to — the only routing key there is."""
+    message = update.get("message") or (update.get("callback_query") or {}).get("message") or {}
+    chat_id = int((message.get("chat") or {}).get("id", 0))
+    return chat_id or None
 
 
 def _display_name(sender: Mapping[str, Any], chat_id: int) -> str:

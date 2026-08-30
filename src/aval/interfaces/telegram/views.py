@@ -16,6 +16,7 @@ import re
 import unicodedata
 
 from aval.interfaces.telegram.gateway import (
+    AgentProfileView,
     ChainView,
     DisputeView,
     EscalationView,
@@ -377,6 +378,43 @@ _DISPUTE_VERDICT = {
 }
 
 
+def agent_card(
+    profile: AgentProfileView | None, *, holder_name: str, holder_kid: str, principal_id: str
+) -> View:
+    """Two identities, two keys, and what each one is allowed to sign.
+
+    The case asks for the agent's identity to be separate from the human's. Saying it
+    on one screen is what makes the separation checkable instead of architectural
+    folklore: neither key can produce the other's signature, so a compromised agent
+    still cannot revoke, approve or move a limit.
+    """
+    lines = [
+        "🪪 <b>Quem é quem nesta compra</b>",
+        "",
+        f"👤 <b>Você, o titular</b> — {escape(holder_name)}",
+        f"    <code>{escape(principal_id)}</code> · chave <code>{escape(holder_kid)}</code>",
+        "    Assina: revogar, aprovar, mudar limite.",
+        "",
+    ]
+    if profile is None:
+        lines.append("🤖 <b>O agente</b> — perfil indisponível no núcleo agora.")
+    else:
+        badge = "✅ confiável" if profile.trusted else "⛔ não confiável"
+        lines += [
+            f"🤖 <b>O agente</b> — {badge}",
+            f"    <code>{escape(profile.agent_id)}</code> · chave <code>{escape(profile.kid)}</code>",
+            "    Assina: as requisições de compra. Nada mais.",
+        ]
+        if profile.profile_url:
+            lines.append(f"    <i>{escape(profile.profile_url)}</i>")
+    lines += [
+        "",
+        "<i>Chaves diferentes. O agente não consegue revogar o próprio mandato, "
+        "e um agente que se passe por este é recusado na porta.</i>",
+    ]
+    return View("\n".join(lines))
+
+
 def dispute_verdict(dispute: DisputeView) -> View:
     """Who is right, decided by the trail — the only part of a dispute that matters.
 
@@ -665,6 +703,7 @@ def help_text() -> View:
                 "/extrato — recibos e trilha auditável",
                 "/limite &lt;valor&gt; — muda o orçamento (assinado por você)",
                 "/revogar — encerra a autoridade do agente",
+                "/agente — quem é o agente, e por que não é você",
                 "/status — saúde do backend",
                 "/meuid — o id deste chat",
             ]

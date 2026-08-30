@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 import json
+import threading
+import time
 import urllib.error
 
 import pytest
@@ -43,12 +45,17 @@ class FakeAval:
         # What Córdoba costs right now. The judge's price knob moves this.
         self.cordoba_price = 13000
         self.offline = False
+        self.hold: "threading.Event | None" = None
         self._sequence = 0
 
     # transport ------------------------------------------------------------
     def opener(self, request, timeout=None):  # noqa: ANN001 - urlopen shape
         if self.offline:
             raise OSError("connection refused")
+        if self.hold is not None and "/agent/purchase" in request.full_url:
+            # A slow merchant call, held open on purpose: what a judge's tap runs into
+            # while somebody else's purchase is still in flight.
+            self.hold.wait(timeout=10)
         path = request.full_url.split("127.0.0.1:9000", 1)[1]
         body = json.loads(request.data) if request.data else {}
         status, payload = self._route(request.get_method(), path, body)
@@ -64,6 +71,13 @@ class FakeAval:
         self.received.append((f"{method} {route}", body))
         if route == "/health":
             return 200, {"status": "ok"}
+        if route == "/agent/profile":
+            return 200, {
+                "agent_id": "agt_marta",
+                "kid": "agent-demo",
+                "trusted": True,
+                "profile_url": "https://aval.demo/agents/agt_marta",
+            }
         if route == "/merchant/offers":
             return 200, {
                 "offers": [
@@ -1204,3 +1218,78 @@ def test_the_mandate_is_created_with_the_frequency_rule_and_shows_it(world) -> N
     created = next(body for route, body in aval.received if route == "POST /mandates")
     assert created["usage_limit"] == {"max_uses": 3, "window_seconds": 30 * 86_400}
     assert "3 de 3</b> compra(s) livres nos últimos 30 dia(s)" in api.last_text
+
+
+# ── two identities, two keys ────────────────────────────────────────────────
+def test_the_agent_is_shown_as_an_identity_of_its_own(world) -> None:
+    """The case separates the agent's identity from the human's; the bot has to say so.
+
+    Both keys exist and neither can produce the other's signature — a screen that
+    names them is what turns that from architecture into something a judge can check.
+    """
+    bot, api, _, identities = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(message("/agente"))
+
+    text = api.last_text
+    assert "agt_marta" in text and "agent-demo" in text
+    assert identities.get(MARTA).kid in text
+    assert "usr_tg_" in text
+
+
+def test_the_agent_card_holds_when_the_core_cannot_name_the_agent(world) -> None:
+    """An unknown agent is said plainly, never rendered as a confident identity."""
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    aval.offline = True
+
+    bot.handle_update(message("/agente"))
+
+    assert "perfil indisponível" in api.last_text
+
+
+# ── a room of judges, not a queue ───────────────────────────────────────────
+def test_a_slow_purchase_in_one_chat_does_not_hold_up_another(world) -> None:
+    """The demo is several people tapping at once, not one person taking turns.
+
+    Serial handling made every judge wait behind whoever bought last — with an HTTP
+    timeout measured in seconds, that reads as a dead bot. Two things are asserted
+    because both can break alone: the poll loop is never blocked by a slow chat, and
+    the other chat is answered *while* that call is still in flight.
+    """
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    aval.hold = threading.Event()
+
+    started = time.monotonic()
+    bot.dispatch(message("/comprar um voo pra Cordoba"))
+    bot.dispatch(message("/start", chat_id=JUDGE, first_name="Juíza"))
+    handed_off = time.monotonic() - started
+
+    answered_while_held = False
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if any(chat == JUDGE for chat, _ in api.sent):
+            answered_while_held = True
+            break
+        time.sleep(0.01)
+    aval.hold.set()
+
+    assert handed_off < 1, "dispatch segurou a thread que faz o polling"
+    assert answered_while_held, "o outro chat só foi atendido depois da compra lenta"
+
+
+def test_one_chat_is_still_answered_in_the_order_it_typed(world) -> None:
+    """Parallel across chats, serial within one: a person's own messages are a sequence."""
+    bot, api, _, _ = world
+
+    bot.dispatch(message("/start"))
+    bot.dispatch(message("/mandato"))
+    bot.dispatch(message("/extrato"))
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and len(api.sent) < 3:
+        time.sleep(0.01)
+    assert "AVAL" in api.sent[0][1].text
+    assert "Extrato" in api.sent[2][1].text

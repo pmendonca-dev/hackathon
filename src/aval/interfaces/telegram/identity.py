@@ -18,6 +18,7 @@ from typing import Any
 import json
 import os
 import tempfile
+import threading
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -79,6 +80,10 @@ class IdentityStore:
         self._path = path
         self._custody = BotCustody()
         self._identities: dict[int, ChatIdentity] = {}
+        # One person per chat, but several chats at once: the bot answers each in its
+        # own thread, and they all write to this one file. The lock is what keeps a
+        # save from serialising a dict another chat is mutating.
+        self._lock = threading.Lock()
         self._load()
 
     @property
@@ -89,11 +94,13 @@ class IdentityStore:
         return self._identities.get(chat_id)
 
     def known_chats(self) -> tuple[int, ...]:
-        return tuple(self._identities)
+        with self._lock:
+            return tuple(self._identities)
 
     def enrol(self, chat_id: int, display_name: str) -> ChatIdentity:
         """Mint a holder key for a chat that has never spoken before."""
-        existing = self._identities.get(chat_id)
+        with self._lock:
+            existing = self._identities.get(chat_id)
         if existing is not None:
             return existing
         kid = f"tg_{chat_id}"
@@ -105,29 +112,35 @@ class IdentityStore:
             principal_id=f"usr_tg_{chat_id}",
             display_name=display_name or f"Titular {chat_id}",
         )
-        self._identities[chat_id] = identity
-        self._save()
+        with self._lock:
+            self._identities[chat_id] = identity
+            self._save()
         return identity
 
     def bind_mandate(
         self, chat_id: int, mandate_id: str, *, instrument_scope: str | None = None
     ) -> ChatIdentity:
-        identity = self._identities[chat_id]
-        identity = replace(identity, mandate_id=mandate_id, instrument_scope=instrument_scope)
-        self._identities[chat_id] = identity
-        self._save()
+        with self._lock:
+            identity = replace(
+                self._identities[chat_id],
+                mandate_id=mandate_id,
+                instrument_scope=instrument_scope,
+            )
+            self._identities[chat_id] = identity
+            self._save()
         return identity
 
     def record_reservation(self, chat_id: int, reservation_id: str) -> None:
         """Remember that this chat bought this. Written through, because the button
         that denies a purchase is worthless if a restart forgets the purchase."""
-        identity = self._identities.get(chat_id)
-        if identity is None or reservation_id in identity.reservations:
-            return
-        self._identities[chat_id] = replace(
-            identity, reservations=identity.reservations + (reservation_id,)
-        )
-        self._save()
+        with self._lock:
+            identity = self._identities.get(chat_id)
+            if identity is None or reservation_id in identity.reservations:
+                return
+            self._identities[chat_id] = replace(
+                identity, reservations=identity.reservations + (reservation_id,)
+            )
+            self._save()
 
     def owns_reservation(self, chat_id: int, reservation_id: str) -> bool:
         identity = self._identities.get(chat_id)

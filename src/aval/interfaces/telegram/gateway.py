@@ -121,6 +121,21 @@ class LedgerEntryView:
 
 
 @dataclass(frozen=True)
+class AgentProfileView:
+    """Who the agent is, as an identity of its own.
+
+    The case keeps the agent's identity separate from the human's, and the two are
+    separate here down to the key: the agent signs its requests with `kid`, the person
+    signs their decisions with theirs. Neither can produce the other's signature.
+    """
+
+    agent_id: str
+    kid: str
+    trusted: bool
+    profile_url: str | None
+
+
+@dataclass(frozen=True)
 class ChainView:
     """The hash chain behind the trail, as the core itself verified it."""
 
@@ -166,6 +181,7 @@ ENDPOINTS = {
     "watches": "/agent/watches",
     "watch_tick": "/agent/watches/tick",
     "offers": "/merchant/offers",
+    "agent_profile": "/agent/profile",
     "disputes": "/disputes",
     "dispute_resolution": "/disputes/{dispute_id}/resolution",
     "ledger_verify": "/ledger/verify",
@@ -238,6 +254,18 @@ class AvalGateway:
             intact=bool(payload.get("intact")),
             checked=int(payload.get("checked", 0)),
             broken_at=None if broken is None else int(broken),
+        )
+
+    def agent_profile(self) -> AgentProfileView | None:
+        try:
+            payload = self._call("GET", ENDPOINTS["agent_profile"])
+        except GatewayError:
+            return None
+        return AgentProfileView(
+            agent_id=str(payload.get("agent_id", "—")),
+            kid=str(payload.get("kid", "—")),
+            trusted=bool(payload.get("trusted")),
+            profile_url=payload.get("profile_url"),
         )
 
     def catalogue(self) -> Sequence[OfferView]:
