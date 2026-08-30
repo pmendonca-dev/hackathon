@@ -31,8 +31,8 @@ class SqliteDisputeEvidenceReader:
             occurred_at=row["occurred_at"].replace(tzinfo=UTC) if row["occurred_at"].tzinfo is None else row["occurred_at"],
             evidence_hash="runtime", revocation_epoch=0,
         ) for row in rows)
-        checkout_mandate = f"checkout:{capture.checkout_id}"
-        payment_mandate = f"payment:{capture.id}"
+        checkout_mandate = capture.checkout_mandate
+        payment_mandate = capture.payment_mandate
         committed_at = timeline[0].occurred_at if timeline else datetime.now(UTC)
         return DisputeEvidence(
             mandate_id=mandate_id, open_mandate=mandate_id, revocation_authority="runtime",

@@ -13,6 +13,8 @@ class PersistedRuntimeCapture:
     mandate_id: str
     checkout_id: str
     settlement_reference: str
+    checkout_mandate: str
+    payment_mandate: str
     checkout_receipt: str
     payment_receipt: str
 
@@ -28,7 +30,8 @@ class SqlitePaymentRuntimeRepository:
         return None if row is None else PersistedRuntimeCapture(
             id=row["id"], mandate_id=row["mandate_id"], checkout_id=row["checkout_intent_id"],
             settlement_reference=row["settlement_reference"], checkout_receipt=row["checkout_receipt"],
-            payment_receipt=row["payment_receipt"],
+            payment_receipt=row["payment_receipt"], checkout_mandate=row["checkout_mandate"],
+            payment_mandate=row["payment_mandate"],
         )
 
     def latest_for_mandate(self, mandate_id: str) -> PersistedRuntimeCapture | None:
@@ -38,12 +41,14 @@ class SqlitePaymentRuntimeRepository:
         return None if row is None else PersistedRuntimeCapture(
             id=row["id"], mandate_id=row["mandate_id"], checkout_id=row["checkout_intent_id"],
             settlement_reference=row["settlement_reference"], checkout_receipt=row["checkout_receipt"],
-            payment_receipt=row["payment_receipt"],
+            payment_receipt=row["payment_receipt"], checkout_mandate=row["checkout_mandate"],
+            payment_mandate=row["payment_mandate"],
         )
 
     def put(self, capture: PersistedRuntimeCapture) -> None:
         self._connection.execute(payment_runtime_captures.insert().values(
             id=capture.id, mandate_id=capture.mandate_id, checkout_intent_id=capture.checkout_id,
             settlement_reference=capture.settlement_reference,
+            checkout_mandate=capture.checkout_mandate, payment_mandate=capture.payment_mandate,
             checkout_receipt=capture.checkout_receipt, payment_receipt=capture.payment_receipt,
         ))

@@ -188,6 +188,8 @@ payment_runtime_captures = Table(
     Column("mandate_id", ForeignKey("mandates.id"), nullable=False),
     Column("checkout_intent_id", ForeignKey("checkout_intents.id"), nullable=False),
     Column("settlement_reference", String, nullable=False),
+    Column("checkout_mandate", Text, nullable=False),
+    Column("payment_mandate", Text, nullable=False),
     Column("checkout_receipt", Text, nullable=False),
     Column("payment_receipt", Text, nullable=False),
 )

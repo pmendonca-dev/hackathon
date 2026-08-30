@@ -179,3 +179,31 @@ Keep the mandate only in process memory
 **What we chose:** Seed the demo mandate only on an empty durable runtime and preserve it unchanged on subsequent starts.
 
 **Why:** Rewriting a persisted mandate would silently extend expiry or replace policy/revocation facts after a restart, which contradicts continuous authorization and durable audit requirements.
+
+## Operational request authentication
+
+**Decision:** Authentication boundary for payment runtime HTTP surfaces
+
+**Options considered (one per line):**
+
+Accept an unsigned local runtime header for ACP and capture calls
+Apply RFC 9421 only to the original UCP checkout routes
+Require RFC 9421 signatures over the raw request body on every operational payment POST and authenticated reader requests
+
+**What we chose:** Reuse the trusted RFC 9421 agent registry and raw-body Content-Digest verifier for delegation, capture, receipt reads, and audit/dispute reads.
+
+**Why:** Reusing the existing trust registry prevents a second identity authority and makes body tampering, unknown profiles, and signature failures fail before tokenization, Core authorization, or evidence disclosure.
+
+## Canonical capture binding
+
+**Decision:** Source of capture mandate, merchant, and amount
+
+**Options considered (one per line):**
+
+Trust mandate, merchant, and amount supplied by the capture caller
+Duplicate those values into a payment-specific request policy
+Load all capture scope from the persisted canonical checkout and validate its AP2 evidence before Core commit
+
+**What we chose:** Capture accepts only a checkout identifier, opaque token, key-binding inputs, and AP2 closed checkout evidence; it derives authoritative scope from the canonical checkout.
+
+**Why:** A caller-controlled total or merchant would create a second authorization representation. Verifying merchant authorization JCS/JWS and closed AP2 evidence against the persisted checkout blocks divergent values before a reservation, PSP call, receipt, or settlement audit event exists.

@@ -80,13 +80,16 @@ def _seed_runtime(*, core: AuthorizationCore, custody: KeyCustodyService, engine
                 ),
             ),
         )
-    identity = AgentIdentity(
-        id="agent_01",
-        profile_url="https://agent.aval.local/.well-known/ucp",
-        public_jwk=custody.public_jwk("agent-key"),
-        trusted=True,
+    identities = (
+        AgentIdentity("agent_01", "https://agent.aval.local/.well-known/ucp", custody.public_jwk("agent-key"), True),
+        AgentIdentity("holder_01", "https://holder.aval.local/.well-known/ucp", custody.public_jwk("holder-key"), True),
+        AgentIdentity("auditor_01", "https://auditor.aval.local/.well-known/ucp", custody.public_jwk("auditor-key"), True),
     )
-    run_in_write_transaction(engine, lambda connection: SqliteAgentRegistryRepository(connection).put(identity))
+    def seed_identities(connection) -> None:
+        repository = SqliteAgentRegistryRepository(connection)
+        for identity in identities:
+            repository.put(identity)
+    run_in_write_transaction(engine, seed_identities)
 
 
 def create_app(
@@ -100,7 +103,7 @@ def create_app(
     metadata.create_all(engine)
     if custody is None:
         custody = KeyCustodyService()
-        for key_id in ("merchant-key", "agent-key", "issuer-key", "holder-key", "proof-key", "psp-key"):
+        for key_id in ("merchant-key", "agent-key", "issuer-key", "holder-key", "auditor-key", "proof-key", "psp-key"):
             custody.generate_es256(key_id)
     proof_service = AuthorizationProofService(
         clock=clock, custody=custody, kid="proof-key",
@@ -147,23 +150,34 @@ def create_app(
     app.state.runtime = AvalRuntime(custody=custody, core=core)
     app.add_middleware(RawBodyMiddleware)
     app.include_router(create_ucp_discovery_router(custody=custody, key_id="merchant-key"))
+    agent_verifier = Rfc9421Verifier(SqliteTrustedAgentRegistry(engine))
     app.include_router(
         create_ucp_checkout_router(
             checkout_service,
-            verifier=Rfc9421Verifier(SqliteTrustedAgentRegistry(engine)),
+            verifier=agent_verifier,
         )
     )
-    app.include_router(create_delegate_payment_router(delegation_service))
+    app.include_router(create_delegate_payment_router(delegation_service, verifier=agent_verifier))
     receipt_service = ReceiptService(
         checkout_issuer=Ap2ReceiptIssuer(issuer="merchant_aval", custody=custody, kid="merchant-key", clock=clock),
         payment_issuer=Ap2ReceiptIssuer(issuer="psp_mock", custody=custody, kid="psp-key", clock=clock),
     )
-    payment_runtime = PaymentRuntime(core=core, engine=engine, clock=clock, receipts=receipt_service)
-    app.include_router(create_payment_capture_router(payment_runtime))
+    payment_runtime = PaymentRuntime(
+        core=core, engine=engine, clock=clock, receipts=receipt_service,
+        checkouts=SqliteCheckoutRepository(engine),
+        merchant_authorization_verifier=MerchantAuthorizationVerifier(custody.public_jwk("merchant-key")),
+        mandate_verifier=ClosedCheckoutMandateVerifier(
+            issuer_jwk=custody.public_jwk("issuer-key"), holder_jwk=custody.public_jwk("holder-key"),
+            clock=clock,
+        ),
+    )
+    app.include_router(create_payment_capture_router(payment_runtime, verifier=agent_verifier))
     app.include_router(create_audit_router(DisputeService(
         reader=SqliteDisputeEvidenceReader(engine),
         checkout_receipt_verifier=lambda token: verify_compact_jws(token, public_key_from_jwk(custody.public_jwk("merchant-key"))),
         payment_receipt_verifier=lambda token: verify_compact_jws(token, public_key_from_jwk(custody.public_jwk("psp-key"))),
+    ), verifier=agent_verifier, can_read=lambda identity_id, mandate_id: payment_runtime.can_read_mandate(
+        identity_id=identity_id, mandate_id=mandate_id
     )))
 
     @app.get("/health")
