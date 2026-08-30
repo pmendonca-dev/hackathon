@@ -61,20 +61,39 @@ def list_mandates(
         min_length=1,
         description="Whose mandates to list. Required: there is no global listing.",
     ),
+    authorization_jws: str = Query(
+        ...,
+        min_length=1,
+        description="Compact JWS ES256 by a holder authority, over {principal_id}.",
+    ),
 ) -> MandateListView:
-    """The mandates one buyer holds.
+    """The mandates one buyer holds, scoped to the key that may see them.
 
-    `principal_id` is mandatory, and that is a security decision rather than an
-    ergonomic one. An unscoped listing would hand any caller every buyer in the system,
-    their limits, their spend and their merchants — the same disclosure the merchant
-    view is built to withhold. A holder with no mandates gets an empty list, not a 404:
-    absence of mandates is not an error, and answering differently would turn this into
-    an oracle for which principal ids exist.
+    `principal_id` alone was never a secret. The bot derives it as `usr_tg_{chat_id}`
+    and the browser defaults it to `usr_marta`, so a name that anyone can guess was
+    handing out a buyer's limits, spend and merchants. Authority was always isolated —
+    one judge cannot revoke another's mandate — but sight was not, and a room of judges
+    sharing one bot is exactly the situation this system was built for.
+
+    So the listing is scoped by the *key*, not by the name: the signature is verified
+    against each mandate's own holder authority, and the answer is the intersection. A
+    key that holds nothing sees nothing, which is also what a holder gets before they
+    have created their first mandate — no refusal, and no oracle for which buyers exist.
     """
     core = runtime_of(request).core
+    try:
+        readable = set(core.mandates_readable_by(authorization_jws, principal_id))
+    except ValueError as error:
+        raise ApiError(
+            422, "read_authorization_malformed", "Autorização de leitura malformada."
+        ) from error
     return MandateListView(
         principal_id=principal_id,
-        mandates=[mandate_view(snapshot) for snapshot in core.snapshots_for_principal(principal_id)],
+        mandates=[
+            mandate_view(snapshot)
+            for snapshot in core.snapshots_for_principal(principal_id)
+            if snapshot.mandate.id in readable
+        ],
     )
 
 

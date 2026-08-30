@@ -69,7 +69,10 @@ def capture_purchase(
             total=body.total.to_money(),
             category=body.category,
             idempotency_key=body.idempotency_key,
-            terms_hash=body.terms_hash or (None if bound is None else bound.terms_hash),
+            # Only the verified offer names the terms. A purchase that carried none is
+            # recorded with none, and the merchant's `terms_hash_matches` check refuses
+            # it — which is the honest answer, not a hash the buyer chose for itself.
+            terms_hash=None if bound is None else bound.terms_hash,
             canonical_offer=None if bound is None else bound.canonical_payload,
             instrument_id=body.instrument_id,
         ),

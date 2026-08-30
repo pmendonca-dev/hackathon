@@ -26,13 +26,31 @@ function gatewayWith(responses, options = {}) {
   };
 }
 
-test('mandates are always listed under a principal scope', async () => {
+test('a mandate listing carries the principal scope and the holder signature', async () => {
+  // The principal id is a guessable name, so the key is what decides what comes back.
+  // A listing that travelled without the signature would be the hole this closes.
   const { gateway, calls } = gatewayWith([{ status: 200, body: { mandates: [] } }]);
 
-  await gateway.listMandates('usr_marta');
+  await gateway.listMandates('usr_marta', 'eyJhbGciOiJFUzI1NiJ9.e30.sig');
 
-  assert.equal(calls[0].url, 'http://api.test/mandates?principal_id=usr_marta');
+  assert.equal(
+    calls[0].url,
+    'http://api.test/mandates?principal_id=usr_marta' +
+      '&authorization_jws=eyJhbGciOiJFUzI1NiJ9.e30.sig',
+  );
   assert.equal(calls[0].method, 'GET');
+});
+
+test('polling pending approvals carries the same signature', async () => {
+  const { gateway, calls } = gatewayWith([{ status: 200, body: { escalations: [] } }]);
+
+  await gateway.listEscalations('usr_marta', 'eyJhbGciOiJFUzI1NiJ9.e30.sig');
+
+  assert.equal(
+    calls[0].url,
+    'http://api.test/escalations?principal_id=usr_marta' +
+      '&authorization_jws=eyJhbGciOiJFUzI1NiJ9.e30.sig',
+  );
 });
 
 test('a free-text purchase goes to the agent surface and returns the ladder', async () => {

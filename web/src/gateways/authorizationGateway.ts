@@ -174,16 +174,34 @@ export class AuthorizationGateway {
 
   // ---- reading -----------------------------------------------------------
 
-  listMandates(principalId: string): Promise<{ principal_id: string; mandates: MandateView[] }> {
-    return this.#request(`/mandates?principal_id=${encodeURIComponent(principalId)}`);
+  /**
+   * A principal id is a name anyone can guess — `usr_tg_{chat_id}` in the bot,
+   * `usr_marta` here — so both principal-scoped listings carry a holder signature and
+   * answer only for the mandates that key actually holds. A key that holds nothing gets
+   * an empty list, which is also what a holder sees before creating their first mandate.
+   */
+  listMandates(
+    principalId: string,
+    authorizationJws: string,
+  ): Promise<{ principal_id: string; mandates: MandateView[] }> {
+    return this.#request(
+      `/mandates?principal_id=${encodeURIComponent(principalId)}` +
+        `&authorization_jws=${encodeURIComponent(authorizationJws)}`,
+    );
   }
 
   readMandate(mandateId: string): Promise<MandateView> {
     return this.#request(`/mandates/${encodeURIComponent(mandateId)}`);
   }
 
-  listEscalations(principalId: string): Promise<{ escalations: Escalation[] }> {
-    return this.#request(`/escalations?principal_id=${encodeURIComponent(principalId)}`);
+  listEscalations(
+    principalId: string,
+    authorizationJws: string,
+  ): Promise<{ escalations: Escalation[] }> {
+    return this.#request(
+      `/escalations?principal_id=${encodeURIComponent(principalId)}` +
+        `&authorization_jws=${encodeURIComponent(authorizationJws)}`,
+    );
   }
 
   humanLedger(mandateId: string): Promise<{ mandate: MandateView; entries: LedgerEntry[] }> {

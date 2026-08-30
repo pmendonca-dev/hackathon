@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import secrets
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -54,6 +55,9 @@ class RuntimeHttp:
         covered = (
             'sig1=("@method" "@authority" "@path" "ucp-agent" "idempotency-key" '
             f'"content-digest" "content-type");keyid="{signing_key}";alg="ES256"'
+            # Freshness and a one-shot nonce, both inside the signed parameters.
+            f';created={int(self.app.state.runtime.clock.now().timestamp())}'
+            f';nonce="{secrets.token_hex(8)}"'
         )
         request = SignedRequest(
             method=method,
