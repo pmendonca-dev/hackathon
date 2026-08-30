@@ -29,6 +29,10 @@ mandates = Table(
     Column("scale", Integer, nullable=False),
     Column("limit_minor_units", Integer, nullable=False),
     Column("ceiling_minor_units", Integer),
+    # Frequency condition: "up to N purchases in a rolling window". Both columns
+    # are set together or both null; the domain refuses a half-declared limit.
+    Column("max_uses", Integer),
+    Column("usage_window_seconds", Integer),
     Column("expires_at", DateTime(timezone=True), nullable=False),
     Column("policy_version", Integer, nullable=False),
     Column("revocation_epoch", Integer, nullable=False, default=0),
@@ -92,6 +96,9 @@ reservations = Table(
     Column("amount_minor_units", Integer, nullable=False),
     Column("status", String, nullable=False),
     Column("transaction_hash", String),
+    # When the money was actually held. A frequency limit counts these, so a
+    # reservation the processor released clears it and does not burn a use.
+    Column("committed_at", DateTime(timezone=True)),
     CheckConstraint(
         "status IN ('PENDING', 'COMMITTED', 'SETTLED', 'RELEASED')",
         name="reservation_status",

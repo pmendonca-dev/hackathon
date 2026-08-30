@@ -23,6 +23,24 @@ class SqliteLedgerRepository:
         ).scalar_one()
         return Money(int(amount), unit.currency, unit.scale)
 
+    def uses_since(self, mandate_id: str, since) -> int:
+        """How many times money was actually held for this mandate inside the window.
+
+        Counts commit stamps, not attempts. A reservation the processor released has no
+        stamp, so a declined card never eats one of the buyer's allowed uses.
+        """
+        return int(
+            self._connection.execute(
+                select(func.count())
+                .select_from(reservations)
+                .where(
+                    reservations.c.mandate_id == mandate_id,
+                    reservations.c.committed_at.is_not(None),
+                    reservations.c.committed_at >= since,
+                )
+            ).scalar_one()
+        )
+
     def save(
         self, reservation: Reservation, *, merchant_id: str, canonical_payload: str | None = None
     ) -> None:
@@ -45,17 +63,27 @@ class SqliteLedgerRepository:
             transaction_hash=reservation.transaction_hash,
         ))
 
-    def update(self, reservation: Reservation) -> None:
+    def update(self, reservation: Reservation, *, at=None) -> None:
         # A released reservation gives its transaction slot back. The hash is a claim on
         # the mandate — "this exact purchase is currently in flight or settled" — and a
         # purchase the processor refused is neither. Keeping the claim would mean a
         # declined card could never retry the same basket, and the unique index on
         # (mandate_id, transaction_hash) would refuse the second attempt outright.
         released = reservation.status is ReservationStatus.RELEASED
-        self._connection.execute(update(reservations).where(reservations.c.id == reservation.id).values(
-            status=reservation.status.value,
-            transaction_hash=None if released else reservation.transaction_hash,
-        ))
+        values = {
+            "status": reservation.status.value,
+            "transaction_hash": None if released else reservation.transaction_hash,
+        }
+        # The commit stamp is what a frequency limit counts. It is written once, when
+        # the money is first held, and cleared when the reservation is released — a
+        # settlement later must not restamp and move the use into a newer window.
+        if released:
+            values["committed_at"] = None
+        elif at is not None and reservation.status is ReservationStatus.COMMITTED:
+            values["committed_at"] = at
+        self._connection.execute(
+            update(reservations).where(reservations.c.id == reservation.id).values(**values)
+        )
 
     def find_by_transaction(self, mandate_id: str, transaction_hash: str, unit: Money) -> Reservation | None:
         row = self._connection.execute(select(reservations).where(

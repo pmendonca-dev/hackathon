@@ -12,6 +12,11 @@ dependencies = [
     "sqlalchemy",
 ]
 
+[project.optional-dependencies]
+# The agent runs on rules by default. Install this only to demonstrate a real
+# model proposing — and hallucinating — with the core still refusing it.
+llm = ["anthropic"]
+
 [dependency-groups]
 dev = [
     "httpx2",

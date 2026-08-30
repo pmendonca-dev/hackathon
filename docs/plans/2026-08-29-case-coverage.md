@@ -24,7 +24,8 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 > **Também corrigido:** `Mandate.ceiling`, opcional e fixo na criação. Acima dele o núcleo devolve `mandate_ceiling` e **não** oferece aprovação. `replace_live_limit` move o orçamento e não move o teto — há teste. Sem isso, o momento do roteiro em 4:00–4:45 não tinha código por trás.
 - [x] `POST /mandates` — cria, valida invariantes, devolve `mandate_id` e `revocation_id`
 - [x] `GET /mandates/{id}` — estado vivo com orçamento gasto e restante
-- [x] Fluxo de criação no Telegram — `/start` emite chave P-256 do chat e mandato em nome dela
+- [x] **Fluxo de criação no navegador** — `web/src/pages/HolderView.tsx`, assinado pela carteira local
+- [x] **Fluxo de criação no Telegram** — `/start` emite chave P-256 do chat e mandato em nome dela
 - [ ] `POST /vault/tokens` — token escopado por checkout
 
 > **Nenhum PAN existe no sistema.** O mandato nunca recebe dado de cartão e o agente
@@ -43,7 +44,8 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 - [x] Oferta canônica gravada em `checkout_intents.canonical_payload` — placeholder removido
 - [x] `POST /merchant/verify` — os cinco checks, com `accepted` agregado
 - [x] `GET /merchant/.well-known/jwks.json` e `GET /.well-known/jwks.json` — verificação offline
-- [ ] Tela do merchant *(outra lane; `web/src/pages/MerchantView.tsx` é a especificação visual)*
+- [x] **Tela do merchant** — `web/src/pages/MerchantDeskView.tsx`, contra a API real, com o
+  diff de privacidade lado a lado e a lista de campos retidos vinda do servidor
 
 > **Chaves separadas de propósito.** O merchant assina a oferta, o AVAL assina a
 > autorização, e nenhum dos dois consegue produzir o outro lado da troca.
@@ -63,7 +65,7 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 - [x] Loop de descoberta sobre o catálogo, com preço-alvo e casamento por palavra
 - [x] Chamada assinada em `/authorize` e `/capture`, carregando a oferta assinada
 - [x] Chave própria do agente, separada da chave do humano
-- [ ] Decisão por LLM *(o módulo `agent/intent.py` é o ponto de troca; ver abaixo)*
+- [x] **Decisão por LLM** — `agent/llm_intent.py`, opcional, com as regras de piso
 
 > **O agente em processo não tem privilégio.** Ele assina e passa pela **mesma**
 > verificação que a borda HTTP roda (`verify_signed_request`). Rodar dentro do processo
@@ -90,9 +92,10 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 > Se o adapter levanta exceção em `capture()`, `finish()` não roda: reserva fica `COMMITTED` (orçamento retido), attempt fica pendente, idempotência bloqueia retry. É o *fail-closed* certo — timeout não é recusa. **Não envolver em `try/except` liberando a reserva:** soltar o orçamento no timeout é exatamente o bug que o desenho evita.
 
 ### A4. Humano recebe registro do que foi comprado e sob qual mandato
-🟡 O dado existe e é servido; falta a entrega no chat.
+✅ Servido, exibido no navegador e entregue no chat.
 - [x] `GET /ledger?view=human` — o que foi comprado, sob qual mandato, quanto sobrou
-- [x] Recibo no Telegram após liquidação — chega sozinho depois da compra, sem precisar pedir
+- [x] **Registro na tela do titular**, com a escada de avaliação de cada decisão
+- [x] **Recibo no Telegram após liquidação** — chega sozinho depois da compra, sem precisar pedir
 
 ### A5. Humano, merchant e auditor leem a trilha
 ✅ Completo, e a trilha se verifica sozinha. 17 testes.
@@ -130,7 +133,8 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 - [x] `POST /escalations/{id}/decision`, `GET /escalations`, `GET /escalations/{id}`
 - [x] Aprovação assinada (ES256) guardada inteira no ledger como evidência
 - [x] Retomada da captura após aprovação, com idempotência derivada do handle
-- [x] Push no Telegram com botões Aprovar / Negar — a decisão vai assinada pela chave do chat
+- [x] **Aprovar / Recusar no navegador**, com o JWS assinado na carteira local
+- [x] **Push no Telegram com botões Aprovar / Negar** — a decisão vai assinada pela chave do chat
 
 > **A aprovação vincula a compra, não o motivo.** O JWS nomeia `decision_handle`,
 > `mandate_id`, `decision` e `amount_minor_units`, e os quatro são conferidos contra a
@@ -202,10 +206,13 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 - [x] **Agente adversarial** — o agente aceita texto livre e tenta de verdade. Cinco
   caminhos criativos testados: teto, orçamento acumulado, merchant fora do escopo,
   categoria fora do escopo e retentativa. Nenhum passa.
-- 🟡 **Mandatos com condições ricas** — o preço-alvo do case (*"if it drops below $150"*)
-  funciona: o agente lê o alvo da instrução e recusa ofertas acima dele
-  (`test_the_agent_holds_its_own_target_price`). Frequência (*"até 3× por mês"*) não foi
-  implementada.
+- [x] **Mandatos com condições ricas** — as duas condições que o case nomeia funcionam.
+  O preço-alvo (*"if it drops below $150"*) é preferência do comprador, aplicada pelo
+  agente. A frequência (*"até 3× por mês"*) é **autoridade**, aplicada pelo núcleo:
+  `usage_limit: {max_uses, window_seconds}`, janela deslizante, na escada entre o teto
+  e o orçamento — e aprovável, porque um humano pode dizer sim a uma quarta compra.
+  Um uso é queimado por dinheiro efetivamente retido, então um cartão que o processador
+  recusou não come uma das compras permitidas. `test_usage_frequency.py`.
 
 > **Onde o preço-alvo vive, e por quê.** Ele é preferência do comprador, aplicada pelo
 > agente; os limites do mandato são autoridade, aplicada pelo núcleo. Misturar as duas
@@ -216,9 +223,22 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 
 - [ ] Slides (URL)
 - [ ] Demo (URL de vídeo ou experiência ao vivo)
-- [ ] Repositório público com README legível por quem não participou
-- [ ] Diagrama de arquitetura em PDF/PNG, < 25 MB
-- [ ] Decision log exportado em `.md`
+- [x] Repositório público com README legível por quem não participou
+- [x] Diagrama de arquitetura — `docs/architecture.md` (exportar para PDF/PNG antes do envio)
+- [x] Decision log exportado em `.md` — `docs/decision-log.md`
+
+## E2. Diferenciais construídos além do pedido
+
+| # | O quê | Onde |
+|---|---|---|
+| 1 | **Escada de avaliação publicada** — a ordem do núcleo vira imagem, com os degraus nunca consultados visíveis | `test_evaluation_trace.py` · `EvaluationLadder.tsx` |
+| 2 | **Relógio de demonstração, só para frente** — o jurado vê o mandato expirar | `test_demo_clock.py` |
+| 3 | **Adulteração da trilha ao vivo** — a cadeia se defende na frente de quem duvida | `test_ledger_tamper_demo.py` |
+| 4 | **Frequência no mandato** — o bônus nomeado no enunciado | `test_usage_frequency.py` |
+| 5 | **Kill switch do titular** — uma assinatura encerra tudo aquela chave sustenta | `test_principal_kill_switch.py` |
+| 6 | **Carteira no navegador** — chave P-256 não-extraível, o servidor nunca vê a metade privada | `holder-wallet.test.mjs` |
+| 7 | **Diff de privacidade** — as duas projeções do mesmo evento, lado a lado | `MerchantDeskView.tsx` |
+| 8 | **LLM real no agente** — alucinação demonstrável, recusada pelo núcleo | `test_llm_intent.py` |
 
 ---
 

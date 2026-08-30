@@ -18,6 +18,7 @@ from aval.api.schemas import (
     AuthorizationResponse,
     CaptureRequest,
     CaptureResponse,
+    EvaluationStepOut,
     PurchaseRequest,
 )
 from aval.domain.entities import AgentIdentity
@@ -37,6 +38,7 @@ def authorize(
         reason_code=result.reason_code,
         human_summary=result.human_summary,
         escalation_id=result.escalation_id,
+        evaluation_trace=[EvaluationStepOut(**step.as_dict()) for step in result.trace],
     )
 
 

@@ -25,7 +25,7 @@ python -m venv .venv
 # source .venv/bin/activate && pip install -e .  # Linux/macOS
 
 .venv/Scripts/python.exe -m pip install pytest httpx uvicorn
-.venv/Scripts/python.exe -m pytest -q             # 161 testes
+.venv/Scripts/python.exe -m pytest -q             # 331 testes
 
 AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe -m uvicorn aval.main:app --port 8099
 ```
@@ -48,6 +48,24 @@ primeiro passo que não se comportar. É o ensaio do *trial by fire*.
 
 O banco fica em `var/aval.db`. Para uma instância descartável:
 `AVAL_DATABASE_PATH=:memory:`.
+
+### O navegador
+
+```bash
+cd web && npm install
+VITE_AVAL_API_BASE_URL=http://127.0.0.1:8099 VITE_AVAL_OPERATOR_TOKEN=demo-token npm run dev
+```
+
+Quatro visões — titular, merchant, auditor e o console trial-by-fire — todas contra o
+runtime de verdade. Não existe fixture por trás: se o servidor não responde, a tela diz
+que não respondeu, porque uma página que se preenche com dados inventados quando o
+runtime cai é indistinguível de uma que funciona.
+
+Para conferir a jornada inteira sem clicar, com o servidor de pé:
+
+```bash
+cd web && AVAL_OPERATOR_TOKEN=demo-token   node --experimental-strip-types tests/live-browser-journey.mjs http://127.0.0.1:8099
+```
 
 ---
 
@@ -96,7 +114,7 @@ curl "localhost:8099/ledger/verify?mandate_id=mandate_..."
 
 ---
 
-## As oito decisões que sustentam o sistema
+## As dez decisões que sustentam o sistema
 
 ### 1. O núcleo decide; a borda só autentica
 
@@ -190,7 +208,39 @@ linha quebra o próprio digest e todos os elos seguintes. `GET /ledger/verify` p
 cadeia e aponta a **posição exata** onde ela quebrou.
 
 Não é um log que o operador promete não editar — é um log que o auditor confere sem
-confiar no operador.
+confiar no operador. E o jurado pode testar isso: com `AVAL_DEMO_TAMPER=1`,
+`POST /admin/ledger/{id}/tamper` reescreve o autor de um evento e recanonicaliza. A
+linha continua bem formada; é o digest que denuncia, e `/ledger/verify` aponta a
+posição. Não existe rota que conserte a cadeia — ela destruiria a propriedade que a
+outra existe para provar.
+
+### 9. A escada de avaliação é publicada, não prometida
+
+`/authorize` e `/agent/purchase` devolvem `evaluation_trace`: cada degrau que o núcleo
+percorreu, na ordem, parando onde parou.
+
+```
+✓ mandato existe   ✓ não revogado   ✓ não expirado   ✓ merchant no escopo
+✓ categoria ok     ✓ moeda ok       ✓ valor > 0      ✗ abaixo do teto (90000 > 50000)
+─ dentro do orçamento — nunca consultado
+```
+
+Aquele último traço é o argumento inteiro. Uma revogação não é alcançável por uma
+compra ser barata o bastante, e agora isso se **lê** em vez de se acreditar.
+
+O traço nomeia limite, teto e gasto, então ele é servido ao agente e ao titular e
+**nunca** ao merchant. Há teste que falha se ele aparecer em `/merchant/verify`.
+
+### 10. A chave do titular mora no navegador
+
+Mudar limite, aprovar escalação e revogar exigem JWS ES256 do titular — e um jurado
+precisa produzir isso. As duas saídas ruins seriam entregar uma chave do servidor à
+página ou o servidor assinar "em nome" do titular; qualquer uma derrubaria a separação
+titular/operador exatamente onde ela está sendo demonstrada.
+
+O navegador gera o próprio par P-256 com WebCrypto, `extractable: false`, e guarda o
+handle no IndexedDB — usável, nunca serializável. Não existe caminho de exportação no
+módulo, e há teste estrutural que falha se aparecer um.
 
 ---
 
@@ -207,6 +257,9 @@ confiar no operador.
 | PSP não responde | **não é recusa**: orçamento retido, `502`, reconcilia depois | `test_settlement_and_disputes_api.py` |
 | cobrança dupla | idempotência durável; mesma chave e mesmo corpo devolve o original | `test_capture_idempotency.py` |
 | oferta reusada | nonce da oferta é gasto uma vez → `409 offer_replayed` | `test_merchant_api.py` |
+| frequência estourada | 4ª compra do mês escala; um cartão recusado não gasta um uso | `test_usage_frequency.py` |
+| trilha adulterada | a cadeia acusa a posição exata, sem ninguém precisar notar | `test_ledger_tamper_demo.py` |
+| agente sequestrado | uma assinatura encerra todos os mandatos daquela chave | `test_principal_kill_switch.py` |
 
 ### O timeout que não vira recusa
 
@@ -219,14 +272,22 @@ lado. `POST /reconcile` é quem fecha esses casos quando o processador volta.
 
 ## Trial by fire — o que o jurado pode fazer sozinho
 
-| ação | endpoint | efeito |
+| ação | endpoint | provado por |
 |---|---|---|
-| mudar o limite | `PATCH /mandates/{id}/limit` | vale na **próxima** decisão, sem restart (assinado pelo titular) |
-| revogar | `POST /mandates/{id}/revocation` | próxima tentativa falha |
-| aprovar / negar | `POST /escalations/{id}/decision` | compra retoma ou morre |
-| derrubar o PSP | `POST /admin/psp` `{"mode":"offline"}` | compra fica em dúvida, orçamento retido (token de operador) |
-| reconciliar | `POST /reconcile` | fecha o que ficou pendente (token de operador) |
-| atacar em texto livre | `POST /agent/purchase` | o agente tenta de verdade e o núcleo recusa |
+| mudar o limite | `PATCH /mandates/{id}/limit` | chave do titular |
+| revogar | `POST /mandates/{id}/revocation` | chave do titular |
+| revogar **tudo** | `POST /principals/{id}/revocations` | chave do titular |
+| aprovar / negar | `POST /escalations/{id}/decision` | chave do titular |
+| derrubar o PSP | `POST /admin/psp` `{"mode":"offline"}` | token de operador |
+| reconciliar | `POST /reconcile` | token de operador |
+| **avançar o relógio** | `POST /admin/clock` | token de operador |
+| **adulterar a trilha** | `POST /admin/ledger/{id}/tamper` | token de operador + `AVAL_DEMO_TAMPER` |
+| atacar em texto livre | `POST /agent/purchase` | ninguém: o núcleo recusa |
+
+Tudo isso está no navegador, em `web/`. O console trial-by-fire separa as duas colunas
+acima na tela, porque essa separação **é** a tese: quem opera a instância não move
+dinheiro. A chave do titular é gerada no próprio navegador (WebCrypto, P-256,
+`extractable: false`) e o servidor nunca vê a metade privada.
 
 **Nenhum cache na frente de limite e revogação.** Toda decisão relê o estado vivo.
 
@@ -256,8 +317,15 @@ src/aval/
   infrastructure/   SQLite (WAL, BEGIN IMMEDIATE) e o PSP de demonstração
   merchant/         VuelaYa: catálogo e ofertas assinadas
   agent/            o agente comprador, com chave própria
+                    intent.py (regras) · llm_intent.py (o modelo, com as regras de piso)
   api/              casca HTTP fina; valida forma e autenticidade, nunca autoridade
                     agent_auth.py (quem chama) · operator_auth.py (quem opera)
+
+web/
+  wallet/           a chave do titular: gerada, guardada e usada sem nunca ser exportada
+  gateways/         transporte para o lane de autorização; não decide nada
+  components/       EvaluationLadder — a escada do núcleo, desenhada na ordem que ele andou
+  pages/            titular · merchant · auditor · trial-by-fire
 ```
 
 O núcleo não sabe o que foi comprado — recebe `checkout_id` como string opaca. Produto,
@@ -279,9 +347,13 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
   idempotência no banco; esta é a camada barata na frente.
 - **PSP simulado**, controlável por `/admin/psp` — de propósito, para que a história de
   falha seja demonstrada e não narrada.
-- **O agente é baseado em regras.** Um LLM entra exatamente onde `agent/intent.py` está,
-  porque é a metade que *propõe*. Trocar esse módulo não muda nada sobre o que pode ser
-  comprado — e essa é a tese arquitetural inteira.
+- **O agente é baseado em regras por padrão, e opcionalmente por LLM.**
+  `AVAL_LLM_AGENT=1` mais uma credencial põem um modelo de verdade na metade que
+  *propõe* — o que torna a alucinação demonstrável em vez de narrada. Sem chave, com
+  timeout, com resposta malformada ou com categoria inventada, ele volta às regras
+  sozinho: um clone limpo roda o case inteiro sem conta e sem rede. **O modelo nunca é
+  informado do limite, do teto ou do saldo**, então um modelo com prompt injetado não
+  tem número privado para repetir.
 - **Sem PAN em lugar nenhum.** Não é que o cartão esteja guardado com segurança: ele
   nunca existe no sistema.
 
@@ -289,7 +361,9 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
 
 ## Referências
 
+- [Diagrama de arquitetura](docs/architecture.md) — a tese em cinco diagramas
 - [Modelo de segurança](docs/security-model.md) — quem pode o quê, e como é provado
+- [Roteiro da demo](docs/demo-runbook.md) — como subir tudo e o que mostrar, na ordem
 - [Regras, entregáveis e avaliação](docs/hackathon-rules.md)
 - [Cobertura do case](docs/plans/2026-08-29-case-coverage.md)
 - [Contrato de integração](docs/plans/2026-08-29-integration-contract.md)

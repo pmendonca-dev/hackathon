@@ -7,6 +7,7 @@ budget still held, turn it back on, reconcile.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Request, status
@@ -25,6 +26,12 @@ class PspModeRequest(BaseModel):
     mode: Literal["online", "offline", "decline"]
 
 
+class AdvanceClockRequest(BaseModel):
+    """Seconds to move forward. Negative and zero are refused by the route."""
+
+    advance_seconds: int
+
+
 class OpenDisputeRequest(BaseModel):
     reservation_id: str = Field(min_length=1)
     reason: str = Field(min_length=1, max_length=500)
@@ -39,6 +46,36 @@ def set_psp_mode(request: Request, body: PspModeRequest) -> dict[str, Any]:
 @router.get("/admin/psp", dependencies=[Depends(require_operator)])
 def read_psp_mode(request: Request) -> dict[str, Any]:
     return {"mode": runtime_of(request).psp_control.mode, "modes": list(MODES)}
+
+
+@router.post("/admin/clock", dependencies=[Depends(require_operator)])
+def advance_clock(request: Request, body: AdvanceClockRequest) -> dict[str, Any]:
+    """Move the demo clock forward so expiry can be demonstrated rather than awaited.
+
+    Forward only. Rewinding would revive an expired mandate, which is granting spending
+    authority — and no operator credential does that in this system. The refusal is a
+    422 rather than a clamp, because silently ignoring the sign would let a judge
+    believe they had rewound time when they had not.
+    """
+    runtime = runtime_of(request)
+    try:
+        offset = runtime.clock.advance(timedelta(seconds=body.advance_seconds))
+    except ValueError as error:
+        raise ApiError(
+            422,
+            "clock_moves_forward_only",
+            "O relógio da demonstração só avança; rebobinar reviveria um mandato expirado.",
+        ) from error
+    return {"now": runtime.clock.now().isoformat(), "offset_seconds": int(offset.total_seconds())}
+
+
+@router.get("/admin/clock", dependencies=[Depends(require_operator)])
+def read_clock(request: Request) -> dict[str, Any]:
+    runtime = runtime_of(request)
+    return {
+        "now": runtime.clock.now().isoformat(),
+        "offset_seconds": int(runtime.clock.offset.total_seconds()),
+    }
 
 
 @router.post("/reconcile", dependencies=[Depends(require_operator)])

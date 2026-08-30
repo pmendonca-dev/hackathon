@@ -17,10 +17,12 @@ from typing import Any
 from uuid import uuid4
 
 from aval.agent.intent import PurchaseIntent, fold, parse_intent
+from aval.agent.llm_intent import IntentReader, build_intent_reader
 from aval.api.errors import ApiError
 from aval.api.purchase_flow import authorize_purchase, capture_purchase
 from aval.api.schemas import CaptureRequest, PurchaseRequest
 from aval.api.agent_auth import verify_signed_request
+from aval.application.authorization_core import EvaluationStep
 from aval.runtime import AvalRuntime
 from aval.security.http_signature import sign_request
 from aval.security.key_custody import KeyCustodyService
@@ -37,6 +39,9 @@ class AgentRun:
     settlement_reference: str | None = None
     authorization_proof: str | None = None
     considered: int = 0
+    # The authorization ladder the attempt ran into. Empty when no offer matched,
+    # because nothing was ever put to the core.
+    trace: tuple[EvaluationStep, ...] = ()
 
 
 def choose_offer(offers: list[dict[str, Any]], intent: PurchaseIntent) -> dict[str, Any] | None:
@@ -71,10 +76,21 @@ def choose_offer(offers: list[dict[str, Any]], intent: PurchaseIntent) -> dict[s
 
 
 class PurchasingAgent:
-    def __init__(self, runtime: AvalRuntime, *, custody: KeyCustodyService, kid: str) -> None:
+    def __init__(
+        self,
+        runtime: AvalRuntime,
+        *,
+        custody: KeyCustodyService,
+        kid: str,
+        intent_reader: IntentReader | None = None,
+    ) -> None:
         self._runtime = runtime
         self._custody = custody
         self._kid = kid
+        # Rules by default; a real model only when the team turned one on. Either
+        # way the reader proposes and the core disposes — swapping it changes
+        # nothing about what may be bought, which is the whole architectural claim.
+        self._intent_reader = intent_reader or build_intent_reader()
 
     def _signed_call(self, path: str, body: dict[str, Any]):
         raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
@@ -92,7 +108,7 @@ class PurchasingAgent:
         )
 
     def run(self, *, mandate_id: str, instruction: str) -> AgentRun:
-        intent = parse_intent(instruction)
+        intent = self._intent_reader.read(instruction)
         offers = self._runtime.offers.catalog()
         offer = choose_offer(offers, intent)
         if offer is None:
@@ -125,6 +141,7 @@ class PurchasingAgent:
                 offer=offer,
                 escalation_id=decision.escalation_id,
                 considered=len(offers),
+                trace=decision.trace,
             )
 
         capture_body = {**purchase, "idempotency_key": f"cap_{checkout_id}"}
@@ -146,4 +163,5 @@ class PurchasingAgent:
             authorization_proof=result.authorization_proof,
             escalation_id=result.escalation_id,
             considered=len(offers),
+            trace=decision.trace,
         )
