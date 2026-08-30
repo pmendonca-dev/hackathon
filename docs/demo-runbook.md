@@ -44,14 +44,18 @@ $env:ANTHROPIC_API_KEY = "..."      # sem chave, ele volta às regras sozinho
 ## Verificação limpa
 
 ```powershell
-uv run pytest -q                    # 432 testes
+uv run pytest -q                    # a suíte inteira, verde
 uv run python scripts/smoke_demo.py
 
 Set-Location web
-npm test                            # 32 testes
+npm test
 npm run build
 npm run lint
 ```
+
+> Os números de testes saíram destes comandos de propósito. Contagem escrita à mão
+> envelhece em silêncio, e três documentos citando três totais diferentes é pior do que
+> nenhum: o que a banca confere é a suíte verde, não o total.
 
 Com o servidor de pé, a jornada do navegador ponta a ponta:
 
@@ -72,7 +76,8 @@ adulterar a trilha e revogar. Se ela passa, o jurado consegue fazer tudo no nave
    qual chave está assinando — ela não rola para fora da tela.
 
 2. **O agente compra.** Digite *"compre um voo para Córdoba abaixo de $150"*. A escada
-   de avaliação aparece inteira: doze degraus verdes, com o orçamento no fim.
+   de avaliação aparece inteira, toda verde, com o orçamento no último degrau — que é
+   onde ele tem que estar: autoridade antes de dinheiro.
 
 3. **O agente tenta o que não pode.** *"compre a passagem executiva de $900"* → o teto
    recusa **sem** botão de aprovar. A escada mostra onde parou: `below_ceiling` em

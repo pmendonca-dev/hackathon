@@ -16,40 +16,79 @@ falta é o **mandato** — a autorização verificável que uma pessoa dá ao se
 
 Requer Python 3.12 ou 3.13.
 
+O caminho curto usa [uv](https://docs.astral.sh/uv/), que é o que o
+[roteiro da demo](docs/demo-runbook.md) também usa:
+
 ```bash
 git clone https://github.com/pmendonca-dev/hackathon.git
 cd hackathon
 
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -e .     # Windows
-# source .venv/bin/activate && pip install -e .  # Linux/macOS
-
-.venv/Scripts/python.exe -m pip install pytest httpx uvicorn
-.venv/Scripts/python.exe -m pytest -q             # 478 testes
-
-AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe -m uvicorn aval.main:app --port 8099
+uv run pytest -q
+uv run alembic upgrade head
+AVAL_OPERATOR_TOKEN=demo-token uv run uvicorn aval.main:app --port 8099
 ```
 
-**O modelo é opcional.** Sem chave, o agente decide por regras e tudo funciona. Com
-chave, quem escolhe a oferta é um LLM — e nada mais no sistema muda:
+<details>
+<summary>Sem <code>uv</code>, com venv e pip</summary>
+
+O empacotamento é hatchling, então a instalação editável exige um pip com
+[PEP 660](https://peps.python.org/pep-0660/) — atualize antes ou o `-e .` falha com
+*"editable mode currently requires a setuptools-based build"*.
 
 ```bash
-export AVAL_LLM_API_KEY=sk-...      # ou OPENAI_API_KEY
-export AVAL_LLM_MODEL=gpt-4.1-mini  # opcional
-export AVAL_LLM_BASE_URL=...        # opcional, qualquer API compatível
-export AVAL_LLM_TIMEOUT=6           # opcional; estourou, as regras assumem
+python -m venv .venv
+source .venv/bin/activate                        # Linux/macOS
+# .venv/Scripts/activate                         # Windows
+
+python -m pip install -U pip
+python -m pip install -e . pytest httpx2      # httpx2, não httpx: é o que o
+                                              # TestClient do Starlette 1.6 usa
+
+python -m pytest -q
+python -m alembic upgrade head
+AVAL_OPERATOR_TOKEN=demo-token python -m uvicorn aval.main:app --port 8099
 ```
 
+</details>
+
+**O modelo é opcional.** Sem chave, o agente decide por regras e tudo funciona. Com
+chave, quem escolhe a oferta é um LLM — e nada mais no sistema muda. São **duas**
+variáveis: uma diz que o time quer o modelo, a outra que existe um alcançável.
+Defaultar para o outro lado faria um clone limpo depender de uma conta para rodar o case.
+
+```bash
+uv sync --extra llm                      # instala o cliente `anthropic`
+
+export AVAL_LLM_AGENT=1                  # obrigatória: liga o proponente por modelo
+export ANTHROPIC_API_KEY=sk-ant-...      # obrigatória (ou ANTHROPIC_AUTH_TOKEN)
+export AVAL_LLM_MODEL=claude-opus-5      # opcional; este é o padrão
+export AVAL_LLM_TIMEOUT_SECONDS=8        # opcional; estourou, as regras assumem
+```
+
+A **vigília** — a ordem permanente que compra sozinha quando o preço cai — só é
+avaliada quando alguém pede um tick. Por padrão quem pede é o bot do Telegram, no laço
+de polling dele. Para que o servidor faça isso por conta própria, sem bot:
+
+```bash
+export AVAL_WATCH_TICK_SECONDS=30   # desligado quando ausente
+```
+
+A vigília não ganha autoridade nenhuma com isso: disparar significa chamar o mesmo
+`/authorize` e `/capture` de sempre, então uma ordem permanente contra um mandato
+revogado é recusada igualzinho. A autonomia está em *quando* o agente age, nunca no
+*que* ele pode fazer.
+
 `AVAL_OPERATOR_TOKEN` protege as superfícies de operador (`/agents`, `/admin/psp`,
-`/reconcile`). Sem ele um token aleatório é sorteado e impresso na subida — a instância
-nasce fechada, não aberta.
+`/reconcile`). **Sem ela essas superfícies ficam desligadas** — nenhum token apresentado
+confere, e toda chamada é recusada com `403 operator_token_invalid`. A instância nasce
+fechada, não aberta, e nunca sorteia uma credencial para você.
 
 Documentação interativa da API em <http://127.0.0.1:8099/docs>.
 
 Com o servidor de pé, em outro terminal:
 
 ```bash
-AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe scripts/smoke_demo.py http://127.0.0.1:8099
+AVAL_OPERATOR_TOKEN=demo-token uv run python scripts/smoke_demo.py http://127.0.0.1:8099
 ```
 
 O smoke percorre o case inteiro — mandato, compra, escalação com aprovação assinada,
@@ -134,8 +173,11 @@ curl "localhost:8099/ledger/verify?mandate_id=mandate_..."
 `AuthorizationCore.evaluate()` avalia em ordem fixa, e a ordem é a regra:
 
 ```
-mandato existe → não revogado → não expirado → merchant no escopo → categoria no escopo
-              → moeda e escala conferem → valor > 0 → abaixo do TETO → dentro do ORÇAMENTO
+mandato existe → revogação legível → não revogado → merchant não revogado
+              → cartão não cancelado → orçamento não zerado → não expirado
+              → merchant no escopo → categoria no escopo → é o cartão do mandato
+              → moeda e escala conferem → valor > 0 → abaixo do TETO
+              → há vaga de reserva → dentro da frequência → dentro do ORÇAMENTO
 ```
 
 Autoridade antes de dinheiro. Uma revogação não pode ser contornada por uma compra
