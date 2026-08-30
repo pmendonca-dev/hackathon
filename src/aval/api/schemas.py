@@ -113,6 +113,30 @@ class ReplaceLimitRequest(BaseModel):
     authorization_jws: str | None = None
 
 
+class BindInstrumentRequest(BaseModel):
+    """A payment method the holder registered, arriving as a token and four digits.
+
+    There is no card number here on purpose. The number is typed into the processor's
+    own page and never reaches this service, so what a mandate can be handed is a
+    credential someone else already vaulted — which is also the only kind of credential
+    this endpoint could safely accept from an agent-facing surface.
+    """
+
+    token: str = Field(min_length=4, max_length=255)
+    label: str = Field(min_length=1, max_length=64)
+    # Compact JWS ES256 signed by a holder authority of this mandate, over
+    # {mandate_id, scope: "instrument", instrument_token, instrument_label, supersedes}.
+    # `supersedes` names the token bound right now, or null for a mandate with none:
+    # a compare-and-swap, so a captured binding dies the moment any other one lands.
+    authorization_jws: str | None = None
+
+
+class BindInstrumentResponse(BaseModel):
+    instrument_label: str
+    instrument_revocation_scope: str
+    replaced_label: str | None = None
+
+
 class ReplaceLimitResponse(BaseModel):
     policy_version: int
     epoch: int

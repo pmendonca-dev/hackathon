@@ -1,4 +1,4 @@
-"""Mandate lifecycle: create, move the live limit, revoke.
+"""Mandate lifecycle: create, register a payment method, move the live limit, revoke.
 
 The last two are the surfaces a judge touches during the trial by fire, so they
 read and write straight through to the core. No cache sits in front of them.
@@ -16,6 +16,8 @@ from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError
 from aval.application.authorization_core import ApprovalError
 from aval.api.schemas import (
+    BindInstrumentRequest,
+    BindInstrumentResponse,
     CreateMandateRequest,
     CreateMandateResponse,
     ReplaceLimitRequest,
@@ -196,6 +198,41 @@ def replace_limit(request: Request, mandate_id: str, body: ReplaceLimitRequest) 
     return ReplaceLimitResponse(
         policy_version=mandate.policy_version,
         epoch=int(mandate.revocation_metadata.get("epoch", 0)),
+    )
+
+
+@router.post("/mandates/{mandate_id}/instrument", response_model=BindInstrumentResponse)
+def bind_instrument(
+    request: Request, mandate_id: str, body: BindInstrumentRequest
+) -> BindInstrumentResponse:
+    """Attach the payment method the holder registered at the processor.
+
+    Unsigned is refused outright. Attaching a card decides whose money the agent will
+    spend, and a mandate id is a guessable name, not an entitlement — without the
+    holder's signature anyone who guessed one could point somebody else's agent at
+    their own card, or at nobody's.
+    """
+    runtime = runtime_of(request)
+    if not body.authorization_jws:
+        raise ApiError(
+            403,
+            "instrument_binding_unsigned",
+            "Cadastrar um meio de pagamento exige autorização assinada pelo titular.",
+        )
+    try:
+        replaced = runtime.core.bind_instrument(
+            mandate_id,
+            PaymentInstrument(body.token, body.label),
+            authorization_jws=body.authorization_jws,
+        )
+    except ApprovalError as error:
+        raise ApiError(error.status_code, error.reason_code, error.human_summary) from error
+    except ValueError as error:
+        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.") from error
+    return BindInstrumentResponse(
+        instrument_label=body.label,
+        instrument_revocation_scope=f"instrument:{body.token}",
+        replaced_label=None if replaced is None else replaced.label,
     )
 
 

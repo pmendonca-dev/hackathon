@@ -17,6 +17,7 @@ from aval.domain.entities import (
     Dispute,
     Escalation,
     Mandate,
+    PaymentInstrument,
     Reservation,
     Revocation,
 )
@@ -387,6 +388,106 @@ class AuthorizationCore:
                 occurred_at=self._clock(),
             )
         run_in_write_transaction(self._engine, operation)
+
+    def bind_instrument(
+        self,
+        mandate_id: str,
+        instrument: PaymentInstrument,
+        *,
+        authorization_jws: str | None = None,
+    ) -> PaymentInstrument | None:
+        """Name the payment method the holder registered. Returns the one it replaced.
+
+        A mandate is created before the person has a card — they are sent to the
+        processor's own page and come back with a token, never with a number. Binding
+        is what closes that gap, and it is holder authority: attaching a card decides
+        whose money an agent will spend, so it is proved by the holder's key exactly
+        the way moving the budget is. An operator credential is not accepted.
+
+        Replay is answered by compare-and-swap rather than by a version counter. The
+        payload names the instrument it supersedes — the token bound right now, or null
+        for a mandate that has none — so a captured binding is dead the moment any
+        other binding lands. Nothing here is coupled to `policy_version`, which is
+        minted by the policy store and must only ever move forward with it.
+
+        `authorization_jws=None` is the in-process path for the core's own tests; every
+        HTTP caller goes through the signed one.
+        """
+
+        def operation(connection) -> PaymentInstrument | None:
+            repository = SqliteMandateRepository(connection)
+            mandate = repository.get(mandate_id)
+            if mandate is None:
+                raise ValueError("mandate not found")
+            revoked = SqliteRevocationRepository(connection).has_scope(mandate_id, "mandate")
+            if revoked or mandate.status is MandateStatus.REVOKED:
+                # A card on a dead mandate is authority nobody can use and a screen that
+                # lies about being funded.
+                raise ApprovalError(409, "mandate_revoked", "Mandato revogado.")
+            previous = mandate.instrument
+            if authorization_jws is not None:
+                claims = self._verified_approval(
+                    authorization_jws, mandate, kind="instrument_binding"
+                )
+                if claims.get("mandate_id") != mandate_id:
+                    raise ApprovalError(
+                        403,
+                        "instrument_binding_mandate_mismatch",
+                        "A autorização não é deste mandato.",
+                    )
+                if claims.get("scope") != "instrument":
+                    raise ApprovalError(
+                        403,
+                        "instrument_binding_scope_mismatch",
+                        "A autorização não é sobre um meio de pagamento.",
+                    )
+                signed = (claims.get("instrument_token"), claims.get("instrument_label"))
+                if signed != (instrument.token, instrument.label):
+                    raise ApprovalError(
+                        403,
+                        "instrument_binding_token_mismatch",
+                        "O meio de pagamento assinado não confere.",
+                    )
+                if claims.get("supersedes") != (None if previous is None else previous.token):
+                    raise ApprovalError(
+                        403,
+                        "instrument_binding_stale",
+                        "A autorização foi assinada sobre outro meio de pagamento.",
+                    )
+            repository.put(replace(mandate, instrument=instrument))
+            # A holder who authorized a card is by construction allowed to cancel it.
+            # The scope is added here for the same reason it is added at creation: the
+            # token is not something the caller could have named in advance.
+            for authority in mandate.authorities:
+                if authority.role is RevocationRole.HOLDER:
+                    repository.upsert_authority(
+                        mandate_id,
+                        replace(
+                            authority,
+                            allowed_scopes=frozenset(authority.allowed_scopes)
+                            | {f"instrument:{instrument.token}"},
+                        ),
+                    )
+            SqliteAuditLedger(connection).append(
+                mandate_id=mandate_id,
+                event_type="mandate_instrument_bound",
+                human_summary=f"Meio de pagamento {instrument.label} vinculado ao mandato.",
+                actor=(
+                    f"principal:{mandate.principal.id}"
+                    if authorization_jws is not None
+                    else "operator:instrument_binding"
+                ),
+                # The label and never the token: the trail is read by people who are not
+                # entitled to present the credential it names.
+                detail={
+                    "instrument_label": instrument.label,
+                    "replaced_label": None if previous is None else previous.label,
+                },
+                occurred_at=self._clock(),
+            )
+            return previous
+
+        return run_in_write_transaction(self._engine, operation)
 
     def submit_signed_revocation(self, token: str) -> None:
         run_in_write_transaction(
@@ -1721,8 +1822,13 @@ class AuthorizationCore:
             return True
         if scope.startswith("merchant:"):
             return bool(scope.removeprefix("merchant:"))
-        if scope.startswith("instrument:vt_"):
-            return len(scope) > len("instrument:vt_")
+        if scope.startswith("instrument:"):
+            # Any non-empty credential, whatever minted it. This used to require a `vt_`
+            # prefix — the demo tokenizer's own shape — which meant a card vaulted at a
+            # real processor could be named by a mandate and then never cancelled: the
+            # holder's revocation would be refused as malformed. What a payment
+            # credential looks like is the tokenizer's business, never the core's.
+            return bool(scope.removeprefix("instrument:"))
         return False
 
     @staticmethod
