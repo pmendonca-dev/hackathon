@@ -1,124 +1,87 @@
-> ⚠️ **Um servidor só, e sem `--reload`.** Cada processo gera a chave do agente em
-> memória e regrava o perfil no banco compartilhado, então dois `uvicorn` na mesma
-> porta — ou um `--reload` recarregando no meio da demo — fazem o último a subir vencer
-> e o outro passar a assinar com uma chave que o banco não reconhece: todo `/comprar`
-> morre com `signature_invalid`. Antes do pitch: `netstat -ano | findstr 8099` e garanta
-> que só existe um.
+# AVAL Live Demo Runbook
 
-# Roteiro da demo ao vivo
+## Current gate
 
-Duas superfícies, um núcleo. O navegador é onde o titular, o merchant e o auditor
-olham; o Telegram é a superfície de bolso do titular. Nenhum dos dois decide nada.
+The public runtime, browser-BFF HTTP matrix, and real browser flow are green on
+`origin/main` commit `b7e94ddd` after PR #16: migrations, 15 public E2E
+scenarios, the 539-test Python suite, the nine-scenario demo smoke, and all 27
+web tests pass. FastAPI
+serves the production SPA and `/ui-api/v1/` from the same origin. The emitted
+artifact contains no fixture module, `vt_` prefix, proof value, signing
+material, agent route, or persistent-storage API.
 
-## Subindo tudo
+Do not use Vite Preview as authenticated live evidence: it intentionally does
+not route `/ui-api/v1/`. Use the FastAPI origin described below.
+
+## Clean verification
+
+From the repository root in PowerShell 5.1:
 
 ```powershell
 uv run alembic upgrade head
-
-$env:AVAL_OPERATOR_TOKEN = "demo-token"
-$env:AVAL_DEMO_TAMPER    = "1"      # habilita a demonstração de adulteração da trilha
-uv run uvicorn aval.main:app --port 8099
-```
-
-Em outro terminal:
-
-```powershell
+uv run pytest tests/integration/e2e -q
+uv run python -m pytest -q
 Set-Location web
-$env:VITE_AVAL_API_BASE_URL  = "http://127.0.0.1:8099"
-$env:VITE_AVAL_OPERATOR_TOKEN = "demo-token"
-npm run dev
-```
-
-`AVAL_DEMO_TAMPER` é opcional e **destrutivo por natureza**: sem ele a rota de
-adulteração não é montada — 404 de verdade, ausente até do OpenAPI. Ligue apenas para
-a demonstração da cadeia de hash.
-
-O agente roda por regras. Para demonstrá-lo com um modelo de verdade — que pode
-alucinar, e ser recusado mesmo assim:
-
-```powershell
-$env:AVAL_LLM_AGENT = "1"
-$env:ANTHROPIC_API_KEY = "..."      # sem chave, ele volta às regras sozinho
-```
-
-## Verificação limpa
-
-```powershell
-uv run pytest -q                    # 535 testes
-uv run python scripts/smoke_demo.py
-
-Set-Location web
-npm test                            # 35 testes
+npm test
 npm run build
 npm run lint
+Set-Location ..
+uv run python scripts/demo_smoke.py
 ```
 
-Com o servidor de pé, a jornada do navegador ponta a ponta:
+The smoke command invokes the real composed FastAPI application, exercises
+cookie/CSRF-protected browser-BFF routes, and sends RFC 9421-authenticated agent
+requests. It does not use the browser fixture or invoke Core services directly.
+x402 is deliberately excluded.
 
-```powershell
-$env:AVAL_OPERATOR_TOKEN = "demo-token"
-node --experimental-strip-types tests/live-browser-journey.mjs http://127.0.0.1:8099
-```
+## Public demo journey after the gate is green
 
-Ela usa a **mesma** classe de gateway e a **mesma** carteira WebCrypto que a página, e
-percorre 22 passos: criar mandato, comprar, ser recusado pelo teto, mudar limite
-assinado, gastar essa autorização, conferir a cadeia, checar a projeção do merchant,
-abrir uma ordem permanente e vê-la disparar quando o preço cai, avançar o relógio,
-adulterar a trilha, revogar — e provar que a vigília não compra depois disso. Se ela
-passa, o jurado consegue fazer tudo no navegador.
+1. Create the canonical UCP checkout through `POST /checkout-sessions` using a
+   trusted agent RFC 9421 signature.
+2. Delegate the card through
+   `POST /agentic_commerce/delegate_payment`; keep the PAN out of all later
+   requests and projections.
+3. Build a closed AP2 checkout mandate bound to the returned merchant
+   authorization, audience, and nonce.
+4. Capture through `POST /payment-captures` using only the checkout id, opaque
+   vault token, audience, nonce, and AP2 evidence.
+5. Read the settled capture and receipts, then read the mandate audit and
+   dispute projections with signed reader identities.
+6. Submit a holder-signed JWS to
+   `POST /mandates/{mandate_id}/revocations` and reload canonical state. Never
+   emulate the result in browser state.
+7. Show that a future delegation is blocked while the earlier settled capture
+   and its receipts remain intact; the audit timeline must contain the
+   revocation and the dispute must explain the post-commit remedy.
 
-## A demonstração, na ordem
+## Browser source modes
 
-1. **A pessoa cria o mandato** na visão do titular. A chave que vai assinar tudo é
-   gerada no navegador; o servidor recebe só a metade pública. A tira lateral mostra
-   qual chave está assinando — ela não rola para fora da tela.
+The same-origin BFF gateway is the default browser path. A fixture is available
+only in a Vite development process with `VITE_AVAL_USE_MOCK=true`; the
+application then shows the persistent mock-data provenance strip. Production
+ignores that flag and its emitted artifact contains no fixture module or
+synthetic token/proof values. Never use mock mode as Task 12 evidence.
 
-2. **O agente compra.** Digite *"compre um voo para Córdoba abaixo de $150"*. A escada
-   de avaliação aparece inteira: doze degraus verdes, com o orçamento no fim.
+The browser authenticates only through `/ui-api/v1/session/login`; its opaque
+session is an HttpOnly Strict cookie, and the returned CSRF value stays in React
+memory. The browser never calls agent payment, receipt, audit, dispute, or
+revocation endpoints. Those routes still require RFC 9421, and private signing
+keys must not be embedded in Vite variables or shipped to the browser.
 
-3. **O agente tenta o que não pode.** *"compre a passagem executiva de $900"* → o teto
-   recusa **sem** botão de aprovar. A escada mostra onde parou: `below_ceiling` em
-   vermelho, `within_budget` em cinza — *nunca consultado*. Esse cinza é o argumento.
+Before a live browser demo, build `web/dist`, set the four role credentials and
+`AVAL_OPERATOR_AUTHORITY_SEED` only in the server environment, set
+`AVAL_UI_LOCAL_HTTP=true`, and serve `aval.main:app` on `127.0.0.1:8000`.
+`uvicorn` is a declared runtime dependency. On managed Windows hosts, use
+`uv run python -m uvicorn aval.main:app --host 127.0.0.1 --port 8000` to avoid
+launcher-policy differences. Never use `uv run --with`, a cross-origin cookie
+flow, an unsigned proxy, an embedded operator credential, or a signing bypass.
 
-4. **Algo escalável.** *"reserve um hotel"* → `category_not_allowed`, com Aprovar e
-   Recusar. Aprovar assina no navegador e a compra retoma.
+## Trial-by-fire behavior
 
-5. **O jurado muda o limite** no console trial-by-fire e a próxima compra sente. O
-   painel separa o que é provado pela chave do titular do que é provado pelo token de
-   operador — e o operador, de propósito, não move dinheiro nenhum.
-
-6. **O jurado derruba o processador.** A compra fica em dúvida com o orçamento retido,
-   `502`, e `Reconciliar` fecha depois. Timeout não é recusa.
-
-7. **O agente compra sem ninguém pedir.** Digite *"compre um voo para Córdoba abaixo
-   de $100"*. Nada atende, e o agente **oferece** ficar vigiando — abrir uma ordem de
-   gasto permanente é decisão do titular, um toque. No console, `O preço caiu — e
-   agora?` derruba o voo para $90; em `Ordens permanentes`, `Tentar agora` e a vigília
-   dispara sozinha. É a única parte do sistema em que o comprador não é uma pessoa
-   apertando pagar. Vale mostrar depois da revogação também: a mesma vigília não
-   compra mais, porque disparar é chamar o mesmo mandato de sempre.
-
-8. **O jurado avança o relógio** e vê o mandato expirar na frente dele. O relógio só
-   avança: rebobinar reviveria um mandato expirado, e isso seria um operador devolvendo
-   autoridade de gasto. O formulário de criação se data pelo relógio do **servidor**,
-   então criar um mandato novo depois desse passo continua funcionando.
-
-9. **As três visões.** Titular, merchant e auditor. Na do merchant, o painel lado a
-   lado mostra o mesmo evento nas duas projeções e a lista de campos retidos — que vem
-   do servidor, não do navegador.
-
-10. **A trilha se defende.** Na visão do auditor, `Adulterar evento`. A linha continua
-   bem formada e a cadeia acusa a posição exata. Não há botão que conserte.
-
-11. **A revogação.** Assinada no navegador, irreversível. A tentativa seguinte falha
-    com `mandate_revoked`, e a escada para antes de qualquer checagem de dinheiro —
-    mesmo para uma compra que também estouraria o teto.
-
-12. **O botão vermelho.** `Revogar tudo desta chave` encerra todos os mandatos que
-    aquela chave sustenta, e nenhum outro.
-
-## O que não fingimos
-
-Se o runtime não responde, a tela diz que não respondeu. Não existe fixture por trás
-do navegador: uma página que se preenchesse com dados inventados quando o servidor cai
-seria indistinguível de uma que funciona, exatamente quando isso mais importa.
+- Operator revocation is operational through the cookie/CSRF BFF, creates
+  audit evidence, and is available from the FastAPI-served production UI. The
+  UI never asks for or receives a JWS.
+- Limit reduction, scope change, and budget-zero remain unavailable because no
+  public administrative endpoints are defined for them.
+- No trial command may mutate browser-only state or display a fabricated
+  success receipt.

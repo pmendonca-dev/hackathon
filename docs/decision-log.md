@@ -707,3 +707,81 @@ Declare Uvicorn as a runtime dependency and resolve it in the committed lockfile
 **What we chose:** Declare Uvicorn as a direct runtime dependency and commit its resolved lockfile entries.
 
 **Why:** The published same-origin launch command is part of the application delivery path. A clean `uv sync` must make that command available without an operator adding an undeclared, unreviewed package at launch time.
+
+## Browser authentication remains fail-closed
+
+**Status:** Historical decision, superseded by the approved browser-safe BFF and same-origin build delivery decisions above.
+
+**Decision:** Final UI validation without a published browser signing boundary
+
+**Options considered (one per line):**
+
+Embed an RFC 9421 private key in the Vite application
+Add an unsigned proxy or relax runtime signature verification
+Keep the direct browser unavailable and record an architecture blocker
+
+**What we chose:** Keep live browser reads and commands unavailable until a
+browser-safe authenticated boundary is explicitly designed. The final
+validation does not add a proxy, ship a key, or bypass RFC 9421.
+
+**Why:** The corrected runtime correctly rejects unsigned audit reads with
+`422 ucp_agent_invalid`. Converting that safe rejection into browser success
+would create a second trust boundary without an approved custody or identity
+model. The public signed E2E client remains the runtime evidence while the
+browser blocker is tracked separately.
+
+## Production browser projection excludes credential-shaped fixture fields
+
+**Decision:** How the development fixture and defensive redaction coexist with a production bundle that must contain no `vt_` literal
+
+**Options considered (one per line):**
+
+Rely only on dead-code elimination to hide credential-shaped fixture fields
+Remove defensive runtime redaction so its pattern does not appear in the bundle
+Remove sensitive fields from browser projection types and encode defensive patterns without embedding credential-shaped literals
+
+**What we chose:** Browser projection types and the development fixture no longer model vault-token or authorization-proof references. Defensive presentation redaction remains, but its prefix match is represented without placing a credential-shaped literal in the emitted artifact. The artifact test scans every emitted file for any `vt_` occurrence.
+
+**Why:** A development fixture should model the same safe projection boundary as the live BFF, and production safety must be proven on emitted bytes rather than inferred from source imports. Keeping the redactor preserves fail-safe presentation while avoiding a forbidden credential-shaped marker in production assets.
+
+## Browser BFF same-origin delivery gate
+
+**Decision:** Final browser validation after the browser-safe BFF exists
+
+**Options considered (one per line):**
+
+Add a Vite proxy without an approved deployment topology
+Make the browser call the BFF cross-origin and weaken cookie semantics
+Keep relative same-origin calls and report the missing SPA/BFF delivery seam
+
+**What we chose:** Keep `UiBffGateway` on relative `/ui-api/v1/` routes with
+`credentials: "same-origin"`. Public HTTP E2E proves the BFF contract, while
+the production browser flow remains blocked until an approved server or
+development topology serves the SPA and BFF from one origin.
+
+**Why:** The BFF session cookie is intentionally `HttpOnly`, `Secure`, and
+`SameSite=Strict`. An ad-hoc cross-origin workaround or unapproved proxy would
+change the security architecture. A visible 404 with cleared credentials is
+safer and more truthful than fixture fallback or weakened cookie handling.
+
+## Mainline agent demonstrations remain visible but inactive at the BFF boundary
+
+**Decision:** How to preserve PRs #19 and #20 after rebasing the browser-safe UI
+
+**Options considered (one per line):**
+
+Restore the retired browser gateway and call `/agent/*` and `/admin/*` directly
+Delete the authority atlas, attack scenarios, and standing-order presentation
+Adapt the presentation to safe BFF projections and mark unpublished commands unavailable
+
+**What we chose:** The authority atlas and all attack scenarios remain in the
+holder view and now consume only role-scoped BFF workspace, audit, and dispute
+projections. Standing-order capability remains implemented in the runtime and
+is explained in the browser, but its create, list, tick, and catalogue controls
+stay disabled until an explicit `/ui-api/v1/` contract is approved.
+
+**Why:** The current BFF contract publishes no browser-safe purchase or watch
+intent. Restoring direct agent calls would require RFC 9421 material in the
+browser, while deleting the presentation would make the rebased UI incomplete.
+An explicit unavailable state preserves both the capability and the security
+boundary without inventing successful local behavior.
