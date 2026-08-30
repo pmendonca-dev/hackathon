@@ -17,8 +17,7 @@ The database is a file by default so a restart does not erase the demo. Set
 gets when the team resets between runs.
 
 The operator surfaces (`/agents`, `/admin/psp`, `/reconcile`) need a token. Set
-`AVAL_OPERATOR_TOKEN`, or let one be minted and read it off the startup line: a default
-deployment starts closed rather than open.
+`AVAL_OPERATOR_TOKEN`; a default deployment starts closed rather than open.
 """
 
 from __future__ import annotations
@@ -284,6 +283,3 @@ _runtime = build_runtime(database_path=database_path(), extra_key_ids=PROTOCOL_K
 app = create_authorization_app(_runtime)
 _seed_protocol_fixtures(_runtime, _runtime.clock.now)
 _mount_protocol_lane(app, _runtime, _runtime.clock.now)
-
-if not os.environ.get("AVAL_OPERATOR_TOKEN", "").strip():
-    print(f"[aval] operator token for this process: {_runtime.operator_token}")
