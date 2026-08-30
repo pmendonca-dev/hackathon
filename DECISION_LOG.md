@@ -879,23 +879,3 @@ secure payment-method collection, monitoring, discovery, authorization, and
 settlement—within the available implementation window. A Stripe charge alone
 does not create an external merchant order, and adding unapproved seller APIs
 would make the demo misleading and exceed the scope.
-
-## Two-computer trust boundary
-
-**Decision:** Deployment split for the real-offer Telegram MVP
-
-**Options considered (one per line):**
-
-Run bot, OpenAI calls, authorization database, and Stripe on one computer
-Put all background work on the Telegram and OpenAI computer
-Place conversation and discovery on one computer and authority, state, and settlement on another
-
-**What we chose:** Computer A runs Telegram conversation and OpenAI discovery;
-Computer B runs AVAL authorization, durable watches and events, Stripe Setup
-Checkout, and test-mode settlement. They communicate with separate scoped
-service credentials over authenticated private HTTP.
-
-**Why:** The public-facing bot and untrusted search results are isolated from
-Stripe secrets, mandate state, signing keys, and payment-method tokens. The
-durable scheduler stays beside the database and settlement path, so restarting
-the conversation edge cannot lose a pending purchase or charge twice.

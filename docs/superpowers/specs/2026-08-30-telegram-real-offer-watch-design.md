@@ -30,26 +30,6 @@ The existing `AuthorizationCore` remains the only authorizer. It evaluates the
 normalized offer against the mandate and, only after approval, the existing
 `StripePspAdapter` may create its test-mode PaymentIntent.
 
-## Two-computer topology
-
-| Computer | Role | Holds | Must not hold |
-| --- | --- | --- | --- |
-| A — Conversation edge | Telegram polling/webhook, conversational extraction, OpenAI web discovery, and outgoing Telegram messages | `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, a narrowly scoped service credential for B | Stripe secret key, AVAL SQLite database, operator token, payment-method tokens |
-| B — Authorization and settlement | AVAL API, SQLite, `WatchService` scheduler, mandate evaluation, Stripe Setup Checkout callback, and Stripe test-mode settlement | mandate/watch database, `AVAL_STRIPE_SECRET_KEY`, AVAL signing keys, operator token | Telegram bot token and OpenAI API key |
-
-The computers communicate only over an authenticated private HTTP interface.
-Computer A sends signed commands to create, amend, cancel, and inspect a watch.
-Computer B owns the durable event outbox. It asks A to discover offers for an
-open watch and treats the response as untrusted candidate data; it never grants
-authority from the response. A polls B's outbox with a cursor and delivers
-status messages to Telegram. This avoids inbound notification endpoints on A
-and gives failed Telegram delivery a durable retry path.
-
-Stripe Setup Checkout and the AVAL API on B require a public HTTPS tunnel or
-deployment URL for the user return flow. The private A-to-B and B-to-A service
-interfaces use separate scoped credentials and request signatures; neither
-credential can call operator or payment endpoints.
-
 ## Telegram flow
 
 1. `/start` identifies the chat and creates or resumes its holder identity.
@@ -77,12 +57,10 @@ credential can call operator or payment endpoints.
 
 ## Configuration
 
-Computer A needs `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, and its scoped
-service credential. Computer B needs `AVAL_PSP=stripe`, a Stripe **test**
-secret key, and its separate scoped service credential. The Stripe return URL
-must be public HTTPS so Telegram users can complete the Setup Checkout page.
-Secrets live only in the ignored environment files of the computer that owns
-them.
+The deployment needs `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`,
+`AVAL_TELEGRAM_LLM=1`, `AVAL_PSP=stripe`, and a Stripe **test** secret key.
+The Stripe return URL must be public HTTPS so Telegram users can complete the
+Setup Checkout page. Secrets live only in the ignored `.env` file.
 
 ## Verification
 
@@ -90,6 +68,5 @@ Unit tests cover request extraction, result normalization, malformed and
 price-less search results, and the no-match path. Integration tests cover a
 persisted watch using a fake discovery adapter, authorization/revocation at
 tick time, and the Telegram response that contains only the Stripe Checkout
-URL. Integration tests cover a rejected inter-computer signature and a
-redelivered outbox event. A manual demo uses Stripe test cards and verifies
-that no external seller order is claimed.
+URL. A manual demo uses Stripe test cards and verifies that no external seller
+order is claimed.
