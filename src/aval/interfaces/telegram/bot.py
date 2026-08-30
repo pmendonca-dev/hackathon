@@ -176,7 +176,7 @@ class Bot:
         if command in {"/ajuda", "/help"}:
             return (views.help_text(),)
         if command in {"/catalogo", "/catálogo"}:
-            return (views.catalogue(self._gateway.catalogue()),)
+            return (self._catalogue(chat_id),)
         if command == "/status":
             identity = self._identities.get(chat_id)
             pending = (
@@ -237,11 +237,17 @@ class Bot:
         self._identities.bind_mandate(chat_id, mandate_id)
         mandate = self._gateway.mandate(mandate_id)
         assert mandate is not None
-        return views.welcome(
-            display_name=identity.display_name,
-            mandate=mandate,
-            catalogue=self._gateway.catalogue(),
+        return views.welcome(display_name=identity.display_name, mandate=mandate)
+
+    def _catalogue(self, chat_id: int) -> View:
+        """Marked against the person's own mandate, so the limits are visible."""
+        identity = self._identities.get(chat_id)
+        mandate = (
+            self._gateway.mandate(identity.mandate_id)
+            if identity and identity.mandate_id
+            else None
         )
+        return views.catalogue(self._gateway.catalogue(), mandate=mandate)
 
     def _purchase(self, identity: ChatIdentity, instruction: str) -> Sequence[View]:
         if not instruction:
@@ -294,56 +300,76 @@ class Bot:
         verb, argument = parsed
         logger.info("botao %s de %s", verb, chat_id)
         try:
-            view = self._callback_view(verb, argument, identity)
+            screens = self._callback_view(verb, argument, identity)
         except GatewayError as error:
             self._api.answer_callback(callback_id, "AVAL indisponível.")
             self._send(chat_id, views.unavailable(str(error), error.reason_code))
             return
         self._api.answer_callback(callback_id)
-        # Replacing the message retires its buttons, so a second tap cannot re-ask.
-        self._api.edit_message(chat_id, message_id, view)
+        # The first screen replaces the message, which retires its buttons so a
+        # second tap cannot re-ask. Anything further arrives as a new message.
+        self._api.edit_message(chat_id, message_id, screens[0])
+        for extra in screens[1:]:
+            self._send(chat_id, extra)
 
-    def _callback_view(self, verb: str, argument: str, identity: ChatIdentity) -> View:
+    def _callback_view(
+        self, verb: str, argument: str, identity: ChatIdentity
+    ) -> Sequence[View]:
         if verb in {views.CALLBACK_APPROVE, views.CALLBACK_DENY}:
             escalation = self._gateway.escalation(argument)
             if escalation is None:
-                return views.plain("Escalação não encontrada.")
+                return (views.plain("Escalação não encontrada."),)
             if not self._owns(identity, escalation.mandate_id):
-                return views.plain("Essa escalação não é do seu mandato.")
+                return (views.plain("Essa escalação não é do seu mandato."),)
             approve = verb == views.CALLBACK_APPROVE
             message = self._gateway.decide(identity, escalation, approve=approve)
-            return views.signed_note("Aprovado" if approve else "Recusado", message)
+            return (views.signed_note("Aprovado" if approve else "Recusado", message),)
+
+        if verb == views.CALLBACK_CATALOGUE:
+            return (self._catalogue(identity.chat_id),)
+
+        if verb == views.CALLBACK_BUY:
+            if identity.mandate_id is None:
+                return (views.no_mandate(),)
+            wish = views.wish_for(self._gateway.catalogue(), argument)
+            if wish is None:
+                return (views.plain("Essa opção saiu do catálogo."),)
+            # Deliberately routed through the agent's own free-text path: a button
+            # that called capture directly would be a second way to buy that skips
+            # the agent, which is exactly what the architecture forbids. The button
+            # says what the person wants; the agent still picks which offer.
+            return self._purchase(identity, wish.instruction)
 
         if verb == views.CALLBACK_DISPUTE:
             if argument not in self._own_reservations.get(identity.chat_id, set()):
-                return views.plain("Essa compra não é sua.")
+                return (views.plain("Essa compra não é sua."),)
             message = self._gateway.open_dispute(
                 argument, "titular não reconhece a compra (aberta pelo Telegram)"
             )
-            return views.plain(f"⚠️ {message} A trilha do mandato é quem responde.")
+            return (views.plain(f"⚠️ {message} A trilha do mandato é quem responde."),)
 
         if not self._owns(identity, argument):
-            return views.plain("Esse mandato não é seu.")
+            return (views.plain("Esse mandato não é seu."),)
         if verb == views.CALLBACK_MANDATE:
             mandate = self._gateway.mandate(argument)
-            return views.mandate_card(mandate) if mandate else views.no_mandate()
+            return (views.mandate_card(mandate) if mandate else views.no_mandate(),)
         if verb == views.CALLBACK_RECEIPT:
-            return views.receipt(self._gateway.receipt(argument))
+            return (views.receipt(self._gateway.receipt(argument)),)
         if verb == views.CALLBACK_REVOKE_MENU:
             mandate = self._gateway.mandate(argument)
-            return views.revoke_menu(mandate) if mandate else views.no_mandate()
+            return (views.revoke_menu(mandate) if mandate else views.no_mandate(),)
         if verb == views.CALLBACK_REVOKE_CONFIRM:
             mandate = self._gateway.mandate(argument)
             if mandate is None:
-                return views.no_mandate()
+                return (views.no_mandate(),)
             message = self._gateway.revoke(
                 identity,
                 argument,
                 epoch=mandate.revocation_epoch,
                 reason="revogado pelo titular no Telegram",
             )
-            return views.signed_note("Mandato revogado", message)
-        return views.help_text()
+            return (views.signed_note("Mandato revogado", message),)
+        return (views.help_text(),)
 
     @staticmethod
     def _owns(identity: ChatIdentity, mandate_id: str) -> bool:
