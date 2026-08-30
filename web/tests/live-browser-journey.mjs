@@ -76,6 +76,16 @@ const created = await gateway.createMandate({
 const mandateId = created.mandate_id;
 check('o navegador cria um mandato com a própria chave', Boolean(mandateId), mandateId);
 
+// 1b — o cartão, na mesma ação em que a página o registra. Um mandato nasce sem fundo:
+// autoridade para gastar não é meio de pagar, e o núcleo recusa uma captura cujo
+// instrumento o mandato não nomeia. São três chamadas e nenhuma carrega um número —
+// abrir a página do processador, ler o que ficou nela, e nomeá-lo no mandato com a
+// assinatura desta chave.
+const registeredCard = await gateway.registerCard(mandateId, (claims) =>
+  signCompactJws(claims, wallet),
+);
+check('o cartão é registrado no processador, sem número nenhum', Boolean(registeredCard), registeredCard);
+
 // 2 — the listing the sidebar reads. Signed by this browser's own key: the principal id
 // in the URL is a guessable name, so the key is what decides which mandates come back.
 const readToken = await signCompactJws({ principal_id: principalId }, wallet);
@@ -153,7 +163,27 @@ check(
 // 6b — the standing order: the agent still working after the person stopped typing.
 // This is the only part of the system where the buyer is not a person pressing pay,
 // which is the premise of the case — so it has to be reachable from the browser lane.
-const nothingYet = await gateway.agentPurchase(mandateId, 'compre um voo para Córdoba abaixo de $100');
+// O teto vem do catálogo, não de um número escrito aqui. Um `$100` fixo dizia "nada
+// atende" enquanto o catálogo tivesse o voo mais barato acima disso — e no dia em que
+// alguém baixou um preço, o passo passou a comprar e a afirmação virou mentira sem que
+// nada no sistema tivesse quebrado. Derivado, o passo continua significando o que diz.
+const cordobaFlights = (await gateway.offers()).offers
+  .filter(
+    (offer) =>
+      offer.merchant_id === 'vuelaya'
+      && offer.item.category === 'travel'
+      && offer.item.title.includes('Córdoba'),
+  )
+  .sort((left, right) => left.total.minor_units - right.total.minor_units);
+const cheapest = cordobaFlights[0];
+check('há um voo para Córdoba na VuelaYa para derrubar', Boolean(cheapest), cheapest?.item.sku);
+
+// Abaixo de tudo que existe hoje, e o preço da queda abaixo disso.
+const ceilingDollars = Math.floor(cheapest.total.minor_units / 100) - 15;
+const dropCents = (ceilingDollars - 5) * 100;
+const standingInstruction = `compre um voo para Córdoba abaixo de $${ceilingDollars}`;
+
+const nothingYet = await gateway.agentPurchase(mandateId, standingInstruction);
 check('nada atende ainda, e isso não é uma compra', nothingYet.outcome === 'no_offer', nothingYet.reason_code);
 
 const beforeWatching = await gateway.listWatches(mandateId);
@@ -163,25 +193,16 @@ check(
   `${beforeWatching.watches.length} vigília(s)`,
 );
 
-const watch = await gateway.registerWatch(mandateId, 'compre um voo para Córdoba abaixo de $100');
+const watch = await gateway.registerWatch(mandateId, standingInstruction);
 check('o titular abre a vigília explicitamente', watch.status === 'OPEN', watch.watch_id);
 
 const quiet = await gateway.tickWatches(mandateId);
 check('sem oferta, a vigília continua esperando', quiet.fired.length === 0);
 
-// The one the instruction actually names, at the merchant the mandate actually allows.
-// Dropping the price of anything else proves nothing: the agent would still be right to
-// leave it alone, and a green step there would be measuring the wrong refusal.
-const cheapest = (await gateway.offers()).offers
-  .filter(
-    (offer) =>
-      offer.merchant_id === 'vuelaya'
-      && offer.item.category === 'travel'
-      && offer.item.title.includes('Córdoba'),
-  )
-  .sort((left, right) => left.total.minor_units - right.total.minor_units)[0];
-check('há um voo para Córdoba na VuelaYa para derrubar', Boolean(cheapest), cheapest?.item.sku);
-await gateway.repriceOffer(cheapest.item.sku, 9000);
+// O voo que a instrução nomeia, no merchant que o mandato permite. Derrubar o preço de
+// qualquer outro não prova nada: o agente continuaria certo em deixá-lo quieto, e um
+// passo verde ali estaria medindo a recusa errada.
+await gateway.repriceOffer(cheapest.item.sku, dropCents);
 const fired = await gateway.tickWatches(mandateId);
 check(
   'o preço cai e o agente compra sozinho',

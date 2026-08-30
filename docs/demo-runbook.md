@@ -63,11 +63,11 @@ $env:ANTHROPIC_API_KEY = "..."      # sem chave, ele volta às regras sozinho
 ## Verificação limpa
 
 ```powershell
-.venv\Scripts\python.exe -m pytest -q       # a suíte inteira, verde
+.venv\Scripts\python.exe -m pytest -q       # 686 testes
 .venv\Scripts\python.exe scripts/smoke_demo.py
 
 Set-Location web
-npm test                            # a suíte do navegador
+npm test                            # 40 testes
 npm run build
 npm run lint
 ```
@@ -84,7 +84,7 @@ node --experimental-strip-types tests/live-browser-journey.mjs http://127.0.0.1:
 ```
 
 Ela usa a **mesma** classe de gateway e a **mesma** carteira WebCrypto que a página, e
-percorre 29 passos: criar mandato, comprar, ser recusado pelo teto, mudar limite
+percorre 30 passos: criar mandato, comprar, ser recusado pelo teto, mudar limite
 assinado, gastar essa autorização, conferir a cadeia, checar a projeção do merchant,
 abrir uma ordem permanente e vê-la disparar quando o preço cai, avançar o relógio,
 adulterar a trilha, revogar — e provar que a vigília não compra depois disso. Se ela
