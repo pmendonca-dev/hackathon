@@ -103,12 +103,17 @@ def test_a_whole_float_amount_is_also_refused(harness):
 
 
 def test_mandate_expiry_is_read_as_a_real_instant_not_a_local_wall_clock(harness):
-    # 13:00 at UTC+3 is 10:00 UTC, already past for this harness clock (12:00 UTC).
-    mandate_id = harness.create_mandate(expires_at="2026-08-29T13:00:00+03:00")
+    """13:00 at UTC+3 is 10:00 UTC, already past for this harness clock (12:00 UTC).
 
-    response = harness.authorize(harness.purchase(mandate_id))
+    Read as a wall clock it would look like an hour in the future and be accepted; read
+    as an instant it is an hour in the past and is refused.
+    """
+    response = harness.client.post(
+        "/mandates", json=harness.mandate_payload(expires_at="2026-08-29T13:00:00+03:00")
+    )
 
-    assert response.json()["reason_code"] == "mandate_expired"
+    assert response.status_code == 422
+    assert response.json()["reason_code"] == "mandate_already_expired"
 
 
 def test_capture_settles_once_and_replays_the_same_body_for_the_same_key(harness):
@@ -255,3 +260,31 @@ def test_a_second_mandate_under_the_same_holder_key_can_still_be_revoked(harness
     assert harness.client.get(f"/mandates/{first}").json()["status"] == "ACTIVE"
     assert harness.authorize(harness.purchase(second)).json()["reason_code"] == "mandate_revoked"
     assert harness.authorize(harness.purchase(first)).json()["decision"] == "authorized"
+
+
+def test_a_mandate_that_has_already_expired_is_refused_at_creation(harness):
+    """Creating a dead mandate is a mistake worth answering at once: it would be accepted
+    and then refuse every purchase, which reads as the system being broken."""
+    response = harness.client.post(
+        "/mandates", json=harness.mandate_payload(expires_at="2026-08-29T11:00:00Z")
+    )
+
+    assert response.status_code == 422
+    assert response.json()["reason_code"] == "mandate_already_expired"
+
+
+def test_a_mandate_expiring_in_the_future_is_still_accepted(harness):
+    response = harness.client.post(
+        "/mandates", json=harness.mandate_payload(expires_at="2026-08-29T12:00:01Z")
+    )
+
+    assert response.status_code == 201
+
+
+def test_a_mandate_with_a_non_positive_limit_is_refused(harness):
+    response = harness.client.post(
+        "/mandates",
+        json=harness.mandate_payload(limit={"minor_units": 0, "currency": "USD", "scale": 2}),
+    )
+
+    assert response.status_code == 422

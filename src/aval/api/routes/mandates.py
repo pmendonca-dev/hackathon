@@ -60,6 +60,12 @@ def unverified_claims(token: str) -> dict:
 @router.post("/mandates", status_code=status.HTTP_201_CREATED, response_model=CreateMandateResponse)
 def create_mandate(request: Request, body: CreateMandateRequest) -> CreateMandateResponse:
     runtime = runtime_of(request)
+    # Validity is time-dependent, so it is checked here rather than in the domain: the
+    # entity has no clock, and a mandate created already expired would be accepted and
+    # then refuse everything, which reads as the system being broken rather than as the
+    # mistake it is.
+    if body.expires_at <= runtime.clock.now():
+        raise ApiError(422, "mandate_already_expired", "O mandato já nasceria expirado.")
     mandate_id = f"mandate_{uuid4().hex}"
     revocation_id = f"rev_{uuid4().hex}"
     try:

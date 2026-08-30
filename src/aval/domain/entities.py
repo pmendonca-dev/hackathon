@@ -59,6 +59,13 @@ class Mandate:
             raise DomainError("mandate must allow at least one merchant")
         if not self.allowed_categories:
             raise DomainError("mandate must declare at least one allowed category")
+        # A limit of zero or less authorizes nothing. Left unchecked it does not fail
+        # closed either: every purchase exceeds it, so every purchase becomes an approval
+        # request instead of the refusal it should be.
+        if self.limit.minor_units <= 0:
+            raise DomainError("mandate limit must be positive")
+        if self.ceiling is not None and self.ceiling.minor_units <= 0:
+            raise DomainError("mandate ceiling must be positive")
         if self.ceiling is not None and (self.ceiling.currency, self.ceiling.scale) != (
             self.limit.currency,
             self.limit.scale,

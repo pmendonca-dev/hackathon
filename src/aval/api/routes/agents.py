@@ -50,6 +50,13 @@ def register_agent(request: Request, body: RegisterAgentRequest) -> RegisterAgen
         raise ApiError(
             409, "agent_kid_already_registered", "Este kid já pertence a outro perfil."
         )
+    # The profile URL is unique in the store, so a second agent claiming one is answered
+    # here rather than surfacing as a constraint violation from the database.
+    claimed = core.agent_for_profile_url(body.profile_url)
+    if claimed is not None and claimed.id != body.id:
+        raise ApiError(
+            409, "agent_profile_url_taken", "Esta profile_url já pertence a outro perfil."
+        )
     core.register_agent(
         AgentIdentity(
             id=body.id,

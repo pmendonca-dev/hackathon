@@ -37,6 +37,20 @@ class SqliteAgentProfileRepository:
             return
         self._connection.execute(agent_profiles.insert().values(id=identity.id, **values))
 
+    def find_by_profile_url(self, profile_url: str) -> AgentIdentity | None:
+        row = self._connection.execute(
+            select(agent_profiles).where(agent_profiles.c.profile_url == profile_url)
+        ).mappings().one_or_none()
+        if row is None:
+            return None
+        keys = json.loads(row["profile_json"]).get("keys", [])
+        return AgentIdentity(
+            id=row["id"],
+            profile_url=row["profile_url"],
+            public_jwk=keys[0] if keys else {},
+            trusted=bool(row["trusted"]),
+        )
+
     def find_by_kid(self, kid: str) -> AgentIdentity | None:
         """Profiles are few in this demo, so the scan is honest and cheap. The key id in
         the JWK is what a signature announces, so that is what we match on."""

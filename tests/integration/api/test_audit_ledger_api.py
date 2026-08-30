@@ -34,7 +34,7 @@ def test_a_settled_purchase_leaves_an_ordered_trail(harness):
 
     types = [entry["event_type"] for entry in auditor_entries(harness, mandate_id)]
 
-    assert types == ["mandate_registered", "purchase_authorized", "purchase_settled"]
+    assert types == ["mandate_registered", "purchase_committed", "purchase_settled"]
 
 
 def test_a_refused_purchase_is_recorded_and_never_silent(harness):
@@ -193,3 +193,24 @@ def test_the_snapshot_budget_follows_the_live_limit(harness):
 def test_an_unknown_mandate_has_no_trail_to_read(harness):
     assert harness.client.get("/ledger", params={"mandate_id": "nope", "view": "human"}).status_code == 404
     assert harness.client.get("/ledger/verify", params={"mandate_id": "nope"}).status_code == 404
+
+
+def test_one_purchase_does_not_look_like_two_on_the_trail(harness):
+    """The decision and the commit are different facts and must read differently.
+
+    Naming both `purchase_authorized` made a single purchase look like two attempts to
+    anyone reading the auditor view, which is the one thing that view exists for.
+    """
+    mandate_id = harness.create_mandate()
+    body = harness.purchase(mandate_id)
+    harness.authorize(body)
+    harness.capture(body | {"idempotency_key": "cap_once_only"})
+
+    types = [entry["event_type"] for entry in auditor_entries(harness, mandate_id)]
+
+    assert types == [
+        "mandate_registered",
+        "purchase_authorized",
+        "purchase_committed",
+        "purchase_settled",
+    ]

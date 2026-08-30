@@ -154,3 +154,38 @@ def test_the_operator_token_comparison_does_not_leak_on_prefix(harness):
     response = harness.client.post("/admin/psp", headers={"X-Aval-Operator": prefix}, json={"mode": "offline"})
 
     assert response.status_code == 403
+
+
+def test_two_agents_cannot_claim_the_same_profile_url(harness):
+    """A profile URL identifies one agent. The second must be told so, not crash."""
+    harness.custody.generate_es256("twin_a")
+    harness.custody.generate_es256("twin_b")
+    shared = "https://agents.aval.local/twin"
+    first = harness.client.post("/agents", headers=harness.operator, json={
+        "id": "agent_twin_a", "profile_url": shared,
+        "public_jwk": harness.custody.public_jwk("twin_a"), "trusted": True})
+
+    second = harness.client.post("/agents", headers=harness.operator, json={
+        "id": "agent_twin_b", "profile_url": shared,
+        "public_jwk": harness.custody.public_jwk("twin_b"), "trusted": True})
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+    assert second.json()["reason_code"] == "agent_profile_url_taken"
+
+
+def test_re_registering_the_same_agent_updates_it(harness):
+    """Rotating a key is a legitimate update of one profile, not a second profile."""
+    harness.custody.generate_es256("rotate_1")
+    harness.custody.generate_es256("rotate_2")
+    url = "https://agents.aval.local/rotating"
+    harness.client.post("/agents", headers=harness.operator, json={
+        "id": "agent_rotating", "profile_url": url,
+        "public_jwk": harness.custody.public_jwk("rotate_1"), "trusted": True})
+
+    again = harness.client.post("/agents", headers=harness.operator, json={
+        "id": "agent_rotating", "profile_url": url,
+        "public_jwk": harness.custody.public_jwk("rotate_2"), "trusted": True})
+
+    assert again.status_code == 201
+    assert harness.client.get("/agents/rotate_2").json()["agent_id"] == "agent_rotating"

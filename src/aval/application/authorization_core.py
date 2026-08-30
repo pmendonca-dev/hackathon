@@ -49,7 +49,6 @@ from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyR
 from aval.infrastructure.sqlite.capture_repository import SqliteCaptureRepository
 from aval.infrastructure.sqlite.policy_repository import SqlitePolicyRepository
 from aval.infrastructure.sqlite.revocation_repository import SqliteRevocationRepository
-from aval.infrastructure.sqlite.audit_repository import SqliteAuditRepository
 from aval.infrastructure.sqlite.lock_repository import SqliteMandateLockRepository
 from aval.infrastructure.sqlite.transaction import run_in_write_transaction
 
@@ -206,6 +205,10 @@ class AuthorizationCore:
         run_in_write_transaction(
             self._engine, lambda connection: SqliteAgentProfileRepository(connection).put(identity)
         )
+
+    def agent_for_profile_url(self, profile_url: str) -> AgentIdentity | None:
+        with self._engine.connect() as connection:
+            return SqliteAgentProfileRepository(connection).find_by_profile_url(profile_url)
 
     def agent_for_kid(self, kid: str) -> AgentIdentity | None:
         with self._engine.connect() as connection:
@@ -1097,9 +1100,11 @@ class AuthorizationCore:
             else:
                 proof = f"proof_{reservation.id}"
                 proof_jti = None
+            # The decision and the commit are different facts. Sharing one name made a
+            # single purchase read as two attempts in the auditor view.
             SqliteAuditLedger(connection).append(
                 mandate_id=command.mandate_id,
-                event_type="purchase_authorized",
+                event_type="purchase_committed",
                 human_summary=f"Compra autorizada e comprometida ({reservation.id}).",
                 actor="aval-core",
                 detail=self._purchase_detail(

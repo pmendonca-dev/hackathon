@@ -98,8 +98,13 @@ def test_the_trail_names_the_agent_that_bought(harness):
     entries = harness.client.get(
         "/ledger", params={"mandate_id": mandate_id, "view": "auditor"}
     ).json()["entries"]
-    bought = [entry for entry in entries if entry["event_type"] == "purchase_authorized"]
-    assert bought[0]["detail"]["agent_id"] == "agent_aval_demo"
+    # Both the decision and the commit name the agent that asked.
+    bought = [
+        entry
+        for entry in entries
+        if entry["event_type"] in ("purchase_authorized", "purchase_committed")
+    ]
+    assert [entry["detail"]["agent_id"] for entry in bought] == ["agent_aval_demo"] * 2
 
 
 def test_an_untrusted_agent_profile_stops_every_purchase(harness):

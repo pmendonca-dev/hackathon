@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -142,3 +142,17 @@ def test_audit_event_is_immutable():
 
     with pytest.raises(FrozenInstanceError):
         event.human_summary = "alterado"  # type: ignore[misc]
+
+
+def test_a_mandate_limit_must_be_positive():
+    """A mandate that authorizes zero or less authorizes nothing, and must say so at
+    creation rather than turning every purchase into an approval request."""
+    for amount in (0, -1):
+        with pytest.raises(DomainError):
+            replace(mandate(), limit=Money(amount, "BRL", 2))
+
+
+def test_a_mandate_ceiling_must_be_positive():
+    for amount in (0, -1):
+        with pytest.raises(DomainError):
+            replace(mandate(), ceiling=Money(amount, "BRL", 2))
