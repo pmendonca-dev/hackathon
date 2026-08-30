@@ -116,3 +116,18 @@ limited to creating the required revocation-storage outage.
 The validation remains red for contract mismatches. Laptop B will document
 their exact public requests and responses and will not patch Laptop A backend
 implementation inside this branch.
+
+## Final corrected-runtime validation — 2026-08-30
+
+The final validation target is Laptop A commit
+`2b1d6f9c66a84d3771ab1810f3729d1c4a04d589`. Rebase directly on its remote
+branch, run migrations and the complete Python/web matrix, and keep this phase
+free of backend, migration, and contract changes.
+
+In addition to the public HTTP E2E suite, run the built browser against the
+real local runtime and inspect its bundle, browser storage, console, and
+network behavior. The browser must contain no private key, vault token, JWS,
+or authorization proof, and it must not synthesize or bypass RFC 9421. If the
+runtime cannot expose an authenticated browser-safe read boundary, record that
+as a separate architecture blocker; do not add a proxy, embedded key, or
+signature bypass.
