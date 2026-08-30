@@ -1,15 +1,18 @@
-"""Telegram long-polling runtime. Stdlib only.
+"""Telegram long-polling runtime — the human surface of AVAL.
 
-The bot is a surface, never an authority: it renders what the gateway returns
-and forwards human decisions back. It holds no policy, no balance and no
-revocation state of its own.
+The bot is a surface, never an authority. It renders what the core answers and
+carries back what the person decided, signed with that person's own key. Every
+rule about money, scope and revocation lives in `AuthorizationCore`; none of it
+is repeated here.
+
+Each chat is its own holder: its own key, its own mandate. That is what lets a
+room of judges share one bot without sharing any authority.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
-import hashlib
 import json
 import logging
 import os
@@ -19,7 +22,8 @@ import urllib.request
 
 from aval.interfaces.telegram import views
 from aval.interfaces.telegram.config import BotConfig
-from aval.interfaces.telegram.gateway import AvalGateway, GatewayError, MockGateway, build_gateway
+from aval.interfaces.telegram.gateway import AvalGateway, GatewayError, MoneyView
+from aval.interfaces.telegram.identity import ChatIdentity, IdentityStore
 from aval.interfaces.telegram.views import View
 
 logger = logging.getLogger("aval.telegram")
@@ -34,9 +38,9 @@ class TelegramError(Exception):
 
 
 class TelegramApi:
-    """Minimal Bot API client: four methods is the whole surface we need."""
+    """Minimal Bot API client: four methods are the whole surface we need."""
 
-    def __init__(self, token: str, *, timeout: int = 10, opener: Any | None = None) -> None:
+    def __init__(self, token: str, *, timeout: int = 15, opener: Any | None = None) -> None:
         self._token = token
         self._timeout = timeout
         self._opener = opener or urllib.request.urlopen
@@ -52,16 +56,19 @@ class TelegramApi:
                 body = json.loads(response.read())
         except urllib.error.HTTPError as error:
             raise TelegramError(
-                f"{method} failed with {error.code}", retry_after=_retry_after(error)
+                f"{method} falhou com {error.code}", retry_after=_retry_after(error)
             ) from error
         except OSError as error:
-            raise TelegramError(f"{method} unreachable: {error}") from error
+            raise TelegramError(f"{method} inacessível: {error}") from error
         if not body.get("ok"):
-            raise TelegramError(f"{method} rejected: {body.get('description', 'unknown')}")
+            raise TelegramError(f"{method} recusado: {body.get('description', 'desconhecido')}")
         return body.get("result")
 
     def get_updates(self, offset: int | None, *, timeout: int) -> Sequence[Mapping[str, Any]]:
-        payload: dict[str, Any] = {"timeout": timeout, "allowed_updates": ["message", "callback_query"]}
+        payload: dict[str, Any] = {
+            "timeout": timeout,
+            "allowed_updates": ["message", "callback_query"],
+        }
         if offset is not None:
             payload["offset"] = offset
         return self.call("getUpdates", payload, timeout=timeout + self._timeout) or ()
@@ -78,14 +85,16 @@ class TelegramApi:
         return self.call("sendMessage", payload)
 
     def edit_message(self, chat_id: int, message_id: int, view: View) -> None:
-        payload: dict[str, Any] = {
-            "chat_id": chat_id,
-            "message_id": message_id,
-            "text": view.text,
-            "parse_mode": "HTML",
-            "reply_markup": _keyboard(view.buttons) if view.buttons else {"inline_keyboard": []},
-        }
-        self.call("editMessageText", payload)
+        self.call(
+            "editMessageText",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": view.text,
+                "parse_mode": "HTML",
+                "reply_markup": _keyboard(view.buttons) if view.buttons else {"inline_keyboard": []},
+            },
+        )
 
     def answer_callback(self, callback_id: str, text: str = "") -> None:
         self.call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text[:200]})
@@ -109,25 +118,26 @@ def _retry_after(error: urllib.error.HTTPError) -> int:
 
 
 class Bot:
-    def __init__(self, config: BotConfig, gateway: AvalGateway, api: TelegramApi) -> None:
+    def __init__(
+        self,
+        config: BotConfig,
+        gateway: AvalGateway,
+        identities: IdentityStore,
+        api: TelegramApi,
+    ) -> None:
         self._config = config
         self._gateway = gateway
+        self._identities = identities
         self._api = api
-        self._sandboxes: dict[int, AvalGateway] = {}
         self._notified: set[tuple[int, str]] = set()
+        # Which reservations each chat actually bought. A dispute carries no
+        # signature, so the core cannot tell a forged reservation id from a real
+        # one — this is the only place that can.
+        # ponytail: in memory, so a restart refuses dispute buttons from older
+        # messages. Fail-closed, which is the right way to lose this state.
+        self._own_reservations: dict[int, set[str]] = {}
 
-    def _gateway_for(self, chat_id: int) -> AvalGateway:
-        """Demo mode gives every chat its own fixtures, so judges never collide."""
-        if not self._config.demo_mode:
-            return self._gateway
-        return self._sandboxes.setdefault(chat_id, MockGateway())
-
-    def _audiences(self) -> Sequence[tuple[int, AvalGateway]]:
-        if self._config.demo_mode:
-            return tuple(self._sandboxes.items())
-        return tuple((chat_id, self._gateway) for chat_id in sorted(self._config.allowed_chat_ids))
-
-    # ── update handling ────────────────────────────────────────────────────
+    # ── updates ────────────────────────────────────────────────────────────
     def handle_update(self, update: Mapping[str, Any]) -> None:
         if "callback_query" in update:
             self._handle_callback(update["callback_query"])
@@ -142,19 +152,8 @@ class Bot:
         head, _, argument = text.partition(" ")
         command = head.split("@", 1)[0].lower()
         argument = argument.strip()
-
-        # A silent terminal during a demo reads as a hang; say what arrived.
         logger.info("%s de %s", command, chat_id)
 
-        if command == "/start":
-            self._gateway_for(chat_id)  # a sandbox is born the moment someone says hello
-            self._send(chat_id, views.welcome(
-                chat_id=chat_id,
-                allowed=self._config.may_act(chat_id),
-                mock_mode=self._config.uses_mock_gateway,
-                demo_mode=self._config.demo_mode,
-            ))
-            return
         if command in {"/meuid", "/chatid"}:
             self._send(chat_id, views.chat_id_view(chat_id))
             return
@@ -162,41 +161,120 @@ class Bot:
             self._send(chat_id, views.denied())
             return
 
+        display_name = _display_name(message.get("from", {}), chat_id)
         try:
-            self._send_all(chat_id, self._command_views(command, argument, self._gateway_for(chat_id)))
+            for view in self._command_views(command, argument, chat_id, display_name):
+                self._send(chat_id, view)
         except GatewayError as error:
-            self._send(chat_id, views.unavailable(str(error)))
+            self._send(chat_id, views.unavailable(str(error), error.reason_code))
 
-    def _command_views(self, command: str, argument: str, gateway: AvalGateway) -> Sequence[View]:
-        if command == "/ajuda" or command == "/help":
+    def _command_views(
+        self, command: str, argument: str, chat_id: int, display_name: str
+    ) -> Sequence[View]:
+        if command == "/start":
+            return (self._start(chat_id, display_name),)
+        if command in {"/ajuda", "/help"}:
             return (views.help_text(),)
-        if command == "/mandatos":
-            return (views.mandate_list(gateway.list_mandates()),)
-        if command == "/mandato":
-            mandate = gateway.get_mandate(argument) if argument else None
-            if mandate is None:
-                return (View("Informe um id válido: <code>/mandato mnd_...</code>"),)
-            return (views.mandate_detail(mandate),)
-        if command in {"/aprovacoes", "/aprovações"}:
-            return views.approval_list(gateway.list_pending_approvals())
-        if command == "/atividade":
-            return (views.activity_list(gateway.activity(argument or None)),)
-        if command == "/revogar":
-            mandate = gateway.get_mandate(argument) if argument else None
-            if mandate is None:
-                return (View("Informe um id válido: <code>/revogar mnd_...</code>"),)
-            return (views.revoke_menu(mandate),)
+        if command in {"/catalogo", "/catálogo"}:
+            return (views.catalogue(self._gateway.catalogue()),)
         if command == "/status":
+            identity = self._identities.get(chat_id)
+            pending = (
+                len(self._gateway.open_escalations(identity.mandate_id))
+                if identity and identity.mandate_id
+                else 0
+            )
             return (
                 views.status(
-                    backend=gateway.health(),
-                    mock_mode=self._config.uses_mock_gateway,
-                    demo_mode=self._config.demo_mode,
-                    pending=len(gateway.list_pending_approvals()),
+                    backend=self._gateway.health(),
+                    base_url=self._config.api_base_url,
+                    open_mode=self._config.open_mode,
+                    pending=pending,
                 ),
             )
+
+        identity = self._identities.get(chat_id)
+        if identity is None or identity.mandate_id is None:
+            return (views.no_mandate(),)
+        mandate_id = identity.mandate_id
+
+        if command == "/mandato":
+            mandate = self._gateway.mandate(mandate_id)
+            return (views.mandate_card(mandate),) if mandate else (views.no_mandate(),)
+        if command == "/extrato":
+            return (views.receipt(self._gateway.receipt(mandate_id)),)
+        if command in {"/aprovacoes", "/aprovações"}:
+            return views.escalation_list(self._gateway.open_escalations(mandate_id))
+        if command == "/revogar":
+            mandate = self._gateway.mandate(mandate_id)
+            return (views.revoke_menu(mandate),) if mandate else (views.no_mandate(),)
+        if command == "/comprar":
+            return self._purchase(identity, argument)
+        if command == "/limite":
+            return (self._replace_limit(identity, argument),)
         return (views.help_text(),)
 
+    def _start(self, chat_id: int, display_name: str) -> View:
+        """Enrol the person, mint their key, and issue a mandate that is theirs."""
+        identity = self._identities.enrol(chat_id, display_name)
+        if identity.mandate_id is not None:
+            existing = self._gateway.mandate(identity.mandate_id)
+            if existing is not None and existing.status == "ACTIVE":
+                return views.mandate_card(existing)
+        defaults = self._config.mandate_defaults
+        mandate_id = self._gateway.create_mandate(
+            identity,
+            merchants=defaults.merchants,
+            categories=defaults.categories,
+            limit=MoneyView(defaults.limit_minor_units, defaults.currency, defaults.scale),
+            ceiling=(
+                None
+                if defaults.ceiling_minor_units is None
+                else MoneyView(defaults.ceiling_minor_units, defaults.currency, defaults.scale)
+            ),
+            valid_for=defaults.valid_for,
+        )
+        self._identities.bind_mandate(chat_id, mandate_id)
+        mandate = self._gateway.mandate(mandate_id)
+        assert mandate is not None
+        return views.welcome(
+            display_name=identity.display_name,
+            mandate=mandate,
+            catalogue=self._gateway.catalogue(),
+        )
+
+    def _purchase(self, identity: ChatIdentity, instruction: str) -> Sequence[View]:
+        if not instruction:
+            return (views.plain("Diga o que comprar: /comprar um voo pra Córdoba"),)
+        assert identity.mandate_id is not None
+        result = self._gateway.purchase(identity.mandate_id, instruction)
+        screens: list[View] = [views.purchase_result(result)]
+        if result.escalation_id:
+            escalation = self._gateway.escalation(result.escalation_id)
+            if escalation is not None:
+                screens.append(views.escalation_card(escalation))
+                # Already shown here, so the background push must not repeat it.
+                self._notified.add((identity.chat_id, escalation.id))
+        elif result.outcome == "settled":
+            if result.reservation_id:
+                self._own_reservations.setdefault(identity.chat_id, set()).add(
+                    result.reservation_id
+                )
+            # A4: the person gets the record of what was bought, under which
+            # mandate, and what is left — without having to ask for it.
+            screens.append(views.receipt(self._gateway.receipt(identity.mandate_id)))
+        return tuple(screens)
+
+    def _replace_limit(self, identity: ChatIdentity, argument: str) -> View:
+        assert identity.mandate_id is not None
+        defaults = self._config.mandate_defaults
+        limit = views.parse_money(argument, currency=defaults.currency, scale=defaults.scale)
+        if limit is None:
+            return views.plain("Informe um valor positivo: /limite 100")
+        message = self._gateway.replace_limit(identity, identity.mandate_id, limit)
+        return views.signed_note("Limite alterado", message)
+
+    # ── buttons ────────────────────────────────────────────────────────────
     def _handle_callback(self, query: Mapping[str, Any]) -> None:
         callback_id = str(query.get("id", ""))
         message = query.get("message", {})
@@ -206,74 +284,99 @@ class Bot:
         if parsed is None or not chat_id:
             self._api.answer_callback(callback_id, "Ação inválida.")
             return
-        verb, argument = parsed
         if not self._config.may_act(chat_id):
             self._api.answer_callback(callback_id, "Chat sem autoridade.")
             return
-
-        actor = _actor(query, chat_id)
-        logger.info("botao %s:%s de %s", verb, argument, chat_id)
+        identity = self._identities.get(chat_id)
+        if identity is None:
+            self._api.answer_callback(callback_id, "Mande /start primeiro.")
+            return
+        verb, argument = parsed
+        logger.info("botao %s de %s", verb, chat_id)
         try:
-            view = self._callback_view(verb, argument, actor=actor, chat_id=chat_id)
+            view = self._callback_view(verb, argument, identity)
         except GatewayError as error:
             self._api.answer_callback(callback_id, "AVAL indisponível.")
-            self._send(chat_id, views.unavailable(str(error)))
+            self._send(chat_id, views.unavailable(str(error), error.reason_code))
             return
         self._api.answer_callback(callback_id)
-        # Replacing the message retires its buttons, so a second tap cannot
-        # re-ask; the idempotency key makes a replay harmless anyway.
+        # Replacing the message retires its buttons, so a second tap cannot re-ask.
         self._api.edit_message(chat_id, message_id, view)
 
-    def _callback_view(self, verb: str, argument: str, *, actor: str, chat_id: int) -> View:
-        key = _idempotency_key(verb, argument, chat_id)
-        gateway = self._gateway_for(chat_id)
-        if verb == views.CALLBACK_MANDATE_LIST:
-            return views.mandate_list(gateway.list_mandates())
-        if verb == views.CALLBACK_MANDATE:
-            mandate = gateway.get_mandate(argument)
-            return views.mandate_detail(mandate) if mandate else View("Mandato não encontrado.")
-        if verb == views.CALLBACK_REVOKE_MENU:
-            mandate = gateway.get_mandate(argument)
-            return views.revoke_menu(mandate) if mandate else View("Mandato não encontrado.")
+    def _callback_view(self, verb: str, argument: str, identity: ChatIdentity) -> View:
         if verb in {views.CALLBACK_APPROVE, views.CALLBACK_DENY}:
-            result = gateway.resolve_approval(
+            escalation = self._gateway.escalation(argument)
+            if escalation is None:
+                return views.plain("Escalação não encontrada.")
+            if not self._owns(identity, escalation.mandate_id):
+                return views.plain("Essa escalação não é do seu mandato.")
+            approve = verb == views.CALLBACK_APPROVE
+            message = self._gateway.decide(identity, escalation, approve=approve)
+            return views.signed_note("Aprovado" if approve else "Recusado", message)
+
+        if verb == views.CALLBACK_DISPUTE:
+            if argument not in self._own_reservations.get(identity.chat_id, set()):
+                return views.plain("Essa compra não é sua.")
+            message = self._gateway.open_dispute(
+                argument, "titular não reconhece a compra (aberta pelo Telegram)"
+            )
+            return views.plain(f"⚠️ {message} A trilha do mandato é quem responde.")
+
+        if not self._owns(identity, argument):
+            return views.plain("Esse mandato não é seu.")
+        if verb == views.CALLBACK_MANDATE:
+            mandate = self._gateway.mandate(argument)
+            return views.mandate_card(mandate) if mandate else views.no_mandate()
+        if verb == views.CALLBACK_RECEIPT:
+            return views.receipt(self._gateway.receipt(argument))
+        if verb == views.CALLBACK_REVOKE_MENU:
+            mandate = self._gateway.mandate(argument)
+            return views.revoke_menu(mandate) if mandate else views.no_mandate()
+        if verb == views.CALLBACK_REVOKE_CONFIRM:
+            mandate = self._gateway.mandate(argument)
+            if mandate is None:
+                return views.no_mandate()
+            message = self._gateway.revoke(
+                identity,
                 argument,
-                approve=verb == views.CALLBACK_APPROVE,
-                actor=actor,
-                idempotency_key=key,
+                epoch=mandate.revocation_epoch,
+                reason="revogado pelo titular no Telegram",
             )
-            return views.action_result(result)
-        if verb == views.CALLBACK_REVOKE_MANDATE:
-            result = gateway.revoke(
-                argument, scope="mandate", reason="revoked_by_holder", actor=actor, idempotency_key=key
-            )
-            return views.action_result(result)
-        if verb == views.CALLBACK_REVOKE_BUDGET:
-            result = gateway.revoke(
-                argument, scope="budget:zero", reason="budget_zeroed_by_holder", actor=actor, idempotency_key=key
-            )
-            return views.action_result(result)
-        return View("Ação desconhecida.")
+            return views.signed_note("Mandato revogado", message)
+        return views.help_text()
+
+    @staticmethod
+    def _owns(identity: ChatIdentity, mandate_id: str) -> bool:
+        """The button says what to act on; ownership says whether it may.
+
+        Callback data is client input, so a crafted tap could name a neighbour's
+        mandate. The core would refuse it anyway — the signature would not match
+        — but refusing here keeps one judge from ever seeing another's numbers.
+        """
+        return identity.mandate_id == mandate_id
 
     # ── escalation push ────────────────────────────────────────────────────
     def push_pending_approvals(self) -> int:
-        """Deliver approvals each human has not seen yet; returns how many went out.
+        """Deliver escalations each person has not seen yet.
 
         ponytail: the seen-set is in memory, so a restart re-notifies whatever is
-        still pending; persist it only if the bot starts restarting mid-demo.
+        still open. Harmless — the card is idempotent, and the core decides once.
         """
         sent = 0
-        for chat_id, gateway in self._audiences():
-            try:
-                pending = gateway.list_pending_approvals()
-            except GatewayError as error:
-                logger.warning("could not read approvals for %s: %s", chat_id, error)
+        for chat_id in self._identities.known_chats():
+            identity = self._identities.get(chat_id)
+            if identity is None or identity.mandate_id is None:
                 continue
-            for approval in pending:
-                seen = (chat_id, approval.id)
+            try:
+                pending = self._gateway.open_escalations(identity.mandate_id)
+            except GatewayError as error:
+                logger.warning("escalações de %s: %s", chat_id, error)
+                continue
+            for escalation in pending:
+                seen = (chat_id, escalation.id)
                 if seen in self._notified:
                     continue
-                self._send(chat_id, views.approval_card(approval))
+                self._send(chat_id, views.escalation_card(escalation))
                 self._notified.add(seen)
                 sent += 1
         return sent
@@ -281,20 +384,19 @@ class Bot:
     # ── runtime ────────────────────────────────────────────────────────────
     def run(self) -> None:
         logger.info(
-            "AVAL Telegram bot online (%s)",
-            "demo aberta, um sandbox por chat" if self._config.demo_mode
-            else "mock gateway" if self._config.uses_mock_gateway
-            else "backend gateway",
+            "AVAL Telegram bot online · núcleo em %s · modo %s",
+            self._config.api_base_url,
+            "aberto" if self._config.open_mode else "lista de autorizados",
         )
-        # ponytail: one update at a time, so a slow gateway call holds the next
-        # ones. One human, one demo. A per-chat queue is the upgrade path.
+        # ponytail: one update at a time, so a slow call holds the next ones. One
+        # human per chat, one demo. A per-chat queue is the upgrade path.
         offset: int | None = None
         last_push = 0.0
         while True:
             try:
                 updates = self._api.get_updates(offset, timeout=self._config.poll_timeout_seconds)
             except TelegramError as error:
-                logger.warning("getUpdates failed: %s", error)
+                logger.warning("getUpdates falhou: %s", error)
                 time.sleep(max(error.retry_after, 3))
                 continue
             for update in updates:
@@ -302,37 +404,33 @@ class Bot:
                 try:
                     self.handle_update(update)
                 except Exception:  # noqa: BLE001 - one bad update must not stop the bot
-                    logger.exception("update %s failed", update.get("update_id"))
+                    logger.exception("update %s falhou", update.get("update_id"))
             if time.monotonic() - last_push >= self._config.escalation_poll_seconds:
                 last_push = time.monotonic()
                 try:
                     self.push_pending_approvals()
                 except TelegramError as error:
-                    logger.warning("could not push approvals: %s", error)
+                    logger.warning("push de escalações falhou: %s", error)
 
-    # ── plumbing ───────────────────────────────────────────────────────────
     def _send(self, chat_id: int, view: View) -> None:
         self._api.send_message(chat_id, view)
 
-    def _send_all(self, chat_id: int, all_views: Sequence[View]) -> None:
-        for view in all_views:
-            self._send(chat_id, view)
 
-
-def _actor(query: Mapping[str, Any], chat_id: int) -> str:
-    username = query.get("from", {}).get("username")
-    return f"telegram:@{username}" if username else f"telegram:{chat_id}"
-
-
-def _idempotency_key(verb: str, argument: str, chat_id: int) -> str:
-    """Deterministic per decision, so a double tap can never act twice."""
-    return hashlib.sha256(f"{verb}:{argument}:{chat_id}".encode()).hexdigest()[:32]
+def _display_name(sender: Mapping[str, Any], chat_id: int) -> str:
+    first = str(sender.get("first_name", "")).strip()
+    last = str(sender.get("last_name", "")).strip()
+    full = " ".join(part for part in (first, last) if part)
+    return full or f"Titular {chat_id}"
 
 
 def build_bot(env: Mapping[str, str] | None = None) -> Bot:
     config = BotConfig.from_env(env if env is not None else os.environ)
+    identities = IdentityStore(config.identity_path)
+    gateway = AvalGateway(
+        config.api_base_url, identities=identities, timeout=config.request_timeout_seconds
+    )
     api = TelegramApi(config.token, timeout=config.request_timeout_seconds)
-    return Bot(config, build_gateway(config), api)
+    return Bot(config, gateway, identities, api)
 
 
 def main() -> None:

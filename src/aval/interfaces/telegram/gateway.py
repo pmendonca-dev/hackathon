@@ -1,28 +1,35 @@
-"""The only seam between the bot and AVAL.
+"""The bot's only door into AVAL.
 
-The bot never touches the database, the ledger or policy — it reads and writes
-through this port. While the backend is under construction the port resolves to
-``MockGateway``; setting ``AVAL_API_BASE_URL`` swaps in ``HttpGateway`` with no
-change to the handlers. The HTTP paths live in ``ENDPOINTS`` so wiring the real
-API is a one-line edit per route.
+Every path below is an HTTP call to the running API. The bot holds no policy, no
+balance and no revocation state — it renders what the core answers and forwards
+what the human decides. Nothing here re-implements a rule; if a decision ever
+appears in this file, it is in the wrong place.
+
+The three privileged writes — approve, revoke, move the limit — carry a JWS
+signed by the chat's own holder key. The server never signs on the human's
+behalf, which is what makes the later "I never authorized this" answerable.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
-from typing import Any, Protocol
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
 import json
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from aval.interfaces.telegram.config import BotConfig
+from aval.interfaces.telegram.identity import ChatIdentity, IdentityStore
 
 
 class GatewayError(Exception):
-    """The backend refused or was unreachable. Never downgraded to a success."""
+    """AVAL refused or was unreachable. Never downgraded into a success."""
+
+    def __init__(self, message: str, *, reason_code: str = "gateway_error") -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 @dataclass(frozen=True)
@@ -35,140 +42,259 @@ class MoneyView:
 @dataclass(frozen=True)
 class MandateView:
     id: str
-    principal: str
-    agent: str
     status: str
-    limit: MoneyView
-    spent: MoneyView
+    principal: str
     merchants: tuple[str, ...]
+    categories: tuple[str, ...]
+    limit: MoneyView
+    ceiling: MoneyView | None
+    spent: MoneyView
+    remaining: MoneyView
     expires_at: datetime
     policy_version: int
     revocation_epoch: int
 
 
 @dataclass(frozen=True)
-class ApprovalView:
+class EscalationView:
     id: str
     mandate_id: str
     merchant: str
-    item: str
+    category: str
     amount: MoneyView
     reason_code: str
-    human_summary: str
+    status: str
     created_at: datetime
+    expires_at: datetime
 
 
 @dataclass(frozen=True)
-class ActivityView:
-    id: str
-    mandate_id: str
+class PurchaseView:
+    """What the agent managed to do with one free-text instruction."""
+
+    outcome: str
+    reason_code: str
+    human_summary: str
+    title: str | None
+    amount: MoneyView | None
+    escalation_id: str | None
+    reservation_id: str | None
+    settlement_reference: str | None
+
+
+@dataclass(frozen=True)
+class LedgerEntryView:
+    sequence: int
     event_type: str
     human_summary: str
     occurred_at: datetime
 
 
 @dataclass(frozen=True)
-class ActionResult:
-    ok: bool
-    message: str
+class ReceiptView:
+    mandate: MandateView
+    entries: tuple[LedgerEntryView, ...]
 
 
-class AvalGateway(Protocol):
-    def health(self) -> str: ...
-    def list_mandates(self) -> Sequence[MandateView]: ...
-    def get_mandate(self, mandate_id: str) -> MandateView | None: ...
-    def list_pending_approvals(self) -> Sequence[ApprovalView]: ...
-    def resolve_approval(
-        self, approval_id: str, *, approve: bool, actor: str, idempotency_key: str
-    ) -> ActionResult: ...
-    def revoke(
-        self, mandate_id: str, *, scope: str, reason: str, actor: str, idempotency_key: str
-    ) -> ActionResult: ...
-    def activity(self, mandate_id: str | None = None, limit: int = 10) -> Sequence[ActivityView]: ...
-
-
-# HTTP contract expected from the AVAL API, documented in
-# docs/contracts/aval-telegram-gateway.md. When the backend lands, adjust these
-# paths (and the JSON readers below) instead of touching any handler.
+# Paths as the running API exposes them; `GET /docs` on the instance is the live
+# reference. Change them here, never in a handler.
 ENDPOINTS = {
     "health": "/health",
-    "mandates": "/v1/mandates",
-    "mandate": "/v1/mandates/{mandate_id}",
-    "revocations": "/v1/mandates/{mandate_id}/revocations",
-    "approvals": "/v1/escalations",
-    "approval_decision": "/v1/escalations/{approval_id}/decision",
-    "activity": "/v1/audit-events",
+    "mandates": "/mandates",
+    "mandate": "/mandates/{mandate_id}",
+    "limit": "/mandates/{mandate_id}/limit",
+    "revocation": "/mandates/{mandate_id}/revocation",
+    "escalations": "/escalations",
+    "escalation": "/escalations/{escalation_id}",
+    "decision": "/escalations/{escalation_id}/decision",
+    "ledger": "/ledger",
+    "purchase": "/agent/purchase",
+    "offers": "/merchant/offers",
+    "disputes": "/disputes",
 }
 
 
-class HttpGateway:
-    """Talks to the AVAL API over HTTP. Stdlib only, and it owns no state."""
+class AvalGateway:
+    """Stdlib HTTP client for the AVAL API."""
 
-    def __init__(self, config: BotConfig, *, opener: Any | None = None) -> None:
-        if config.api_base_url is None:
-            raise GatewayError("HttpGateway requires AVAL_API_BASE_URL")
-        self._base_url = config.api_base_url
-        self._token = config.api_token
-        self._timeout = config.request_timeout_seconds
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        identities: IdentityStore,
+        timeout: int = 15,
+        opener: Any | None = None,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._identities = identities
+        self._timeout = timeout
         self._opener = opener or urllib.request.urlopen
 
+    # ── reads ──────────────────────────────────────────────────────────────
     def health(self) -> str:
-        return str(self._request("GET", ENDPOINTS["health"]).get("status", "unknown"))
+        return str(self._call("GET", ENDPOINTS["health"]).get("status", "unknown"))
 
-    def list_mandates(self) -> Sequence[MandateView]:
-        payload = self._request("GET", ENDPOINTS["mandates"])
-        return tuple(_mandate_from_json(item) for item in payload.get("mandates", []))
-
-    def get_mandate(self, mandate_id: str) -> MandateView | None:
+    def mandate(self, mandate_id: str) -> MandateView | None:
         try:
-            payload = self._request("GET", ENDPOINTS["mandate"].format(mandate_id=mandate_id))
+            payload = self._call("GET", ENDPOINTS["mandate"].format(mandate_id=mandate_id))
         except GatewayError as error:
-            if "404" in str(error):
+            if error.reason_code == "mandate_not_found":
                 return None
             raise
-        return _mandate_from_json(payload)
+        return _mandate(payload)
 
-    def list_pending_approvals(self) -> Sequence[ApprovalView]:
-        payload = self._request("GET", ENDPOINTS["approvals"], query={"status": "pending"})
-        return tuple(_approval_from_json(item) for item in payload.get("escalations", []))
+    def open_escalations(self, mandate_id: str) -> Sequence[EscalationView]:
+        payload = self._call("GET", ENDPOINTS["escalations"], query={"mandate_id": mandate_id})
+        return tuple(_escalation(item) for item in payload.get("escalations", []))
 
-    def resolve_approval(
-        self, approval_id: str, *, approve: bool, actor: str, idempotency_key: str
-    ) -> ActionResult:
-        payload = self._request(
-            "POST",
-            ENDPOINTS["approval_decision"].format(approval_id=approval_id),
-            body={"decision": "approve" if approve else "deny", "actor": actor},
-            idempotency_key=idempotency_key,
+    def escalation(self, escalation_id: str) -> EscalationView | None:
+        try:
+            payload = self._call("GET", ENDPOINTS["escalation"].format(escalation_id=escalation_id))
+        except GatewayError as error:
+            if error.reason_code == "escalation_not_found":
+                return None
+            raise
+        return _escalation(payload)
+
+    def receipt(self, mandate_id: str, *, limit: int = 8) -> ReceiptView:
+        payload = self._call(
+            "GET", ENDPOINTS["ledger"], query={"mandate_id": mandate_id, "view": "human"}
         )
-        return ActionResult(bool(payload.get("ok", True)), str(payload.get("human_summary", "")))
+        entries = [_entry(item) for item in payload.get("entries", [])]
+        entries.sort(key=lambda item: item.sequence, reverse=True)
+        return ReceiptView(_mandate(payload["mandate"]), tuple(entries[:limit]))
 
-    def revoke(
-        self, mandate_id: str, *, scope: str, reason: str, actor: str, idempotency_key: str
-    ) -> ActionResult:
-        payload = self._request(
-            "POST",
-            ENDPOINTS["revocations"].format(mandate_id=mandate_id),
-            body={"scope": scope, "reason": reason, "actor": actor},
-            idempotency_key=idempotency_key,
+    def catalogue(self) -> Sequence[tuple[str, MoneyView, str]]:
+        payload = self._call("GET", ENDPOINTS["offers"])
+        return tuple(
+            (item["item"]["title"], _money(item["total"]), item["item"]["category"])
+            for item in payload.get("offers", [])
         )
-        return ActionResult(bool(payload.get("ok", True)), str(payload.get("human_summary", "")))
 
-    def activity(self, mandate_id: str | None = None, limit: int = 10) -> Sequence[ActivityView]:
-        query: dict[str, str] = {"limit": str(limit)}
-        if mandate_id:
-            query["mandate_id"] = mandate_id
-        payload = self._request("GET", ENDPOINTS["activity"], query=query)
-        return tuple(_activity_from_json(item) for item in payload.get("events", []))
+    # ── writes ─────────────────────────────────────────────────────────────
+    def create_mandate(
+        self,
+        identity: ChatIdentity,
+        *,
+        merchants: Sequence[str],
+        categories: Sequence[str],
+        limit: MoneyView,
+        ceiling: MoneyView | None,
+        valid_for: timedelta,
+    ) -> str:
+        payload = self._call(
+            "POST",
+            ENDPOINTS["mandates"],
+            body={
+                "principal": {
+                    "id": identity.principal_id,
+                    "display_name": identity.display_name,
+                },
+                "allowed_merchant_ids": list(merchants),
+                "allowed_categories": list(categories),
+                "limit": _money_body(limit),
+                "ceiling": None if ceiling is None else _money_body(ceiling),
+                "expires_at": (datetime.now(UTC) + valid_for).isoformat(),
+                # The holder key lives in this bot, so the mandate is revocable by
+                # the person who created it and by nobody else.
+                "authorities": [
+                    {
+                        "id": f"ath_{identity.chat_id}",
+                        "kid": identity.kid,
+                        "role": "holder",
+                        "public_jwk": self._identities.public_jwk(identity),
+                        "allowed_scopes": ["mandate"],
+                    }
+                ],
+            },
+        )
+        return str(payload["mandate_id"])
 
-    def _request(
+    def purchase(self, mandate_id: str, instruction: str) -> PurchaseView:
+        payload = self._call(
+            "POST", ENDPOINTS["purchase"], body={"mandate_id": mandate_id, "instruction": instruction}
+        )
+        offer = payload.get("offer") or {}
+        item = offer.get("item") or {}
+        return PurchaseView(
+            outcome=str(payload.get("outcome", "unknown")),
+            reason_code=str(payload.get("reason_code", "unknown")),
+            human_summary=str(payload.get("human_summary", "")),
+            title=item.get("title"),
+            amount=_money(offer["total"]) if "total" in offer else None,
+            escalation_id=payload.get("escalation_id"),
+            reservation_id=payload.get("reservation_id"),
+            settlement_reference=payload.get("settlement_reference"),
+        )
+
+    def decide(self, identity: ChatIdentity, escalation: EscalationView, *, approve: bool) -> str:
+        """Sign the tap, then send it. The signature is the evidence, not the button."""
+        decision = "approve" if approve else "deny"
+        approval_jws = self._identities.sign(
+            identity,
+            {
+                "decision_handle": escalation.id,
+                "mandate_id": escalation.mandate_id,
+                "amount_minor_units": escalation.amount.minor_units,
+                "decision": decision,
+                "decided_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        payload = self._call(
+            "POST",
+            ENDPOINTS["decision"].format(escalation_id=escalation.id),
+            body={"decision": decision, "approval_jws": approval_jws},
+        )
+        capture = payload.get("capture") or {}
+        if not approve:
+            return "Compra negada. Nada foi cobrado."
+        if capture.get("approved"):
+            return "Compra aprovada e liquidada."
+        # An approval is not a bypass: the core re-checks everything on resume.
+        return f"Aprovação registrada, mas a compra não passou: {capture.get('reason_code', 'desconhecido')}."
+
+    def open_dispute(self, reservation_id: str, reason: str) -> str:
+        """A later denial, answered by the trail rather than by trust."""
+        payload = self._call(
+            "POST", ENDPOINTS["disputes"], body={"reservation_id": reservation_id, "reason": reason}
+        )
+        return f"Disputa {payload.get('dispute_id', '?')} aberta ({payload.get('status', 'OPEN')})."
+
+    def revoke(self, identity: ChatIdentity, mandate_id: str, *, epoch: int, reason: str) -> str:
+        token = self._identities.sign(
+            identity,
+            {"mandate_id": mandate_id, "scope": "mandate", "reason": reason, "epoch": epoch + 1},
+        )
+        payload = self._call(
+            "POST", ENDPOINTS["revocation"].format(mandate_id=mandate_id), body={"token": token}
+        )
+        return f"Mandato revogado (epoch {payload.get('epoch', epoch + 1)})."
+
+    def replace_limit(self, identity: ChatIdentity, mandate_id: str, limit: MoneyView) -> str:
+        authorization_jws = self._identities.sign(
+            identity,
+            {
+                "mandate_id": mandate_id,
+                "limit_minor_units": limit.minor_units,
+                "currency": limit.currency,
+                "scale": limit.scale,
+            },
+        )
+        payload = self._call(
+            "PATCH",
+            ENDPOINTS["limit"].format(mandate_id=mandate_id),
+            body={"limit": _money_body(limit), "authorization_jws": authorization_jws},
+        )
+        return f"Limite alterado. Política v{payload.get('policy_version', '?')}."
+
+    # ── transport ──────────────────────────────────────────────────────────
+    def _call(
         self,
         method: str,
         path: str,
         *,
         query: Mapping[str, str] | None = None,
         body: Mapping[str, Any] | None = None,
-        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         url = f"{self._base_url}{path}"
         if query:
@@ -178,229 +304,82 @@ class HttpGateway:
         request.add_header("Accept", "application/json")
         if data is not None:
             request.add_header("Content-Type", "application/json")
-        if self._token:
-            request.add_header("Authorization", f"Bearer {self._token}")
-        if idempotency_key:
-            request.add_header("Idempotency-Key", idempotency_key)
         try:
             with self._opener(request, timeout=self._timeout) as response:
                 raw = response.read()
         except urllib.error.HTTPError as error:
-            raise GatewayError(f"AVAL API returned {error.code} for {method} {path}") from error
+            raise _from_http_error(error, method, path) from error
         except OSError as error:
-            raise GatewayError(f"AVAL API unreachable: {error}") from error
+            raise GatewayError(f"AVAL inacessível: {error}", reason_code="unreachable") from error
         if not raw:
             return {}
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as error:
-            raise GatewayError(f"AVAL API returned malformed JSON for {method} {path}") from error
+            raise GatewayError("AVAL devolveu JSON inválido", reason_code="malformed") from error
         return payload if isinstance(payload, dict) else {"items": payload}
 
 
-def _money_from_json(payload: Mapping[str, Any]) -> MoneyView:
+def _from_http_error(error: urllib.error.HTTPError, method: str, path: str) -> GatewayError:
+    """Carry the core's own reason code out; it is already written for humans."""
+    try:
+        detail = json.loads(error.read() or b"{}")
+    except (json.JSONDecodeError, ValueError):
+        detail = {}
+    reason = str(detail.get("reason_code") or f"http_{error.code}")
+    summary = str(detail.get("human_summary") or f"{method} {path} devolveu {error.code}")
+    return GatewayError(summary, reason_code=reason)
+
+
+def _money(payload: Mapping[str, Any]) -> MoneyView:
     return MoneyView(int(payload["minor_units"]), str(payload["currency"]), int(payload["scale"]))
+
+
+def _money_body(money: MoneyView) -> dict[str, Any]:
+    return {"minor_units": money.minor_units, "currency": money.currency, "scale": money.scale}
 
 
 def _instant(value: Any) -> datetime:
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _mandate_from_json(payload: Mapping[str, Any]) -> MandateView:
-    limit = _money_from_json(payload["limit"])
-    spent = _money_from_json(payload["spent"]) if "spent" in payload else replace(limit, minor_units=0)
+def _mandate(payload: Mapping[str, Any]) -> MandateView:
+    ceiling = payload.get("ceiling")
     return MandateView(
-        id=str(payload["id"]),
-        principal=str(payload.get("principal", "—")),
-        agent=str(payload.get("agent", "—")),
-        status=str(payload.get("status", "UNKNOWN")),
-        limit=limit,
-        spent=spent,
+        id=str(payload["mandate_id"]),
+        status=str(payload["status"]),
+        principal=str((payload.get("principal") or {}).get("display_name", "—")),
         merchants=tuple(str(item) for item in payload.get("allowed_merchant_ids", ())),
+        categories=tuple(str(item) for item in payload.get("allowed_categories", ())),
+        limit=_money(payload["limit"]),
+        ceiling=None if ceiling is None else _money(ceiling),
+        spent=_money(payload["spent"]),
+        remaining=_money(payload["remaining"]),
         expires_at=_instant(payload["expires_at"]),
         policy_version=int(payload.get("policy_version", 1)),
         revocation_epoch=int(payload.get("revocation_epoch", 0)),
     )
 
 
-def _approval_from_json(payload: Mapping[str, Any]) -> ApprovalView:
-    return ApprovalView(
+def _escalation(payload: Mapping[str, Any]) -> EscalationView:
+    return EscalationView(
         id=str(payload["id"]),
         mandate_id=str(payload["mandate_id"]),
         merchant=str(payload.get("merchant_id", "—")),
-        item=str(payload.get("item", "—")),
-        amount=_money_from_json(payload["amount"]),
+        category=str(payload.get("category", "—")),
+        amount=_money(payload["amount"]),
         reason_code=str(payload.get("reason_code", "awaiting_human")),
-        human_summary=str(payload.get("human_summary", "")),
-        created_at=_instant(payload.get("created_at", datetime.now(timezone.utc).isoformat())),
+        status=str(payload.get("status", "OPEN")),
+        created_at=_instant(payload["created_at"]),
+        expires_at=_instant(payload["expires_at"]),
     )
 
 
-def _activity_from_json(payload: Mapping[str, Any]) -> ActivityView:
-    return ActivityView(
-        id=str(payload["id"]),
-        mandate_id=str(payload.get("mandate_id", "—")),
+def _entry(payload: Mapping[str, Any]) -> LedgerEntryView:
+    return LedgerEntryView(
+        sequence=int(payload.get("sequence", 0)),
         event_type=str(payload.get("event_type", "event")),
         human_summary=str(payload.get("human_summary", "")),
-        occurred_at=_instant(payload.get("occurred_at", datetime.now(timezone.utc).isoformat())),
+        occurred_at=_instant(payload["occurred_at"]),
     )
-
-
-class MockGateway:
-    """Fixtures for the demo while the backend is being built.
-
-    Marked mock on purpose: it holds no policy of its own, it only replays the
-    shapes the real API will return so the Telegram surface can be finished and
-    rehearsed today.
-    """
-
-    def __init__(self, *, now: datetime | None = None) -> None:
-        moment = now or datetime.now(timezone.utc)
-        brl = {"currency": "BRL", "scale": 2}
-        self._mandates: dict[str, MandateView] = {
-            "mnd_marta_01": MandateView(
-                id="mnd_marta_01",
-                principal="Marta Ribeiro",
-                agent="agent://shopper.aval.dev",
-                status="ACTIVE",
-                limit=MoneyView(250_000, **brl),
-                spent=MoneyView(87_400, **brl),
-                merchants=("mrc_zenith", "mrc_lumen"),
-                expires_at=moment + timedelta(days=27),
-                policy_version=3,
-                revocation_epoch=1,
-            ),
-            "mnd_marta_02": MandateView(
-                id="mnd_marta_02",
-                principal="Marta Ribeiro",
-                agent="agent://groceries.aval.dev",
-                status="ACTIVE",
-                limit=MoneyView(60_000, **brl),
-                spent=MoneyView(59_100, **brl),
-                merchants=("mrc_hortifruti",),
-                expires_at=moment + timedelta(days=6),
-                policy_version=1,
-                revocation_epoch=0,
-            ),
-        }
-        self._approvals: dict[str, ApprovalView] = {
-            "esc_9f21": ApprovalView(
-                id="esc_9f21",
-                mandate_id="mnd_marta_01",
-                merchant="mrc_orion",
-                item="Monitor 27\" UltraSharp",
-                amount=MoneyView(189_900, **brl),
-                reason_code="merchant_out_of_scope",
-                human_summary="Merchant fora do escopo do mandato; aprovação humana necessária.",
-                created_at=moment - timedelta(minutes=4),
-            ),
-            "esc_be07": ApprovalView(
-                id="esc_be07",
-                mandate_id="mnd_marta_02",
-                merchant="mrc_hortifruti",
-                item="Cesta semanal",
-                amount=MoneyView(12_800, **brl),
-                reason_code="budget_exceeded",
-                human_summary="Compra excede o orçamento vivo do mandato.",
-                created_at=moment - timedelta(minutes=1),
-            ),
-        }
-        self._activity: list[ActivityView] = [
-            ActivityView(
-                id="aud_0003",
-                mandate_id="mnd_marta_01",
-                event_type="capture.committed",
-                human_summary="Captura liquidada. Zenith Store, R$ 412,00.",
-                occurred_at=moment - timedelta(hours=2),
-            ),
-            ActivityView(
-                id="aud_0002",
-                mandate_id="mnd_marta_01",
-                event_type="capture.declined",
-                human_summary="Captura recusada. Merchant fora do escopo.",
-                occurred_at=moment - timedelta(hours=5),
-            ),
-            ActivityView(
-                id="aud_0001",
-                mandate_id="mnd_marta_02",
-                event_type="mandate.issued",
-                human_summary="Mandato emitido com autoridade de revogação registrada.",
-                occurred_at=moment - timedelta(days=1),
-            ),
-        ]
-        self._resolved: dict[str, ActionResult] = {}
-        self._now = lambda: datetime.now(timezone.utc)
-
-    def health(self) -> str:
-        return "mock"
-
-    def list_mandates(self) -> Sequence[MandateView]:
-        return tuple(self._mandates.values())
-
-    def get_mandate(self, mandate_id: str) -> MandateView | None:
-        return self._mandates.get(mandate_id)
-
-    def list_pending_approvals(self) -> Sequence[ApprovalView]:
-        return tuple(self._approvals.values())
-
-    def resolve_approval(
-        self, approval_id: str, *, approve: bool, actor: str, idempotency_key: str
-    ) -> ActionResult:
-        if idempotency_key in self._resolved:
-            return self._resolved[idempotency_key]
-        approval = self._approvals.pop(approval_id, None)
-        if approval is None:
-            return ActionResult(False, "Essa aprovação já foi resolvida ou não existe.")
-        verb = "aprovada" if approve else "recusada"
-        result = ActionResult(True, f"Compra {verb} por {actor}.")
-        self._resolved[idempotency_key] = result
-        self._activity.insert(
-            0,
-            ActivityView(
-                id=f"aud_{approval_id}",
-                mandate_id=approval.mandate_id,
-                event_type="escalation.approved" if approve else "escalation.denied",
-                human_summary=result.message,
-                occurred_at=self._now(),
-            ),
-        )
-        return result
-
-    def revoke(
-        self, mandate_id: str, *, scope: str, reason: str, actor: str, idempotency_key: str
-    ) -> ActionResult:
-        if idempotency_key in self._resolved:
-            return self._resolved[idempotency_key]
-        mandate = self._mandates.get(mandate_id)
-        if mandate is None:
-            return ActionResult(False, "Mandato não encontrado.")
-        if scope == "mandate":
-            mandate = replace(mandate, status="REVOKED")
-            message = "Mandato revogado. Nenhuma captura nova será autorizada."
-        else:
-            message = f"Escopo {scope} revogado para este mandato."
-        mandate = replace(mandate, revocation_epoch=mandate.revocation_epoch + 1)
-        self._mandates[mandate_id] = mandate
-        result = ActionResult(True, message)
-        self._resolved[idempotency_key] = result
-        self._activity.insert(
-            0,
-            ActivityView(
-                id=f"aud_rev_{mandate.revocation_epoch}",
-                mandate_id=mandate_id,
-                event_type="mandate.revoked",
-                human_summary=f"{message} Motivo: {reason} ({actor}).",
-                occurred_at=self._now(),
-            ),
-        )
-        return result
-
-    def activity(self, mandate_id: str | None = None, limit: int = 10) -> Sequence[ActivityView]:
-        events = [item for item in self._activity if mandate_id is None or item.mandate_id == mandate_id]
-        return tuple(events[:limit])
-
-
-def build_gateway(config: BotConfig) -> AvalGateway:
-    """Mock until the backend exists; HTTP the moment AVAL_API_BASE_URL is set."""
-    return MockGateway() if config.uses_mock_gateway else HttpGateway(config)

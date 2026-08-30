@@ -1,160 +1,151 @@
-# Telegram bot — interface humana do AVAL
+# Telegram — a superfície humana do AVAL
 
-O bot é a **superfície humana principal**: o agente compra, o humano aprova,
-recusa e revoga por aqui. Ele não é autoridade — não guarda política, saldo nem
-revogação, e nunca toca banco, ledger ou `AuthorizationCore`. Tudo passa pelo
-port `AvalGateway` (`src/aval/interfaces/telegram/gateway.py`).
+O bot é onde o jurado põe a mão. Criar o mandato, comprar em texto livre,
+aprovar, revogar, contestar: tudo acontece no celular, e é o roteiro da demo
+(`docs/plans/2026-08-29-demo-script.md`) do minuto 0:45 ao fim.
 
-## Estado atual
+Ele **não é autoridade**. Não guarda política, saldo nem revogação, e não toca
+banco, ledger ou `AuthorizationCore`. Toda regra vive no núcleo; o bot mostra o
+que o núcleo respondeu e carrega de volta o que a pessoa decidiu.
 
-Roda hoje, com fixtures, enquanto o backend está em construção.
+## A ideia central: cada chat é um titular
 
-| `AVAL_API_BASE_URL` | Gateway em uso | Para que serve |
-| --- | --- | --- |
-| ausente | `MockGateway` | ensaiar a demo, o roteiro e os textos sem backend |
-| definida | `HttpGateway` | fala com a API real; nenhum handler muda |
+Quando alguém manda `/start`, o bot **gera uma chave P-256 para aquele chat** e
+emite um mandato em nome dela, com essa chave como `holder`. A partir daí:
 
-Não existe terceiro caminho: `build_gateway()` escolhe pela variável, e é a
-única linha que decide isso.
+- o mandato é dela, e só ela pode revogá-lo — porque só ela tem a chave;
+- um jurado nunca mexe no mandato de outro, e isso é regra do domínio, não
+  truque de interface;
+- a sala inteira usa o mesmo bot ao mesmo tempo, sem reiniciar nada.
 
-## Como rodar
+É o que torna o *trial by fire* possível com uma mesa de jurados.
 
-```bash
-export TELEGRAM_BOT_TOKEN="123456:ABC..."          # BotFather
-export TELEGRAM_ALLOWED_CHAT_IDS="4242,7788"       # quem pode decidir
-uv run python -m aval.interfaces.telegram
-```
+## Por que o bot assina
 
-Descobrir o próprio chat id: mande `/meuid` ao bot. Sem estar na allowlist,
-`/start` e `/meuid` respondem; todo o resto é recusado.
+Três escritas exigem JWS ES256 do titular: **aprovar/negar escalação**,
+**revogar** e **mudar o limite**. O servidor não assina no lugar da pessoa — se
+assinasse, a frase central do roteiro seria falsa:
 
-### Modo demo aberta (para os juízes)
+> *"Quando alguém disser depois 'eu nunca autorizei isso', a assinatura dela
+> sobre esse decision handle exato está no ledger."*
 
-Numa apresentação você não vai reiniciar o bot a cada jurado. Com
-`TELEGRAM_DEMO_MODE=1` qualquer pessoa pode falar com o bot e decidir —
-**cada chat recebe seu próprio conjunto de mandatos**, isolado dos demais. Um
-jurado revoga e vê 🔴; o do lado, no mesmo segundo, continua vendo 🟢.
+O bot é o dispositivo do titular. As chaves ficam em
+`var/telegram-identities.json` (fora do git), gravadas com write-then-rename e
+recarregadas na subida: um bot que esquecesse as chaves deixaria cada jurado com
+um mandato que ninguém pode revogar — e revogação é o momento mais forte da
+demo.
+
+> `ponytail:` chave privada em arquivo simples. Aceitável para chaves de teste
+> que autorizam dinheiro de teste; o lugar honesto é o secure element do
+> celular, que é onde a assinatura moraria de verdade.
+
+## Rodar
+
+Precisa da API de pé (`uvicorn aval.main:app --port 8099`).
 
 ```powershell
-$env:TELEGRAM_DEMO_MODE = "1"     # dispensa TELEGRAM_ALLOWED_CHAT_IDS
+$env:PYTHONPATH = "src"
+$env:PYTHONIOENCODING = "utf-8"
+$env:TELEGRAM_BOT_TOKEN = "<token do BotFather>"
+$env:TELEGRAM_OPEN_MODE = "1"          # sala de jurados
+python -m aval.interfaces.telegram
 ```
 
-Isso vale **apenas com fixtures**. Combinar `TELEGRAM_DEMO_MODE` com
-`AVAL_API_BASE_URL` é recusado na partida: contra um backend real não existe
-sandbox por pessoa, e abrir seria dar a qualquer estranho autoridade sobre o
-mandato de alguém. Para a apresentação com backend, volte à allowlist.
+Sem `TELEGRAM_OPEN_MODE`, só os ids em `TELEGRAM_ALLOWED_CHAT_IDS` agem — que é
+o modo certo quando o bot não está sob os olhos do time. `/meuid` responde
+sempre, para descobrir o próprio id.
 
 ### Variáveis
 
-| Variável | Obrigatória | Padrão | Efeito |
-| --- | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | sim | — | token do BotFather |
-| `TELEGRAM_ALLOWED_CHAT_IDS` | sim na prática | vazio | **vazio autoriza ninguém** (fail-closed) |
-| `TELEGRAM_DEMO_MODE` | não | desligado | `1` abre para qualquer pessoa, com sandbox por chat; incompatível com `AVAL_API_BASE_URL` |
-| `AVAL_API_BASE_URL` | não | — | definir liga o `HttpGateway` |
-| `AVAL_API_TOKEN` | não | — | vira `Authorization: Bearer` |
-| `TELEGRAM_POLL_TIMEOUT_SECONDS` | não | 30 | long poll do `getUpdates` |
-| `AVAL_ESCALATION_POLL_SECONDS` | não | 10 | intervalo de busca por escalações novas |
-| `AVAL_REQUEST_TIMEOUT_SECONDS` | não | 10 | timeout HTTP |
+| Variável | Padrão | Efeito |
+| --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | — | obrigatório |
+| `AVAL_API_BASE_URL` | `http://127.0.0.1:8099` | onde o núcleo responde |
+| `TELEGRAM_OPEN_MODE` | desligado | `1` abre para qualquer pessoa, um mandato por chat |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | vazio | quem pode agir quando o modo aberto está desligado |
+| `TELEGRAM_IDENTITY_PATH` | `var/telegram-identities.json` | onde as chaves ficam |
+| `AVAL_MANDATE_LIMIT_MINOR_UNITS` | `20000` | orçamento vivo do mandato novo (US$ 200,00) |
+| `AVAL_MANDATE_CEILING_MINOR_UNITS` | `50000` | teto por compra; `none` remove |
+| `AVAL_MANDATE_MERCHANTS` · `AVAL_MANDATE_CATEGORIES` | `vuelaya` · `travel` | escopo do mandato novo |
+| `AVAL_MANDATE_CURRENCY` · `AVAL_MANDATE_SCALE` · `AVAL_MANDATE_VALID_DAYS` | `USD` · `2` · `30` | unidade e validade |
+| `AVAL_ESCALATION_POLL_SECONDS` | `8` | de quanto em quanto tempo busca escalação nova |
+| `TELEGRAM_POLL_TIMEOUT_SECONDS` · `AVAL_REQUEST_TIMEOUT_SECONDS` | `30` · `15` | long poll e timeout HTTP |
 
 ## Comandos
 
-| Comando | O que faz |
+| Comando | O que faz | Item do case |
+| --- | --- | --- |
+| `/start` | emite a chave e o mandato da pessoa | A1 |
+| `/comprar <pedido>` | o agente tenta comprar em texto livre | A3, bônus adversarial |
+| `/mandato` | orçamento vivo, teto, escopo, epoch | A1 |
+| `/extrato` | recibo e trilha auditável | A4, A5 |
+| `/aprovacoes` | escalações abertas, com Aprovar/Recusar | B1 |
+| `/limite <valor>` | muda o orçamento, assinado | trial by fire |
+| `/revogar` | encerra a autoridade, assinado | B3 |
+| `/catalogo` · `/status` · `/ajuda` · `/meuid` | apoio | — |
+
+Além disso, o bot **empurra** cada escalação nova para o dono do mandato, uma
+vez por escalação.
+
+## O que o bot chama
+
+Caminhos no dict `ENDPOINTS`, no topo de `gateway.py`. `GET /docs` na instância
+é a referência viva.
+
+| Ação | Chamada |
 | --- | --- |
-| `/start`, `/ajuda` | apresentação e lista de comandos |
-| `/meuid` | mostra o chat id, para entrar na allowlist |
-| `/mandatos` | mandatos com status, teto e gasto |
-| `/mandato <id>` | detalhe, com botão de revogação |
-| `/aprovacoes` | escalações pendentes, com Aprovar/Recusar |
-| `/atividade [id]` | últimos eventos auditáveis |
-| `/revogar <id>` | menu de revogação (mandato inteiro ou orçamento) |
-| `/status` | saúde do backend e modo atual |
+| criar mandato | `POST /mandates` com a JWK pública do chat como `holder` |
+| estado vivo | `GET /mandates/{id}` |
+| comprar | `POST /agent/purchase` `{mandate_id, instruction}` |
+| escalações | `GET /escalations?mandate_id=` · `GET /escalations/{id}` |
+| decidir | `POST /escalations/{id}/decision` `{decision, approval_jws}` |
+| revogar | `POST /mandates/{id}/revocation` `{token}` |
+| mudar limite | `PATCH /mandates/{id}/limit` `{limit, authorization_jws}` |
+| recibo | `GET /ledger?mandate_id=&view=human` |
+| contestar | `POST /disputes` `{reservation_id, reason}` |
+| catálogo | `GET /merchant/offers` |
 
-Além dos comandos, o bot **empurra** cada escalação nova para todos os chats da
-allowlist, uma vez por escalação.
-
-## Contrato HTTP esperado
-
-O `HttpGateway` chama os caminhos abaixo; eles vivem no dicionário `ENDPOINTS`,
-no topo de `gateway.py`. Quando o backend fechar o contrato, ajuste ali — não
-nos handlers.
-
-`GET /health` → `{"status": "ok"}`
-
-`GET /v1/mandates` → `{"mandates": [Mandate]}`
-
-`GET /v1/mandates/{mandate_id}` → `Mandate` (404 vira "não encontrado")
-
-`GET /v1/escalations?status=pending` → `{"escalations": [Escalation]}`
-
-`POST /v1/escalations/{approval_id}/decision`
-· headers `Idempotency-Key`, `Authorization`
-· body `{"decision": "approve"|"deny", "actor": "telegram:@marta"}`
-· resposta `{"ok": bool, "human_summary": str}`
-
-`POST /v1/mandates/{mandate_id}/revocations`
-· headers `Idempotency-Key`, `Authorization`
-· body `{"scope": "mandate"|"budget:zero"|"merchant:<id>"|"instrument:<id>", "reason": str, "actor": str}`
-· resposta `{"ok": bool, "human_summary": str}`
-
-`GET /v1/audit-events?mandate_id=&limit=` → `{"events": [AuditEvent]}`
-
-### Formas
+### O que o bot assina
 
 ```jsonc
-// Money — minor_units inteiro, jamais float
-{ "minor_units": 250000, "currency": "BRL", "scale": 2 }
+// aprovar/negar — POST /escalations/{id}/decision
+{ "decision_handle": "dh_...", "mandate_id": "mandate_...",
+  "amount_minor_units": 30000, "decision": "approve", "decided_at": "..." }
 
-// Mandate
-{ "id": "mnd_...", "principal": "Marta Ribeiro", "agent": "agent://...",
-  "status": "ACTIVE|REVOKED|EXPIRED", "limit": Money, "spent": Money,
-  "allowed_merchant_ids": ["mrc_..."], "expires_at": "2026-09-30T12:00:00Z",
-  "policy_version": 3, "revocation_epoch": 1 }
+// revogar — POST /mandates/{id}/revocation
+{ "mandate_id": "mandate_...", "scope": "mandate", "reason": "...", "epoch": 2 }
 
-// Escalation — uma decisão AWAITING_HUMAN esperando o humano
-{ "id": "esc_...", "mandate_id": "mnd_...", "merchant_id": "mrc_...",
-  "item": "Monitor 27\"", "amount": Money,
-  "reason_code": "merchant_out_of_scope", "human_summary": "...",
-  "created_at": "2026-08-29T18:00:00Z" }
-
-// AuditEvent
-{ "id": "aud_...", "mandate_id": "mnd_...", "event_type": "capture.committed",
-  "human_summary": "...", "occurred_at": "2026-08-29T18:00:00Z" }
+// mudar limite — PATCH /mandates/{id}/limit
+{ "mandate_id": "mandate_...", "limit_minor_units": 5000,
+  "currency": "USD", "scale": 2 }
 ```
 
-## O que o backend precisa entregar
+O núcleo confere que a assinatura é do `holder` **e** que ela fala desta compra:
+handle, mandato, valor e decisão. Uma aprovação não pode ser levantada de uma
+compra e aplicada a outra maior.
 
-1. **Revogação é escrita assinada.** O bot não assina nada. O endpoint de
-   revogação recebe a intenção e é o servidor que assina como autoridade
-   `operator` e chama `AuthorizationCore.submit_signed_revocation`, registrando
-   no `AuditLedger`. O bot é o mesmo caminho do console de operador, não um
-   bypass.
-2. **`Idempotency-Key` respeitado** nos dois POSTs, com a semântica já usada na
-   captura: replay devolve a mesma resposta, corpo divergente é recusado.
-3. **Escalações listáveis.** Toda decisão `AWAITING_HUMAN` precisa virar uma
-   linha consultável, com `human_summary` já em português — o bot exibe o texto
-   do núcleo, não reescreve razão nenhuma.
+## Invariantes
 
-## Invariantes que o bot respeita
-
-- Dinheiro só entra e sai como `minor_units` inteiro; a formatação é aritmética
-  inteira (`views.format_money`). Nenhum float em lugar nenhum.
-- Allowlist fail-closed: chat fora da lista não lê nem decide.
-- Modo demo abre a porta sem abrir o estado: cada chat decide só no próprio
-  sandbox, e ele é recusado se houver backend real configurado.
-- `callback_data` é entrada não confiável — validada em `views.parse_callback`
-  antes de virar ação.
-- Chave de idempotência determinística por (ação, alvo, chat): toque duplo não
-  decide duas vezes.
-- Backend fora do ar vira "nenhuma ação foi executada", nunca um falso sucesso.
+- Dinheiro só em `minor_units` inteiro — inclusive ao ler o que a pessoa digitou
+  (`views.parse_money`) e ao imprimir (`views.format_money`). Nenhum float.
+- `callback_data` é entrada não confiável: validada, e o alvo conferido contra o
+  mandato de quem tocou.
+- Núcleo fora do ar vira "nenhuma ação foi executada", com o `reason_code` do
+  próprio núcleo. Nunca um falso sucesso.
+- O bot repete o `human_summary` do núcleo; não reescreve razão nenhuma.
+- Teto (`mandate_ceiling`) aparece **sem botão de aprovar** — o humano também não
+  atravessa o teto.
 
 ## Limites conhecidos
 
-- `ponytail:` o loop é sequencial — uma chamada lenta ao gateway segura os
-  próximos updates. Um chat, um humano, uma demo: suficiente. Se precisar de
-  concorrência, uma fila por chat resolve.
-- `ponytail:` as escalações já notificadas vivem em memória; reiniciar o bot
-  re-notifica as pendentes. Persistir isso só vale se o bot passar a reiniciar
-  durante a demo.
-- Push é por polling, não webhook. Latência ≤ `AVAL_ESCALATION_POLL_SECONDS`.
-  Webhook só quando o segundo importar.
+- `ponytail:` o loop trata um update por vez; uma chamada lenta segura a próxima.
+  Um humano por chat, uma demo. Fila por chat é o caminho de upgrade.
+- `ponytail:` escalações já notificadas vivem em memória; reiniciar re-notifica
+  as abertas. Inofensivo — o card é idempotente e o núcleo decide uma vez só.
+- Push por long polling, não webhook. Latência ≤ `AVAL_ESCALATION_POLL_SECONDS`.
+
+## Testes
+
+`tests/unit/interfaces/test_telegram_bot.py` — 47 testes. O servidor falso
+**verifica as assinaturas de verdade**, com o mesmo `verify_compact_jws` do
+núcleo: uma aprovação que não bata com a chave publicada do chat falha ali.
