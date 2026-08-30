@@ -26,6 +26,7 @@ from aval.api.routes import (
     merchant,
     operations,
 )
+from aval.api.routes.demo_tamper import create_demo_tamper_router, tampering_enabled
 from aval.domain.errors import DomainError
 from aval.infrastructure.psp import PspUnreachable
 from aval.runtime import AvalRuntime, build_runtime
@@ -113,4 +114,9 @@ def create_app(runtime: AvalRuntime | None = None) -> FastAPI:
     app.include_router(ledger.router)
     app.include_router(merchant.router)
     app.include_router(operations.router)
+    # Mounted only when explicitly enabled. A route that corrupts the audit log is
+    # not something a deployment should have to remember to lock down: without the
+    # flag it does not exist, and does not appear in the OpenAPI document either.
+    if tampering_enabled():
+        app.include_router(create_demo_tamper_router())
     return app
