@@ -4,6 +4,7 @@ import base64
 import json
 import secrets
 from dataclasses import dataclass, field
+from itertools import count
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -52,11 +53,17 @@ class Harness:
     # stopped letting a mandate without a payment method settle, the default fixture
     # carries one — a test that wants the no-card case now says so by passing
     # `payment_method=None`, instead of getting it by accident.
-    TEST_CARD = "4242424242424242"
+    #
+    # A token and four digits, never a number: the card is typed on the processor's
+    # own page, so by the time a mandate hears about it there is nothing to tokenize.
+    TEST_CARD = {"token": "pm_test_fixture", "label": "•••• 4242"}
+    _cards = count(1)
 
     def mandate_payload(self, **overrides: Any) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "payment_method": {"card_number": self.TEST_CARD},
+            # Unique per mandate, the way a real vaulted card is: two mandates sharing
+            # one token would hide an instrument check that compared nothing.
+            "payment_method": {**self.TEST_CARD, "token": f"pm_test_{next(self._cards)}"},
             "principal": {"id": "usr_marta", "display_name": "Marta Silva"},
             "allowed_merchant_ids": ["vuelaya"],
             "allowed_categories": ["travel"],

@@ -63,15 +63,17 @@ class UsageLimitOut(BaseModel):
 
 
 class PaymentMethodIn(BaseModel):
-    """A card the holder is authorizing, on its way to being forgotten.
+    """A card the holder already vaulted, named by its token and its last four digits.
 
-    The number is read once, tokenized at the edge and never persisted: the mandate
-    stores the token and the last four digits, and nothing downstream can reconstruct a
-    PAN from either. This is the one place in the system a card number legitimately
-    appears, which is why it appears nowhere else.
+    This used to take the number itself, tokenizing it at the edge. That was the one
+    place a PAN legitimately appeared — and one place is one more than this system
+    needs, now that the card is typed on the processor's own page and arrives here
+    already vaulted. There is no longer any request, anywhere, that carries a card
+    number: nothing can leak what nothing receives.
     """
 
-    card_number: str = Field(min_length=12, max_length=19)
+    token: str = Field(min_length=4, max_length=255)
+    label: str = Field(min_length=1, max_length=64)
 
 
 class CreateMandateRequest(BaseModel):

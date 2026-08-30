@@ -4,8 +4,8 @@ The case asks the human to authorize *what may be bought, the limits, the validi
 the payment method*, without the raw card ever reaching the agent. The first three were
 already here. These tests hold the fourth from both ends:
 
-- a card typed once is tokenized at the edge and is gone; what survives is a token the
-  agent presents and four digits a person recognises;
+- a card is never typed here at all: it is vaulted at the processor and named by a
+  token the agent presents plus four digits a person recognises;
 - a capture presenting a different instrument, or none, is refused before the ladder
   ever reaches the money;
 - cancelling the card is not cancelling the agent. The mandate stays ACTIVE, the budget
@@ -16,14 +16,15 @@ from __future__ import annotations
 
 from aval.security.jws import sign_compact_jws
 
-CARD = "4242424242424242"
+# What a processor hands back after the person typed their card on its own page.
+# No number appears in this file, because none can reach the system any more.
+CARD = {"token": "pm_vaulted_card", "label": "•••• 4242"}
 
 
 def with_card(harness, **overrides):
     """A mandate that names a card, plus the scope that cancels it."""
     response = harness.client.post(
-        "/mandates",
-        json=harness.mandate_payload(payment_method={"card_number": CARD}, **overrides),
+        "/mandates", json=harness.mandate_payload(payment_method=CARD, **overrides)
     )
     assert response.status_code == 201, response.text
     body = response.json()
@@ -59,10 +60,10 @@ def test_the_card_is_read_once_and_only_four_digits_survive(harness):
     view = harness.client.get(f"/mandates/{mandate_id}").json()
 
     assert view["instrument_label"] == "•••• 4242"
-    assert CARD not in harness.client.get(f"/mandates/{mandate_id}").text
     # The token is authority, so it is never served — only the agent needs it.
     assert "instrument_token" not in view
-    assert scope.startswith("instrument:vt_")
+    assert CARD["token"] not in harness.client.get(f"/mandates/{mandate_id}").text
+    assert scope == f"instrument:{CARD['token']}"
 
 
 def test_a_mandate_naming_a_card_buys_with_it(harness):
@@ -177,9 +178,16 @@ def test_the_agent_pays_with_the_mandates_own_card_end_to_end(harness):
     assert refused["reason_code"] == "instrument_revoked"
 
 
-def test_a_card_number_that_is_not_a_card_number_is_refused_at_the_edge(harness):
+def test_a_card_number_is_no_longer_something_this_endpoint_can_be_handed(harness):
+    """The strongest form of "the PAN does not leak": it cannot arrive.
+
+    This used to send a malformed number and expect the edge to reject it. There is
+    now no field to send one in, so the request is refused as unrecognised — which
+    is the same 422 for a much better reason.
+    """
     response = harness.client.post(
-        "/mandates", json=harness.mandate_payload(payment_method={"card_number": "não-é-cartão"})
+        "/mandates",
+        json=harness.mandate_payload(payment_method={"card_number": "4242424242424242"}),
     )
 
     assert response.status_code == 422

@@ -5,10 +5,10 @@ from datetime import UTC, datetime
 
 from fastapi import HTTPException
 import pytest
+from pydantic import ValidationError
 
-from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
+from aval.adapters.acp.delegate_payment import OpaqueDelegationTokenMinter
 from aval.api.routers.delegate_payment import (
-    CardCredentialInput,
     DelegatePaymentRequest,
     create_delegate_payment_router,
 )
@@ -34,19 +34,19 @@ class MockLiveAuthorizer:
             merchant_id=merchant_id,
             checkout_id=checkout_id,
             expires_at=datetime(2026, 8, 30, tzinfo=UTC),
+            instrument_token="pm_vaulted_1",
         )
 
 
 def test_delegate_payment_uses_fresh_authorized_state_for_each_token() -> None:
     authorizer = MockLiveAuthorizer()
-    service = VaultService(authorizer=authorizer, tokenizer=OpaqueTestCredentialTokenizer())
+    service = VaultService(authorizer=authorizer, tokenizer=OpaqueDelegationTokenMinter())
     router = create_delegate_payment_router(service)
     endpoint = next(route.endpoint for route in router.routes if route.path == "/agentic_commerce/delegate_payment")
     request = DelegatePaymentRequest(
         mandate_id="mandate_1",
         checkout_session_id="checkout_42",
         merchant_id="merchant_aval",
-        payment_method=CardCredentialInput(card_number="4242424242424242"),
     )
 
     first = asyncio.run(endpoint(request, "idem-1"))
@@ -81,7 +81,6 @@ def test_revoked_mandate_is_rejected_before_the_card_is_tokenized() -> None:
         mandate_id="mandate_1",
         checkout_session_id="checkout_42",
         merchant_id="merchant_aval",
-        payment_method=CardCredentialInput(card_number="4242424242424242"),
     )
 
     with pytest.raises(HTTPException) as raised:
@@ -90,3 +89,20 @@ def test_revoked_mandate_is_rejected_before_the_card_is_tokenized() -> None:
     assert tokenizer.called is False
     assert raised.value.status_code == 403
     assert raised.value.detail == "mandate_revoked"
+
+
+def test_the_agent_cannot_name_a_card_at_all() -> None:
+    """The hole this closed, stated as a type error rather than as a check.
+
+    The agent used to supply a card number that was vaulted without ever being
+    compared to the mandate's own, so an agent could delegate a card its holder had
+    never authorized. The field is gone and the model forbids extras, so naming one
+    is now a malformed request rather than a silently accepted credential.
+    """
+    with pytest.raises(ValidationError):
+        DelegatePaymentRequest(
+            mandate_id="mandate_1",
+            checkout_session_id="checkout_42",
+            merchant_id="merchant_aval",
+            payment_method={"card_number": "4242424242424242"},
+        )

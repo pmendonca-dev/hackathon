@@ -193,6 +193,10 @@ class LiveAuthorizationContext:
     mandate_ceiling: Money
     live_balance: Money
     expires_at: datetime
+    # The card this mandate names. A delegation is a delegation *of* something, and
+    # without it the ACP lane would be minting a token that stands for whatever card
+    # the caller felt like naming.
+    instrument_token: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1453,6 +1457,7 @@ class AuthorizationCore:
                 mandate_ceiling=mandate.limit,
                 live_balance=live_limit.subtract(spent),
                 expires_at=mandate.expires_at,
+                instrument_token=None if mandate.instrument is None else mandate.instrument.token,
             )
 
 

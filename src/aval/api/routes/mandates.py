@@ -7,6 +7,7 @@ read and write straight through to the core. No cache sits in front of them.
 from __future__ import annotations
 
 import base64
+import logging
 import json
 from uuid import uuid4
 
@@ -28,7 +29,6 @@ from aval.api.schemas import (
     RevocationRequest,
     RevocationResponse,
 )
-from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
 from aval.domain.entities import (
     Mandate,
     PaymentInstrument,
@@ -37,6 +37,8 @@ from aval.domain.entities import (
     UsageLimit,
 )
 from aval.domain.enums import RevocationRole
+
+logger = logging.getLogger("aval.api.mandates")
 
 router = APIRouter(tags=["mandates"])
 
@@ -85,18 +87,15 @@ def create_mandate(request: Request, body: CreateMandateRequest) -> CreateMandat
     except ValueError as error:
         raise ApiError(422, "unknown_revocation_role", "Papel de autoridade desconhecido.") from error
 
-    # The card is read here and forgotten here. `instrument` carries a token and four
-    # digits from this line onwards; the number itself is not stored, logged or passed
-    # on, and the request object holding it dies with this call.
+    # A card that was vaulted somewhere else, named by its token. Nothing here reads
+    # or tokenizes a number, because no number arrives: a mandate created with no
+    # payment method simply cannot pay, which is the honest state for one whose holder
+    # has not registered a card yet.
     instrument: PaymentInstrument | None = None
     if body.payment_method is not None:
-        try:
-            token = OpaqueTestCredentialTokenizer().tokenize(body.payment_method.card_number)
-        except ValueError as error:
-            raise ApiError(
-                422, "payment_method_invalid", "Número de cartão inválido."
-            ) from error
-        instrument = PaymentInstrument(token, f"•••• {body.payment_method.card_number[-4:]}")
+        instrument = PaymentInstrument(
+            body.payment_method.token, body.payment_method.label
+        )
     mandate = Mandate(
         id=mandate_id,
         principal=Principal(id=body.principal.id, display_name=body.principal.display_name),
@@ -334,4 +333,27 @@ def revoke(request: Request, mandate_id: str, body: RevocationRequest) -> Revoca
         raise ApiError(400, reason, "Revogação inválida.") from error
     mandate = runtime.core.mandate(mandate_id)
     assert mandate is not None
+    _release_card_at_processor(runtime, unverified_claims(body.token).get("scope"))
     return RevocationResponse(revoked=True, epoch=int(mandate.revocation_metadata.get("epoch", 0)))
+
+
+def _release_card_at_processor(runtime, scope: object) -> None:
+    """Let go of the card at the processor once the holder has cancelled it here.
+
+    Done after the core has committed, and outside its write lock: a network call
+    inside the transaction that revokes a mandate would make the strongest moment of
+    the system depend on somebody else's uptime.
+
+    Best effort on purpose. The local revocation already refuses every later purchase,
+    so a processor that does not answer must not turn cancelling a card into an error
+    the person sees — and the credential stays cancelled here either way.
+    """
+    if not isinstance(scope, str) or not scope.startswith("instrument:"):
+        return
+    psp = runtime.psp
+    if not hasattr(psp, "detach"):
+        return
+    try:
+        psp.detach(scope.removeprefix("instrument:"))
+    except Exception:  # noqa: BLE001 - the revocation stands whatever the processor says
+        logger.warning("o processador não confirmou a baixa do cartão")

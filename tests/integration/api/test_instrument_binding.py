@@ -159,3 +159,72 @@ def test_the_trail_records_the_label_and_never_the_credential(harness: Harness) 
 
     assert "mandate_instrument_bound" in ledger.text
     assert "pm_secret_credential" not in ledger.text
+
+
+class RecordingPsp:
+    """A processor that remembers what it was asked to let go of."""
+
+    def __init__(self, *, fails: bool = False) -> None:
+        self.detached: list[str] = []
+        self.fails = fails
+
+    def detach(self, payment_method: str) -> bool:
+        if self.fails:
+            raise RuntimeError("o processador caiu")
+        self.detached.append(payment_method)
+        return True
+
+    def authorize(self, reservation, proof):  # pragma: no cover - never settles here
+        raise AssertionError("this test never captures")
+
+
+def test_cancelling_the_card_releases_it_at_the_processor(harness: Harness) -> None:
+    """Cancelling here has to mean cancelling there, or the card is only half revoked."""
+    psp = RecordingPsp()
+    object.__setattr__(harness.runtime, "psp", psp)
+    mandate_id = harness.create_mandate(payment_method=None)
+    binding(harness, mandate_id, token="pm_live_1")
+
+    token = sign_compact_jws(
+        {"mandate_id": mandate_id, "scope": "instrument:pm_live_1", "reason": "perdi", "epoch": 1},
+        harness.custody,
+        harness.HOLDER_KID,
+    )
+    harness.client.post(f"/mandates/{mandate_id}/revocation", json={"token": token})
+
+    assert psp.detached == ["pm_live_1"]
+
+
+def test_a_processor_that_is_down_does_not_undo_the_revocation(harness: Harness) -> None:
+    """The local refusal already stops every later purchase. Failing the request here
+    would tell the person their cancellation did not happen, which is false."""
+    object.__setattr__(harness.runtime, "psp", RecordingPsp(fails=True))
+    mandate_id = harness.create_mandate(payment_method=None)
+    binding(harness, mandate_id, token="pm_live_2")
+
+    token = sign_compact_jws(
+        {"mandate_id": mandate_id, "scope": "instrument:pm_live_2", "reason": "perdi", "epoch": 1},
+        harness.custody,
+        harness.HOLDER_KID,
+    )
+    response = harness.client.post(f"/mandates/{mandate_id}/revocation", json={"token": token})
+
+    assert response.status_code == 200
+    assert harness.runtime.core.snapshot(mandate_id).instrument_revoked is True
+
+
+def test_ending_the_mandate_does_not_touch_the_card_at_the_processor(harness: Harness) -> None:
+    """Two brakes, two meanings. Revoking authority is not asking to lose the card."""
+    psp = RecordingPsp()
+    object.__setattr__(harness.runtime, "psp", psp)
+    mandate_id = harness.create_mandate(payment_method=None)
+    binding(harness, mandate_id, token="pm_live_3")
+
+    token = sign_compact_jws(
+        {"mandate_id": mandate_id, "scope": "mandate", "reason": "fim", "epoch": 1},
+        harness.custody,
+        harness.HOLDER_KID,
+    )
+    harness.client.post(f"/mandates/{mandate_id}/revocation", json={"token": token})
+
+    assert psp.detached == []

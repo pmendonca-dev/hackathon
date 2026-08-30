@@ -46,7 +46,7 @@ from aval.api.routers.ui_sessions import create_ui_session_router, ui_local_http
 from aval.api.routers.ui_workspace import create_ui_workspace_router
 from aval.api.routers.ucp_checkout import create_ucp_checkout_router
 from aval.api.routers.ucp_discovery import create_ucp_discovery_router
-from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
+from aval.adapters.acp.delegate_payment import OpaqueDelegationTokenMinter
 from aval.adapters.ap2.receipts import Ap2ReceiptIssuer
 from aval.application.services.checkout import CheckoutService
 from aval.application.services.delegation import (
@@ -211,7 +211,7 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
             authorizer=CoreDelegationAuthorizer(
                 core=runtime.core, checkouts=SqliteCheckoutRepository(runtime.engine)
             ),
-            tokenizer=OpaqueTestCredentialTokenizer(),
+            tokenizer=OpaqueDelegationTokenMinter(),
         ),
         engine=runtime.engine,
     )
