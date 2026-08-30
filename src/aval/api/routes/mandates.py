@@ -67,6 +67,12 @@ def unverified_claims(token: str) -> dict:
 @router.post("/mandates", status_code=status.HTTP_201_CREATED, response_model=CreateMandateResponse)
 def create_mandate(request: Request, body: CreateMandateRequest) -> CreateMandateResponse:
     runtime = runtime_of(request)
+    if not body.creation_jws:
+        raise ApiError(
+            422,
+            "mandate_creation_unsigned",
+            "A criação do mandato exige a assinatura do titular.",
+        )
     # Validity is time-dependent, so it is checked here rather than in the domain: the
     # entity has no clock, and a mandate created already expired would be accepted and
     # then refuse everything, which reads as the system being broken rather than as the
@@ -130,7 +136,10 @@ def create_mandate(request: Request, body: CreateMandateRequest) -> CreateMandat
             for authority, role in zip(body.authorities, roles, strict=True)
         ),
     )
-    runtime.core.register_mandate(mandate)
+    try:
+        runtime.core.register_mandate(mandate, creation_proof=body.creation_jws)
+    except ApprovalError as error:
+        raise ApiError(error.status_code, error.reason_code, error.human_summary) from error
     return CreateMandateResponse(
         mandate_id=mandate_id,
         policy_version=1,

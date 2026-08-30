@@ -75,7 +75,7 @@ def test_a_watch_whose_price_has_not_fallen_buys_nothing_and_keeps_waiting(harne
 
     fired = tick(harness, mandate_id).json()
     assert fired["fired"] == []
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
     listed = harness.client.get("/agent/watches", params={"mandate_id": mandate_id}).json()
     assert [watch["status"] for watch in listed["watches"]] == ["OPEN"]
@@ -101,7 +101,7 @@ def test_when_the_price_falls_the_agent_buys_with_nobody_typing(harness):
     assert fired[0]["purchase"]["outcome"] == "settled"
     assert fired[0]["purchase"]["offer"]["item"]["sku"] == CHEAPEST_CORDOBA
     assert fired[0]["settlement_reference"].startswith("psp_")
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 9500
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 9500
 
 
 def test_a_watch_that_bought_does_not_buy_again(harness):
@@ -112,7 +112,7 @@ def test_a_watch_that_bought_does_not_buy_again(harness):
     tick(harness, mandate_id)
 
     assert tick(harness, mandate_id).json()["fired"] == []
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 9500
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 9500
 
 
 def revoke(harness, mandate_id: str):
@@ -143,7 +143,7 @@ def test_a_revoked_mandate_stops_the_agent_that_nobody_is_watching(harness):
     assert fired[0]["purchase"]["outcome"] == "rejected"
     assert fired[0]["outcome"] == "mandate_revoked"
     assert fired[0]["status"] == "FIRED", "a vigília acabou; nada mais vai passar"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
 
 def test_a_watch_never_outlives_the_mandate_it_depends_on(harness):
@@ -152,7 +152,7 @@ def test_a_watch_never_outlives_the_mandate_it_depends_on(harness):
 
     created = register(harness, mandate_id, "um voo para Córdoba abaixo de $100").json()
 
-    mandate = harness.client.get(f"/mandates/{mandate_id}").json()
+    mandate = harness.read_mandate(mandate_id).json()
     assert created["expires_at"][:19] == mandate["expires_at"][:19]
 
 
@@ -170,7 +170,7 @@ def test_an_expired_watch_closes_without_buying(harness):
 
     fired = tick(harness, mandate_id).json()["fired"]
     assert [entry["status"] for entry in fired] == ["EXPIRED"]
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
 
 def test_ticking_one_mandate_never_runs_another_persons_watches(harness):
@@ -181,4 +181,4 @@ def test_ticking_one_mandate_never_runs_another_persons_watches(harness):
     drop_price(harness, CHEAPEST_CORDOBA, 9500)
 
     assert tick(harness, mine).json()["fired"] == []
-    assert harness.client.get(f"/mandates/{theirs}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(theirs).json()["spent"]["minor_units"] == 0

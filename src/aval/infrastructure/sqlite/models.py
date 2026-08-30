@@ -46,6 +46,24 @@ mandates = Table(
     CheckConstraint("status IN ('ACTIVE', 'REVOKED', 'EXPIRED')", name="mandate_status"),
 )
 
+mandate_creation_proofs = Table(
+    # The holder's signature over the terms the mandate was born with.
+    #
+    # Kept beside the mandate rather than inside it: the row is evidence about an event,
+    # not a property of the live authority, and the mandate's own shape stays the shape
+    # every decision reads. `nonce` is unique because a creation is replayable in a way a
+    # revocation is not — the same signature twice would mint a second mandate with the
+    # same terms, doubling authorized spend without a second signature.
+    "mandate_creation_proofs",
+    metadata,
+    Column("mandate_id", ForeignKey("mandates.id"), primary_key=True),
+    Column("kid", String, nullable=False),
+    Column("nonce", String, nullable=False),
+    Column("signed_jws", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Index("ux_mandate_creation_proof_nonce", "nonce", unique=True),
+)
+
 revocation_authorities = Table(
     "revocation_authorities",
     metadata,

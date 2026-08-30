@@ -76,7 +76,7 @@ def test_a_denied_escalation_buys_nothing(harness):
     assert response.status_code == 200, response.text
     assert response.json()["resumed"] is False
     assert response.json()["capture"] is None
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
 
 def test_an_approval_signed_by_a_stranger_is_refused(harness):
@@ -90,7 +90,7 @@ def test_an_approval_signed_by_a_stranger_is_refused(harness):
 
     assert response.status_code == 403
     assert response.json()["reason_code"] == "approval_authority_unknown"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
 
 def test_an_approval_with_a_tampered_payload_is_refused(harness):
@@ -102,7 +102,7 @@ def test_an_approval_with_a_tampered_payload_is_refused(harness):
     response = decide(harness, handle, "approve", f"{header}.{flipped}.{signature}")
 
     assert response.status_code == 403
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
 
 def test_an_approval_for_another_handle_is_refused(harness):
@@ -189,7 +189,7 @@ def test_an_escalation_is_decided_once(harness):
     assert first.status_code == 200
     assert second.status_code == 409
     assert second.json()["reason_code"] == "escalation_already_decided"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 13000
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 13000
 
 
 def test_an_unknown_handle_is_refused(harness):
@@ -222,12 +222,10 @@ def test_the_human_view_shows_the_approval_but_not_the_raw_token(harness):
 
     decide(harness, handle, "approve", approval_token(harness, handle, mandate_id))
 
-    body = harness.client.get("/ledger", params={"mandate_id": mandate_id, "view": "human"}).json()
+    body = harness.human_ledger(mandate_id).json()
     summaries = [entry["human_summary"] for entry in body["entries"]]
     assert any("aprov" in summary.lower() for summary in summaries)
-    assert "approval_jws" not in harness.client.get(
-        "/ledger", params={"mandate_id": mandate_id, "view": "human"}
-    ).text
+    assert "approval_jws" not in harness.human_ledger(mandate_id).text
 
 
 def test_a_budget_escalation_can_also_be_approved(harness):
@@ -240,7 +238,7 @@ def test_a_budget_escalation_can_also_be_approved(harness):
     resumed = decide(harness, handle, "approve", approval_token(harness, handle, mandate_id))
 
     assert resumed.json()["capture"]["approved"] is True
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 26000
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 26000
 
 
 def test_one_approval_covers_the_purchase_even_with_two_rules_in_the_way(harness):
@@ -266,7 +264,7 @@ def test_one_approval_covers_the_purchase_even_with_two_rules_in_the_way(harness
     )
 
     assert resumed.json()["capture"]["approved"] is True, resumed.text
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 28000
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 28000
 
 
 def test_an_approval_still_cannot_reach_above_the_ceiling(harness):

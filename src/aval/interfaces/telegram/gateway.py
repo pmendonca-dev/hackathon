@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from aval.security.mandate_creation import mandate_creation_claims
 from aval.interfaces.telegram.identity import ChatIdentity, IdentityStore
 
 
@@ -162,11 +163,37 @@ class AvalGateway:
     def health(self) -> str:
         return str(self._call("GET", ENDPOINTS["health"]).get("status", "unknown"))
 
+    def _read_authorization(self, mandate_id: str) -> dict[str, str]:
+        """The holder's signature over *seeing* their own record.
+
+        Scoped by the key, exactly like revocation: this bot signs with the chat key
+        that holds the mandate, so one judge's chat never reads another's — the room
+        shares a bot, never an authority.
+        """
+        identity = self._identities.for_mandate(mandate_id)
+        if identity is None:
+            return {}
+        return {
+            "authorization_jws": self._identities.sign(
+                identity, {"principal_id": identity.principal_id}
+            )
+        }
+
     def mandate(self, mandate_id: str) -> MandateView | None:
         try:
-            payload = self._call("GET", ENDPOINTS["mandate"].format(mandate_id=mandate_id))
+            payload = self._call(
+                "GET",
+                ENDPOINTS["mandate"].format(mandate_id=mandate_id),
+                query=self._read_authorization(mandate_id),
+            )
         except GatewayError as error:
-            if error.reason_code == "mandate_not_found":
+            # "Not found" and "not yours" are the same answer to a bot that holds no
+            # key for it: there is nothing it may show either way.
+            if error.reason_code in {
+                "mandate_not_found",
+                "read_authorization_required",
+                "read_forbidden",
+            }:
                 return None
             raise
         return _mandate(payload)
@@ -186,7 +213,13 @@ class AvalGateway:
 
     def receipt(self, mandate_id: str, *, limit: int = 8) -> ReceiptView:
         payload = self._call(
-            "GET", ENDPOINTS["ledger"], query={"mandate_id": mandate_id, "view": "human"}
+            "GET",
+            ENDPOINTS["ledger"],
+            query={
+                "mandate_id": mandate_id,
+                "view": "human",
+                **self._read_authorization(mandate_id),
+            },
         )
         entries = [_entry(item) for item in payload.get("entries", [])]
         entries.sort(key=lambda item: item.sequence, reverse=True)
@@ -216,37 +249,36 @@ class AvalGateway:
         valid_for: timedelta,
         card_number: str | None = None,
     ) -> tuple[str, str | None]:
-        payload = self._call(
-            "POST",
-            ENDPOINTS["mandates"],
-            body={
-                "principal": {
-                    "id": identity.principal_id,
-                    "display_name": identity.display_name,
-                },
-                "allowed_merchant_ids": list(merchants),
-                "allowed_categories": list(categories),
-                "limit": _money_body(limit),
-                "ceiling": None if ceiling is None else _money_body(ceiling),
-                "expires_at": (datetime.now(UTC) + valid_for).isoformat(),
-                # The number is typed here and forgotten there. What comes back is a
-                # token the agent may present and four digits the holder recognises.
-                **(
-                    {} if not card_number else {"payment_method": {"card_number": card_number}}
-                ),
-                # The holder key lives in this bot, so the mandate is revocable by
-                # the person who created it and by nobody else.
-                "authorities": [
-                    {
-                        "id": f"ath_{identity.chat_id}",
-                        "kid": identity.kid,
-                        "role": "holder",
-                        "public_jwk": self._identities.public_jwk(identity),
-                        "allowed_scopes": ["mandate"],
-                    }
-                ],
+        body: dict[str, Any] = {
+            "principal": {
+                "id": identity.principal_id,
+                "display_name": identity.display_name,
             },
-        )
+            "allowed_merchant_ids": list(merchants),
+            "allowed_categories": list(categories),
+            "limit": _money_body(limit),
+            "ceiling": None if ceiling is None else _money_body(ceiling),
+            "expires_at": (datetime.now(UTC) + valid_for).isoformat(),
+            # The number is typed here and forgotten there. What comes back is a
+            # token the agent may present and four digits the holder recognises.
+            **({} if not card_number else {"payment_method": {"card_number": card_number}}),
+            # The holder key lives in this bot, so the mandate is revocable by
+            # the person who created it and by nobody else.
+            "authorities": [
+                {
+                    "id": f"ath_{identity.chat_id}",
+                    "kid": identity.kid,
+                    "role": "holder",
+                    "public_jwk": self._identities.public_jwk(identity),
+                    "allowed_scopes": ["mandate"],
+                }
+            ],
+        }
+        # The mandate is born signed by the same chat key that will be able to revoke
+        # it. Without this the server would be taking someone's word that this chat
+        # speaks for this person — and a dispute later would have nothing to read.
+        body["creation_jws"] = self._identities.sign(identity, mandate_creation_claims(body))
+        payload = self._call("POST", ENDPOINTS["mandates"], body=body)
         return str(payload["mandate_id"]), payload.get("instrument_revocation_scope")
 
     def purchase(self, mandate_id: str, instruction: str) -> PurchaseView:

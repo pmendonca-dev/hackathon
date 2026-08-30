@@ -12,6 +12,7 @@ import {
   type Watch,
 } from '../gateways/authorizationGateway.ts';
 import { signCompactJws, type HolderWallet } from '../wallet/holderKey.ts';
+import { mandateCreationClaims } from '../wallet/mandateCreation.ts';
 import { loadOrCreateWallet } from '../wallet/walletStore.ts';
 import {
   AvalContext,
@@ -174,7 +175,7 @@ export function AvalProvider({
 
       if (current) {
         const [human, auditor] = await Promise.all([
-          gateway.humanLedger(current),
+          gateway.humanLedger(current, readToken),
           gateway.auditorLedger(current),
         ]);
         setHumanEntries(human.entries);
@@ -256,7 +257,7 @@ export function AvalProvider({
       async createMandate(input) {
         const holder = requireWallet();
         const accepted = await run('Criar mandato', async () => {
-          const created = await gateway.createMandate({
+          const terms = {
             principal: { id: principalId, display_name: input.displayName },
             allowed_merchant_ids: input.merchants,
             allowed_categories: input.categories,
@@ -264,6 +265,9 @@ export function AvalProvider({
             ceiling: input.ceiling,
             expires_at: input.expiresAt,
             usage_limit: input.usageLimit,
+          };
+          const created = await gateway.createMandate({
+            ...terms,
             // The browser's own public key becomes the mandate's holder authority.
             // This is what makes later revocation and approval signable here — and what
             // keeps the server from ever being able to produce them.
@@ -275,6 +279,10 @@ export function AvalProvider({
                 allowed_scopes: ['mandate', 'budget:zero'],
               },
             ],
+            // And the same key signs the mandate into existence. The runtime refuses a
+            // creation it cannot attribute, so the person who will be able to revoke is
+            // provably the person who authorized — from position 0 of the trail.
+            creation_jws: await signCompactJws(mandateCreationClaims(terms), holder),
           });
           setSelectedMandateId(created.mandate_id);
           return `Mandato ${created.mandate_id} criado na versão de política ${created.policy_version}.`;

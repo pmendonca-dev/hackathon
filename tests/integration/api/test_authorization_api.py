@@ -256,8 +256,8 @@ def test_a_second_mandate_under_the_same_holder_key_can_still_be_revoked(harness
     revoked = harness.client.post(f"/mandates/{second}/revocation", json={"token": token})
 
     assert revoked.status_code == 200, revoked.text
-    assert harness.client.get(f"/mandates/{second}").json()["status"] == "REVOKED"
-    assert harness.client.get(f"/mandates/{first}").json()["status"] == "ACTIVE"
+    assert harness.read_mandate(second).json()["status"] == "REVOKED"
+    assert harness.read_mandate(first).json()["status"] == "ACTIVE"
     assert harness.authorize(harness.purchase(second)).json()["reason_code"] == "mandate_revoked"
     assert harness.authorize(harness.purchase(first)).json()["decision"] == "authorized"
 

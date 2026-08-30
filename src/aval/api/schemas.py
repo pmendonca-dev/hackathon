@@ -84,6 +84,16 @@ class CreateMandateRequest(BaseModel):
     ceiling: MoneyIn | None = None
     usage_limit: UsageLimitIn | None = None
     payment_method: PaymentMethodIn | None = None
+    # Compact JWS ES256 by a holder authority *of this mandate*, over
+    # {purpose, principal_id, allowed_merchant_ids, allowed_categories,
+    #  limit_minor_units, currency, scale, ceiling_minor_units, max_uses,
+    #  usage_window_seconds, expires_at, creation_nonce}.
+    #
+    # Optional in the schema and required by the route, so an unsigned creation is
+    # answered with a reason code instead of a validation dump. The nonce is single-use:
+    # a replayed creation would mint a second mandate with the same terms and double
+    # what the agent may spend without the holder signing twice.
+    creation_jws: str | None = None
 
     @field_validator("expires_at")
     @classmethod

@@ -14,6 +14,7 @@
 
 import { AuthorizationGateway } from '../src/gateways/authorizationGateway.ts';
 import { generateHolderKeyPair, signCompactJws } from '../src/wallet/holderKey.ts';
+import { mandateCreationClaims } from '../src/wallet/mandateCreation.ts';
 
 const baseUrl = process.argv[2] ?? 'http://127.0.0.1:8137';
 const principalId = `usr_browser_${Date.now()}`;
@@ -49,6 +50,20 @@ const created = await gateway.createMandate({
       allowed_scopes: ['mandate', 'budget:zero'],
     },
   ],
+  // The mandate is born signed by the key that will be able to revoke it, so the trail
+  // starts at the holder's own consent instead of at someone's claim about it.
+  creation_jws: await signCompactJws(
+    mandateCreationClaims({
+      principal: { id: principalId, display_name: 'Marta Silva' },
+      allowed_merchant_ids: ['vuelaya'],
+      allowed_categories: ['travel'],
+      limit: { minor_units: 20000, currency: 'USD', scale: 2 },
+      ceiling: { minor_units: 50000, currency: 'USD', scale: 2 },
+      expires_at: '2027-09-30T23:59:59Z',
+      usage_limit: { max_uses: 3, window_seconds: 2592000 },
+    }),
+    wallet,
+  ),
 });
 const mandateId = created.mandate_id;
 check('o navegador cria um mandato com a própria chave', Boolean(mandateId), mandateId);
@@ -178,7 +193,7 @@ check(
 );
 
 // 8 — revocation, signed here, ends the mandate.
-const current = await gateway.readMandate(mandateId);
+const current = await gateway.readMandate(mandateId, readToken);
 const revocationJws = await signCompactJws(
   {
     mandate_id: mandateId,

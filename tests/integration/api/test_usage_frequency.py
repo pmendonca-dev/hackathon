@@ -122,7 +122,7 @@ def test_the_usage_limit_is_visible_on_the_mandate(harness: Harness) -> None:
     mandate_id = limited(harness, max_uses=3)
     buy(harness, mandate_id, "one")
 
-    view = harness.client.get(f"/mandates/{mandate_id}").json()
+    view = harness.read_mandate(mandate_id).json()
 
     assert view["usage_limit"] == {"max_uses": 3, "window_seconds": MONTH_SECONDS}
     assert view["uses_in_window"] == 1

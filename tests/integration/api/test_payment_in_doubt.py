@@ -20,9 +20,7 @@ def set_psp(harness, mode: str):
 
 
 def human_entries(harness, mandate_id: str):
-    return harness.client.get(
-        "/ledger", params={"mandate_id": mandate_id, "view": "human"}
-    ).json()["entries"]
+    return harness.human_ledger(mandate_id).json()["entries"]
 
 
 def test_a_processor_that_never_answers_leaves_the_purchase_in_confirmation(harness):
@@ -66,7 +64,7 @@ def test_the_budget_stays_held_while_the_payment_is_in_doubt(harness):
     response = buy(harness, mandate_id)
 
     assert response.status_code == 502
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 13000
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 13000
 
 
 def test_reconciling_moves_the_purchase_out_of_confirmation(harness):
@@ -169,4 +167,4 @@ def test_the_budget_the_agent_held_is_still_held(harness):
         json={"mandate_id": mandate_id, "instruction": "compre um voo para Córdoba abaixo de $150"},
     )
 
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] > 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] > 0

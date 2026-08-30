@@ -73,7 +73,7 @@ def test_changing_the_live_limit_needs_a_signed_holder_decision(harness):
 
     assert response.status_code == 403
     assert response.json()["reason_code"] == "limit_change_unsigned"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["limit"]["minor_units"] == 20000
+    assert harness.read_mandate(mandate_id).json()["limit"]["minor_units"] == 20000
 
 
 def test_a_limit_change_signed_by_a_stranger_is_refused(harness):
@@ -95,7 +95,7 @@ def test_a_limit_change_signed_by_a_stranger_is_refused(harness):
 
     assert response.status_code == 403
     assert response.json()["reason_code"] == "limit_change_authority_unknown"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["limit"]["minor_units"] == 20000
+    assert harness.read_mandate(mandate_id).json()["limit"]["minor_units"] == 20000
 
 
 def test_a_limit_change_signed_for_another_mandate_is_refused(harness):
@@ -138,7 +138,7 @@ def test_a_properly_signed_limit_change_still_works(harness):
 
     assert response.status_code == 200, response.text
     assert response.json()["policy_version"] == 2
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["limit"]["minor_units"] == 10000
+    assert harness.read_mandate(mandate_id).json()["limit"]["minor_units"] == 10000
 
 
 def test_an_old_limit_authorization_cannot_be_replayed(harness):
@@ -163,7 +163,7 @@ def test_an_old_limit_authorization_cannot_be_replayed(harness):
 
     assert replayed.status_code == 403
     assert replayed.json()["reason_code"] == "limit_change_version_stale"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["limit"]["minor_units"] == 5000
+    assert harness.read_mandate(mandate_id).json()["limit"]["minor_units"] == 5000
 
 
 def test_a_limit_authorization_that_names_no_version_is_refused(harness):
@@ -185,7 +185,7 @@ def test_a_limit_authorization_that_names_no_version_is_refused(harness):
 
     assert response.status_code == 403
     assert response.json()["reason_code"] == "limit_change_version_stale"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["limit"]["minor_units"] == 20000
+    assert harness.read_mandate(mandate_id).json()["limit"]["minor_units"] == 20000
 
 
 def test_the_processor_switch_needs_the_operator_token(harness):

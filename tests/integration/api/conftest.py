@@ -46,6 +46,49 @@ class Harness:
     def operator(self) -> dict[str, str]:
         return {"X-Aval-Operator": self.OPERATOR_TOKEN}
 
+    def creation_token(
+        self, payload: dict[str, Any], *, kid: str | None = None, **claim_overrides: Any
+    ) -> str:
+        """The holder's signature over the mandate they are asking for.
+
+        Signed with the payload's own holder key, so a test that swaps the authorities
+        keeps producing a proof the mandate names. `claim_overrides` is how the attack
+        tests sign one set of terms and send another.
+        """
+        holder = next(
+            (
+                authority
+                for authority in payload["authorities"]
+                if authority.get("role") == "holder"
+            ),
+            None,
+        )
+        claims: dict[str, Any] = {
+            "purpose": "mandate_creation",
+            "principal_id": payload["principal"]["id"],
+            "allowed_merchant_ids": sorted(payload["allowed_merchant_ids"]),
+            "allowed_categories": sorted(payload["allowed_categories"]),
+            "limit_minor_units": payload["limit"]["minor_units"],
+            "currency": payload["limit"]["currency"],
+            "scale": payload["limit"]["scale"],
+            "ceiling_minor_units": (
+                None if payload.get("ceiling") is None else payload["ceiling"]["minor_units"]
+            ),
+            "max_uses": (
+                None if payload.get("usage_limit") is None else payload["usage_limit"]["max_uses"]
+            ),
+            "usage_window_seconds": (
+                None
+                if payload.get("usage_limit") is None
+                else payload["usage_limit"]["window_seconds"]
+            ),
+            "expires_at": payload["expires_at"],
+            "creation_nonce": f"mcn_{secrets.token_hex(8)}",
+        }
+        claims.update(claim_overrides)
+        signing_kid = kid or (holder["kid"] if holder else self.HOLDER_KID)
+        return sign_compact_jws(claims, self.custody, signing_kid)
+
     def mandate_payload(self, **overrides: Any) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "principal": {"id": "usr_marta", "display_name": "Marta Silva"},
@@ -65,6 +108,9 @@ class Harness:
             ],
         }
         payload.update(overrides)
+        # Signed last, over whatever the overrides made this mandate: a proof built
+        # from the defaults would refuse every test that changes a term.
+        payload.setdefault("creation_jws", self.creation_token(payload))
         return payload
 
     def create_mandate(self, **overrides: Any) -> str:
@@ -138,8 +184,32 @@ class Harness:
         params.update(overrides)
         return self.client.get("/escalations", params=params)
 
+    def read_mandate(
+        self, mandate_id: str, *, principal_id: str = "usr_marta", kid: str | None = None
+    ):
+        """One mandate, read the way its holder reads it: with a signature.
+
+        The id alone stopped being enough — it names limits, spend and history, and it
+        was never a secret."""
+        return self.client.get(
+            f"/mandates/{mandate_id}",
+            params={"authorization_jws": self.read_token(principal_id, kid=kid)},
+        )
+
+    def human_ledger(
+        self, mandate_id: str, *, principal_id: str = "usr_marta", kid: str | None = None
+    ):
+        return self.client.get(
+            "/ledger",
+            params={
+                "mandate_id": mandate_id,
+                "view": "human",
+                "authorization_jws": self.read_token(principal_id, kid=kid),
+            },
+        )
+
     def policy_version(self, mandate_id: str) -> int:
-        return int(self.client.get(f"/mandates/{mandate_id}").json()["policy_version"])
+        return int(self.read_mandate(mandate_id).json()["policy_version"])
 
     def limit_token(
         self,

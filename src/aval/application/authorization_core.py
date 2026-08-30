@@ -10,6 +10,7 @@ import json
 from uuid import uuid4
 
 from sqlalchemy import Engine, create_engine, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
 from aval.application.ports import AuthorizationProofIssuer, SettlementAdapter
@@ -39,6 +40,7 @@ from aval.infrastructure.sqlite.models import (
     checkout_intents,
     disputes,
     escalations,
+    mandate_creation_proofs,
     metadata,
     reservations,
     revocations,
@@ -228,8 +230,28 @@ class AuthorizationCore:
         self._settlement_adapter = settlement_adapter
         self._authorization_proof_issuer = authorization_proof_issuer
 
-    def register_mandate(self, mandate: Mandate) -> None:
+    def register_mandate(self, mandate: Mandate, *, creation_proof: str | None = None) -> None:
+        """Write a mandate into existence, with the holder's signature over its terms.
+
+        `creation_proof` is a compact JWS ES256 by a holder authority *of this mandate*
+        over the terms it is born with. It is verified against the very authorities
+        being registered — the key that will be able to revoke tomorrow is the key that
+        authorizes existence today — and it is verified before a single row is written,
+        so a refused creation leaves nothing behind.
+
+        Without it the trail could prove the agent stayed inside the mandate and could
+        not prove the person created it: naming a principal is not holding their key,
+        and an operator able to mint mandates in someone else's name would be an
+        operator able to spend other people's money by writing a row.
+
+        `creation_proof=None` is the in-process path the core's own tests use, the same
+        seam `replace_live_limit` has. Every HTTP caller goes through the signed path.
+        """
+
         def operation(connection) -> None:
+            proof: dict[str, Any] | None = None
+            if creation_proof is not None:
+                proof = self._verified_creation(creation_proof, mandate)
             policies = SqlitePolicyRepository(connection)
             if policies.latest_version(mandate.id) is not None:
                 # Registering is creation, not update. Writing the row again would reset
@@ -244,6 +266,27 @@ class AuthorizationCore:
             # change would also land on version 1, and nothing downstream could tell the
             # two policies apart.
             policies.record(mandate.id, mandate.limit, mandate.policy_version)
+            if proof is not None:
+                # Inside the same transaction as the mandate, so a nonce that loses the
+                # race takes the mandate down with it. The unique index is what makes a
+                # captured creation single-use; checking first and inserting later would
+                # leave the window this is written to close.
+                try:
+                    connection.execute(
+                        mandate_creation_proofs.insert().values(
+                            mandate_id=mandate.id,
+                            kid=proof["kid"],
+                            nonce=proof["nonce"],
+                            signed_jws=creation_proof,
+                            created_at=self._clock(),
+                        )
+                    )
+                except IntegrityError as error:
+                    raise ApprovalError(
+                        409,
+                        "mandate_creation_replayed",
+                        "Esta autorização de criação já foi usada.",
+                    ) from error
             SqliteAuditLedger(connection).append(
                 mandate_id=mandate.id,
                 event_type="mandate_registered",
@@ -260,6 +303,11 @@ class AuthorizationCore:
                     else mandate.ceiling.minor_units,
                     "expires_at": mandate.expires_at.astimezone(UTC).isoformat(),
                     "policy_version": mandate.policy_version,
+                    # Position 0 of the chain carries the signature the whole mandate
+                    # hangs from. An auditor reading the trail from the top starts at
+                    # the holder's own consent, not at someone's claim about it.
+                    "creation_proof": creation_proof,
+                    "creation_kid": None if proof is None else proof["kid"],
                 },
                 occurred_at=self._clock(),
             )
@@ -969,11 +1017,22 @@ class AuthorizationCore:
     def _holder_signatures(connection, mandate_id: str) -> list[dict[str, str]]:
         """Every artefact on this mandate that the holder's own key signed.
 
-        A person who says "I never created this mandate" is answered by their own
-        signature over its id — an approval, or a revocation. Nothing else here is
-        holder-signed, and pretending otherwise would be inventing evidence.
+        A person who says "I never created this mandate" is answered first by their
+        own signature over the terms it was born with, and after that by anything else
+        they signed about it — an approval, a revocation. Nothing here is inferred: a
+        mandate registered without a creation proof produces no genesis line, and the
+        verdict says `unproven` with the reason written.
         """
         found: list[dict[str, str]] = []
+        genesis = connection.execute(
+            select(mandate_creation_proofs.c.kid).where(
+                mandate_creation_proofs.c.mandate_id == mandate_id
+            )
+        ).scalar_one_or_none()
+        if genesis is not None:
+            # Position 0 of the chain, and the reason repudiation is answerable at all:
+            # the mandate exists because this key said so.
+            found.append({"kind": "mandate_creation", "kid": str(genesis)})
         for row in connection.execute(
             select(escalations.c.approval_jws)
             .where(
@@ -1239,6 +1298,74 @@ class AuthorizationCore:
             ) from error
         claims["kid"] = kid
         return claims
+
+    def _verified_creation(self, token: str, mandate: Mandate) -> dict[str, str]:
+        """The holder's signature over the mandate being created.
+
+        Verified against the authorities the mandate itself declares, so the proof is
+        self-rooted: whoever signs is a key this mandate names as its holder, and the
+        same key is what may later revoke it. A signature that is merely *valid* is not
+        enough — it has to be about these terms, so every field that decides what may be
+        spent is compared against the payload, the way a limit change is.
+
+        The instrument is deliberately not bound: the token is minted at the edge after
+        this signature exists, and the holder already gets a separate, signed way to
+        cancel a card without touching the mandate.
+        """
+        claims = self._verified_approval(token, mandate, kind="mandate_creation")
+        nonce = claims.get("creation_nonce")
+        if not isinstance(nonce, str) or not nonce:
+            raise ApprovalError(
+                422,
+                "mandate_creation_nonce_missing",
+                "A autorização de criação não carrega nonce.",
+            )
+        signed = (
+            claims.get("principal_id"),
+            claims.get("allowed_merchant_ids"),
+            claims.get("allowed_categories"),
+            claims.get("limit_minor_units"),
+            claims.get("currency"),
+            claims.get("scale"),
+            claims.get("ceiling_minor_units"),
+            claims.get("max_uses"),
+            claims.get("usage_window_seconds"),
+        )
+        declared = (
+            mandate.principal.id,
+            sorted(mandate.allowed_merchant_ids),
+            sorted(mandate.allowed_categories),
+            mandate.limit.minor_units,
+            mandate.limit.currency,
+            mandate.limit.scale,
+            None if mandate.ceiling is None else mandate.ceiling.minor_units,
+            None if mandate.usage_limit is None else mandate.usage_limit.max_uses,
+            None if mandate.usage_limit is None else mandate.usage_limit.window_seconds,
+        )
+        if signed != declared or not self._same_instant(
+            claims.get("expires_at"), mandate.expires_at
+        ):
+            raise ApprovalError(
+                403,
+                "mandate_creation_terms_mismatch",
+                "A autorização não descreve o mandato que está sendo criado.",
+            )
+        return {"kid": str(claims["kid"]), "nonce": nonce}
+
+    @staticmethod
+    def _same_instant(signed: Any, declared: datetime) -> bool:
+        """Validity is compared as an instant, never as a string: `...Z` and `...+00:00`
+        are the same moment, and a mandate refused over spelling would be a bug that
+        reads as a security refusal."""
+        if not isinstance(signed, str):
+            return False
+        try:
+            parsed = datetime.fromisoformat(signed.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed == declared
 
     @staticmethod
     def _require_approval_binds(claims: dict, escalation: Escalation, decision: str) -> None:

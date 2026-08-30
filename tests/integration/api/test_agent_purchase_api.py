@@ -45,7 +45,7 @@ def test_the_agent_finds_and_buys_a_flight_inside_the_mandate(harness):
     assert body["offer"]["item"]["sku"] == "FL-SAO-COR-0918"
     assert body["proposed_by"] == "rules"
     assert body["settlement_reference"].startswith("psp_")
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 11800
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 11800
 
 
 def test_the_agent_holds_its_own_target_price(harness):
@@ -54,7 +54,7 @@ def test_the_agent_holds_its_own_target_price(harness):
     response = instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $100")
 
     assert response.json()["outcome"] == "no_offer"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
 
 def test_the_agent_cannot_talk_its_way_past_the_ceiling(harness):
@@ -86,7 +86,7 @@ def test_buying_again_runs_into_the_accumulated_budget(harness):
     second = instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $150")
 
     assert second.json()["reason_code"] == "budget_exceeded"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 11800
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 11800
 
 
 def test_a_revoked_mandate_stops_the_agent(harness):
@@ -212,7 +212,7 @@ def test_a_prompt_injection_does_not_move_the_ceiling(harness, model):
     assert body["outcome"] == "rejected"
     assert body["reason_code"] == "mandate_ceiling"
     assert body["escalation_id"] is None, "a ceiling refusal must offer no approval path"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
 
 def test_the_model_shopping_at_a_merchant_outside_the_mandate_is_escalated(harness, model):
@@ -275,7 +275,7 @@ def test_an_instruction_that_names_nothing_asks_instead_of_buying(harness):
     assert body["outcome"] == "needs_clarification"
     assert body["reason_code"] == "instruction_ambiguous"
     assert body["evaluation_trace"] == []
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
 
 def test_answering_the_question_buys(harness):

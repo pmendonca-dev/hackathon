@@ -62,7 +62,7 @@ def test_denying_a_frequency_escalation_still_buys_nothing(harness: Harness) -> 
     )
     assert buy(harness, mandate_id, "first")["approved"] is True
     handle = buy(harness, mandate_id, "second")["escalation_id"]
-    spent_before = harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"]
+    spent_before = harness.read_mandate(mandate_id).json()["spent"]["minor_units"]
 
     response = decide(
         harness,
@@ -74,7 +74,7 @@ def test_denying_a_frequency_escalation_still_buys_nothing(harness: Harness) -> 
     )
 
     assert response.json()["capture"] is None
-    after = harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"]
+    after = harness.read_mandate(mandate_id).json()["spent"]["minor_units"]
     assert after == spent_before
 
 

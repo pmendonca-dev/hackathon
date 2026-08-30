@@ -206,5 +206,5 @@ def test_reading_a_single_mandate_by_its_random_id_still_works(harness: Harness)
     """
     mandate_id = harness.create_mandate()
 
-    assert harness.client.get(f"/mandates/{mandate_id}").status_code == 200
+    assert harness.read_mandate(mandate_id).status_code == 200
     assert harness.client.get("/escalations", params={"mandate_id": mandate_id}).status_code == 200

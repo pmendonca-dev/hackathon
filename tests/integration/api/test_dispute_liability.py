@@ -11,6 +11,11 @@ its own evidence would be worse than none.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+from aval.domain.entities import Mandate, Principal, RevocationAuthority
+from aval.domain.enums import RevocationRole
+from aval.domain.money import Money
 from aval.security.jws import sign_compact_jws
 
 
@@ -102,10 +107,31 @@ def test_a_purchase_the_holder_approved_by_signature_answers_to_the_holder(harne
 
 
 def test_a_mandate_with_no_holder_signature_cannot_refute_repudiation(harness):
-    """An honest limit, declared instead of hidden: mandate creation is not signed in
-    this build, so the trail can prove the agent stayed inside the mandate and cannot
-    prove the person created it."""
-    mandate_id = harness.create_mandate()
+    """Evidence is never inferred. Every mandate created over HTTP is now born signed,
+    so this is the one shape that cannot refute a repudiation: a mandate registered
+    in-process, with no proof behind it. The verdict says so instead of assuming."""
+    mandate_id = "mandate_unsigned_genesis"
+    harness.runtime.core.register_mandate(
+        Mandate(
+            id=mandate_id,
+            principal=Principal(id="usr_marta", display_name="Marta Silva"),
+            allowed_merchant_ids=frozenset({"vuelaya"}),
+            allowed_categories=frozenset({"travel"}),
+            limit=Money(20000, "USD", 2),
+            expires_at=datetime(2026, 9, 30, 23, 59, 59, tzinfo=UTC),
+            policy_version=1,
+            revocation_metadata={"revocation_id": "rev_unsigned", "epoch": 0},
+            authorities=(
+                RevocationAuthority(
+                    id="ath_unsigned",
+                    kid=harness.HOLDER_KID,
+                    role=RevocationRole.HOLDER,
+                    public_jwk=harness.custody.public_jwk(harness.HOLDER_KID),
+                    allowed_scopes=frozenset({"mandate"}),
+                ),
+            ),
+        )
+    )
     reservation_id = buy(harness, mandate_id).json()["reservation_id"]
 
     verdict = dispute(harness, reservation_id)["liability"]

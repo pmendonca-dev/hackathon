@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from aval.security.jws import sign_compact_jws
+from aval.security.mandate_creation import mandate_creation_claims
 from aval.security.key_custody import KeyCustodyService
 
 HOLDER_KID = "smoke_holder_k1"
@@ -42,27 +43,35 @@ class Smoke:
             self.failures += 1
 
     def create_mandate(self) -> str:
-        response = self.client.post(
-            "/mandates",
-            json={
-                "principal": {"id": "usr_marta", "display_name": "Marta Silva"},
-                "allowed_merchant_ids": ["vuelaya"],
-                "allowed_categories": ["travel"],
-                "limit": {"minor_units": 20000, "currency": "USD", "scale": 2},
-                "ceiling": {"minor_units": 50000, "currency": "USD", "scale": 2},
-                "expires_at": (datetime.now(UTC) + timedelta(days=7)).isoformat(),
-                "authorities": [
-                    {
-                        "kid": HOLDER_KID,
-                        "role": "holder",
-                        "public_jwk": self.custody.public_jwk(HOLDER_KID),
-                        "allowed_scopes": ["mandate"],
-                    }
-                ],
-            },
+        body = {
+            "principal": {"id": "usr_marta", "display_name": "Marta Silva"},
+            "allowed_merchant_ids": ["vuelaya"],
+            "allowed_categories": ["travel"],
+            "limit": {"minor_units": 20000, "currency": "USD", "scale": 2},
+            "ceiling": {"minor_units": 50000, "currency": "USD", "scale": 2},
+            "expires_at": (datetime.now(UTC) + timedelta(days=7)).isoformat(),
+            "authorities": [
+                {
+                    "kid": HOLDER_KID,
+                    "role": "holder",
+                    "public_jwk": self.custody.public_jwk(HOLDER_KID),
+                    "allowed_scopes": ["mandate"],
+                }
+            ],
+        }
+        # The mandate is born signed: the same key that revokes it below is the key
+        # that authorized it to exist, and the trail keeps that signature at position 0.
+        body["creation_jws"] = sign_compact_jws(
+            mandate_creation_claims(body), self.custody, HOLDER_KID
         )
+        response = self.client.post("/mandates", json=body)
         response.raise_for_status()
         return response.json()["mandate_id"]
+
+    def read_token(self) -> str:
+        """The holder's authorization to see their own record. Sight is scoped by the
+        key, so the id alone stopped being enough to read a person's budget."""
+        return sign_compact_jws({"principal_id": "usr_marta"}, self.custody, HOLDER_KID)
 
     def buy(self, mandate_id: str, instruction: str) -> dict:
         return self.client.post(
@@ -181,7 +190,12 @@ class Smoke:
             )
 
         def policy_version() -> int:
-            return int(self.client.get(f"/mandates/{mandate_id}").json()["policy_version"])
+            return int(
+                self.client.get(
+                    f"/mandates/{mandate_id}",
+                    params={"authorization_jws": self.read_token()},
+                ).json()["policy_version"]
+            )
 
         before_change = policy_version()
         stale_token = signed_limit(50_000, before_change)
@@ -266,7 +280,12 @@ class Smoke:
         )
 
         human = self.client.get(
-            "/ledger", params={"mandate_id": mandate_id, "view": "human"}
+            "/ledger",
+            params={
+                "mandate_id": mandate_id,
+                "view": "human",
+                "authorization_jws": self.read_token(),
+            },
         ).json()
         merchant = self.client.get(
             "/ledger", params={"merchant_id": "vuelaya", "view": "merchant"}

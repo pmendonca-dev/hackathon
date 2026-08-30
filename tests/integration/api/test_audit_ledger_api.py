@@ -118,7 +118,7 @@ def test_a_tampered_trail_stops_verifying(harness):
 def test_the_human_view_shows_the_purchase_and_what_is_left(harness):
     mandate_id = settled_purchase(harness)
 
-    response = harness.client.get("/ledger", params={"mandate_id": mandate_id, "view": "human"})
+    response = harness.human_ledger(mandate_id)
 
     body = response.json()
     assert body["mandate"]["remaining"]["minor_units"] == 7000
@@ -169,7 +169,7 @@ def test_an_unknown_view_is_refused(harness):
 def test_a_mandate_snapshot_reports_the_live_budget(harness):
     mandate_id = settled_purchase(harness)
 
-    response = harness.client.get(f"/mandates/{mandate_id}")
+    response = harness.read_mandate(mandate_id)
 
     body = response.json()
     assert body["status"] == "ACTIVE"
@@ -183,13 +183,13 @@ def test_the_snapshot_budget_follows_the_live_limit(harness):
 
     harness.change_limit(mandate_id, 15000)
 
-    body = harness.client.get(f"/mandates/{mandate_id}").json()
+    body = harness.read_mandate(mandate_id).json()
     assert body["limit"]["minor_units"] == 15000
     assert body["remaining"]["minor_units"] == 2000
 
 
 def test_an_unknown_mandate_has_no_trail_to_read(harness):
-    assert harness.client.get("/ledger", params={"mandate_id": "nope", "view": "human"}).status_code == 404
+    assert harness.human_ledger("nope").status_code == 404
     assert harness.client.get("/ledger/verify", params={"mandate_id": "nope"}).status_code == 404
 
 

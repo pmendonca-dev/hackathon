@@ -19,7 +19,7 @@ def test_a_declined_settlement_frees_the_budget_again(harness):
 
     assert response.json()["approved"] is False
     assert response.json()["reason_code"] == "settlement_declined"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
 
 def test_an_unreachable_processor_is_not_a_refusal(harness):
@@ -32,7 +32,7 @@ def test_an_unreachable_processor_is_not_a_refusal(harness):
 
     assert response.status_code == 502
     assert response.json()["reason_code"] == "settlement_unreachable"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 13000
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 13000
 
 
 def test_reconciling_after_the_processor_returns_settles_what_was_held(harness):
@@ -45,7 +45,7 @@ def test_reconciling_after_the_processor_returns_settles_what_was_held(harness):
 
     assert reconciled.json()["settled"] == 1
     assert reconciled.json()["released"] == 0
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 13000
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 13000
     entries = harness.client.get(
         "/ledger", params={"mandate_id": mandate_id, "view": "auditor"}
     ).json()["entries"]
@@ -61,7 +61,7 @@ def test_reconciling_a_purchase_the_processor_refused_frees_the_budget(harness):
     reconciled = harness.client.post("/reconcile", headers=harness.operator)
 
     assert reconciled.json()["released"] == 1
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
 
 def test_reconciling_twice_settles_nothing_the_second_time(harness):

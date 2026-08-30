@@ -221,8 +221,19 @@ export class AuthorizationGateway {
     );
   }
 
-  readMandate(mandateId: string): Promise<MandateView> {
-    return this.#request(`/mandates/${encodeURIComponent(mandateId)}`);
+  /**
+   * One mandate, read with the holder's signature.
+   *
+   * The id is not a secret — it is in the receipt, in the address bar and in any
+   * screenshot — so sight is proved by the key that holds the mandate, the same way
+   * revoking it is. The signature is over `{principal_id}` and reaches exactly the
+   * mandates that key could already end.
+   */
+  readMandate(mandateId: string, authorizationJws: string): Promise<MandateView> {
+    return this.#request(
+      `/mandates/${encodeURIComponent(mandateId)}` +
+        `?authorization_jws=${encodeURIComponent(authorizationJws)}`,
+    );
   }
 
   listEscalations(
@@ -235,8 +246,16 @@ export class AuthorizationGateway {
     );
   }
 
-  humanLedger(mandateId: string): Promise<{ mandate: MandateView; entries: LedgerEntry[] }> {
-    return this.#request(`/ledger?view=human&mandate_id=${encodeURIComponent(mandateId)}`);
+  /** The person's own record: limits, spend and what was bought. Holder-signed for the
+   *  same reason `readMandate` is — the auditor view stays open, this one does not. */
+  humanLedger(
+    mandateId: string,
+    authorizationJws: string,
+  ): Promise<{ mandate: MandateView; entries: LedgerEntry[] }> {
+    return this.#request(
+      `/ledger?view=human&mandate_id=${encodeURIComponent(mandateId)}` +
+        `&authorization_jws=${encodeURIComponent(authorizationJws)}`,
+    );
   }
 
   auditorLedger(

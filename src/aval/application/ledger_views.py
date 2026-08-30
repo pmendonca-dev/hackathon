@@ -83,6 +83,10 @@ HUMAN_VISIBLE_DETAIL = frozenset(
         # neither a success nor a refusal, and the person paying is the one who has to
         # be told that — a screen that rounds *unknown* to either is lying to them.
         "payment_state",
+        # Which of the holder's keys signed this mandate into existence. The proof
+        # itself stays with the auditor: the person needs to recognise their own key,
+        # not to re-verify a signature their browser produced.
+        "creation_kid",
     }
 )
 

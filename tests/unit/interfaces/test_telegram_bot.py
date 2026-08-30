@@ -75,8 +75,11 @@ class FakeAval:
         if route.startswith("/mandates/") and route.endswith("/limit"):
             return self._replace_limit(route.split("/")[2], body)
         if route.startswith("/mandates/"):
-            mandate = self.mandates.get(route.split("/")[2])
-            return (200, mandate) if mandate else (404, {"reason_code": "mandate_not_found"})
+            mandate_id = route.split("/")[2]
+            mandate = self.mandates.get(mandate_id)
+            if mandate is None:
+                return 404, {"reason_code": "mandate_not_found"}
+            return self._read(mandate_id, params, mandate)
         if route == "/escalations":
             if params.get("mandate_id") not in self.mandates:
                 return 404, {"reason_code": "mandate_not_found"}
@@ -93,7 +96,11 @@ class FakeAval:
             item = self.escalations.get(route.split("/")[2])
             return (200, item) if item else (404, {"reason_code": "escalation_not_found"})
         if route == "/ledger":
-            mandate = self.mandates[params["mandate_id"]]
+            mandate_id = params["mandate_id"]
+            mandate = self.mandates[mandate_id]
+            refusal = self._read(mandate_id, params, mandate)
+            if refusal[0] != 200:
+                return refusal
             return 200, {
                 "view": "human",
                 "mandate": mandate,
@@ -160,6 +167,18 @@ class FakeAval:
             "revocation_id": "rev_1",
             "instrument_revocation_scope": scope,
         }
+
+    def _read(self, mandate_id: str, params: dict[str, str], mandate: dict[str, Any]):
+        """Sight is authority here too: the live API refuses a read that no key signed,
+        so a bot that stopped signing its reads would go blind against the real server
+        while every fixture kept passing."""
+        token = params.get("authorization_jws")
+        if not token:
+            return 403, {"reason_code": "read_authorization_required"}
+        claims = self._verify(mandate_id, token)
+        if claims.get("principal_id") != mandate["principal"]["id"]:
+            return 403, {"reason_code": "read_forbidden"}
+        return 200, mandate
 
     def _verify(self, mandate_id: str, token: str) -> dict[str, Any]:
         """Exactly what the core does: the holder's published key, or nothing."""
@@ -900,12 +919,15 @@ def test_a_chat_without_the_card_scope_refuses_rather_than_guessing_one(world) -
     bot.handle_update(message("/start"))
     mandate_id = identities.get(MARTA).mandate_id
     identities.bind_mandate(MARTA, mandate_id, instrument_scope=None)
-    signed_before = len(aval.verified_claims)
+    # Authority-bearing signatures only. Reads are signed too now, and counting those
+    # would make this test pass or fail on how many screens the bot happened to draw.
+    authority_before = [claims for claims in aval.verified_claims if "mandate_id" in claims]
 
     bot.handle_update(tap(f"{views.CALLBACK_CARD_CONFIRM}:{mandate_id}"))
 
     assert "escopo do cartão" in api.last_text
-    assert len(aval.verified_claims) == signed_before, "nothing was signed"
+    authority_after = [claims for claims in aval.verified_claims if "mandate_id" in claims]
+    assert authority_after == authority_before, "nothing was signed"
 
 
 def test_an_incomplete_request_is_answered_with_a_question_and_buttons(world) -> None:

@@ -99,12 +99,51 @@ def list_mandates(
     )
 
 
-@router.get("/mandates/{mandate_id}", response_model=MandateView)
-def read_mandate(request: Request, mandate_id: str) -> MandateView:
-    snapshot = runtime_of(request).core.snapshot(mandate_id)
+def require_read_authority(request: Request, mandate_id: str, authorization_jws: str | None):
+    """Sight of one mandate, proved by a key that mandate names.
+
+    The same rule the listing already applied, now on the surfaces that answer for a
+    single mandate. `mandate_id` was never a secret — it travels in the agent's receipt,
+    in the address bar and in any screenshot — so the id alone was handing out a
+    person's budget, spend, merchants and purchase history.
+
+    The refusals are deliberately different from the listing's empty answer: here the
+    caller already names one mandate, so "you may not read this" leaks nothing that
+    naming it did not.
+    """
+    core = runtime_of(request).core
+    snapshot = core.snapshot(mandate_id)
     if snapshot is None:
         raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
-    return mandate_view(snapshot)
+    if not authorization_jws:
+        raise ApiError(
+            403,
+            "read_authorization_required",
+            "A leitura deste registro exige autorização assinada pelo titular.",
+        )
+    try:
+        readable = set(core.mandates_readable_by(authorization_jws, snapshot.mandate.principal.id))
+    except ValueError as error:
+        raise ApiError(
+            422, "read_authorization_malformed", "Autorização de leitura malformada."
+        ) from error
+    if mandate_id not in readable:
+        raise ApiError(
+            403, "read_forbidden", "Esta chave não é autoridade sobre este mandato."
+        )
+    return snapshot
+
+
+@router.get("/mandates/{mandate_id}", response_model=MandateView)
+def read_mandate(
+    request: Request,
+    mandate_id: str,
+    authorization_jws: str | None = Query(
+        default=None,
+        description="Compact JWS ES256 by a holder authority of this mandate.",
+    ),
+) -> MandateView:
+    return mandate_view(require_read_authority(request, mandate_id, authorization_jws))
 
 
 @router.get("/ledger")
@@ -113,6 +152,10 @@ def read_ledger(
     view: Literal["human", "merchant", "auditor"] = Query(...),
     mandate_id: str | None = None,
     merchant_id: str | None = None,
+    authorization_jws: str | None = Query(
+        default=None,
+        description="Holder signature, required by the human view and by nothing else.",
+    ),
 ) -> dict[str, Any]:
     core = runtime_of(request).core
     if view == "merchant":
@@ -149,6 +192,10 @@ def read_ledger(
     entries = core.timeline_for(mandate_id)
 
     if view == "human":
+        # The auditor view stays open on purpose — it is the transparency surface, and
+        # what it publishes is the chain a judge is invited to check. The person's own
+        # record is a different thing: it names limits, spend and what they bought.
+        require_read_authority(request, mandate_id, authorization_jws)
         return {
             "view": "human",
             "mandate": mandate_view(snapshot).model_dump(mode="json"),

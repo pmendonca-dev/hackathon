@@ -56,10 +56,10 @@ def test_the_card_is_read_once_and_only_four_digits_survive(harness):
     which card they authorized."""
     mandate_id, scope = with_card(harness)
 
-    view = harness.client.get(f"/mandates/{mandate_id}").json()
+    view = harness.read_mandate(mandate_id).json()
 
     assert view["instrument_label"] == "•••• 4242"
-    assert CARD not in harness.client.get(f"/mandates/{mandate_id}").text
+    assert CARD not in harness.read_mandate(mandate_id).text
     # The token is authority, so it is never served — only the agent needs it.
     assert "instrument_token" not in view
     assert scope.startswith("instrument:vt_")
@@ -82,7 +82,7 @@ def test_a_capture_presenting_another_instrument_is_refused(harness):
     response = buy(harness, mandate_id, instrument_id="vt_algum_outro_token")
 
     assert response.json()["reason_code"] == "instrument_not_in_mandate"
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["spent"]["minor_units"] == 0
+    assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
 
 
 def test_a_capture_presenting_no_instrument_is_refused_not_waved_through(harness):
@@ -131,7 +131,7 @@ def test_cancelling_the_card_leaves_the_agent_alive_and_the_budget_intact(harnes
 
     assert cancel_card(harness, mandate_id, scope).status_code == 200
 
-    view = harness.client.get(f"/mandates/{mandate_id}").json()
+    view = harness.read_mandate(mandate_id).json()
     assert view["status"] == "ACTIVE", "cancelling a card must not end the mandate"
     assert view["spent"]["minor_units"] == 13000, "settled purchases are not undone"
 
@@ -225,11 +225,11 @@ def test_a_cancelled_card_stops_reading_as_the_way_this_mandate_pays(harness):
     card is a contradiction a judge reads as a bug.
     """
     mandate_id, scope = with_card(harness)
-    assert harness.client.get(f"/mandates/{mandate_id}").json()["instrument_revoked"] is False
+    assert harness.read_mandate(mandate_id).json()["instrument_revoked"] is False
 
     cancel_card(harness, mandate_id, scope)
 
-    view = harness.client.get(f"/mandates/{mandate_id}").json()
+    view = harness.read_mandate(mandate_id).json()
     assert view["instrument_revoked"] is True
     assert view["instrument_label"] == "•••• 4242", "o titular ainda precisa saber qual cartão era"
     assert view["status"] == "ACTIVE"

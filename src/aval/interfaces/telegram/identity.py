@@ -87,6 +87,19 @@ class IdentityStore:
     def known_chats(self) -> tuple[int, ...]:
         return tuple(self._identities)
 
+    def for_mandate(self, mandate_id: str) -> ChatIdentity | None:
+        """The chat whose key holds this mandate, if this bot holds it at all.
+
+        Reading a mandate is now proved by a holder signature, and this is how the bot
+        knows which of its keys to sign with. A mandate no chat here holds gets no
+        signature — and the runtime answers that with a refusal, which is the honest
+        outcome: the bot cannot show a record it has no authority over.
+        """
+        for identity in self._identities.values():
+            if identity.mandate_id == mandate_id:
+                return identity
+        return None
+
     def enrol(self, chat_id: int, display_name: str) -> ChatIdentity:
         """Mint a holder key for a chat that has never spoken before."""
         existing = self._identities.get(chat_id)
