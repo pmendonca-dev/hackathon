@@ -80,6 +80,16 @@ class PurchaseView:
     escalation_id: str | None
     reservation_id: str | None
     settlement_reference: str | None
+    proposed_by: str = "rules"
+    rationale: str | None = None
+
+
+@dataclass(frozen=True)
+class OfferView:
+    sku: str
+    title: str
+    total: MoneyView
+    category: str
 
 
 @dataclass(frozen=True)
@@ -164,10 +174,15 @@ class AvalGateway:
         entries.sort(key=lambda item: item.sequence, reverse=True)
         return ReceiptView(_mandate(payload["mandate"]), tuple(entries[:limit]))
 
-    def catalogue(self) -> Sequence[tuple[str, MoneyView, str]]:
+    def catalogue(self) -> Sequence[OfferView]:
         payload = self._call("GET", ENDPOINTS["offers"])
         return tuple(
-            (item["item"]["title"], _money(item["total"]), item["item"]["category"])
+            OfferView(
+                sku=str(item["item"]["sku"]),
+                title=str(item["item"]["title"]),
+                total=_money(item["total"]),
+                category=str(item["item"]["category"]),
+            )
             for item in payload.get("offers", [])
         )
 
@@ -225,6 +240,8 @@ class AvalGateway:
             escalation_id=payload.get("escalation_id"),
             reservation_id=payload.get("reservation_id"),
             settlement_reference=payload.get("settlement_reference"),
+            proposed_by=str(payload.get("proposed_by", "rules")),
+            rationale=payload.get("rationale"),
         )
 
     def decide(self, identity: ChatIdentity, escalation: EscalationView, *, approve: bool) -> str:

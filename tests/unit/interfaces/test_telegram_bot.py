@@ -57,7 +57,13 @@ class FakeAval:
         if route == "/health":
             return 200, {"status": "ok"}
         if route == "/merchant/offers":
-            return 200, {"offers": [_offer("Voo Córdoba", 13000, "travel")]}
+            return 200, {
+                "offers": [
+                    _offer("São Paulo → Córdoba, direto", 13000, "travel", sku="FL-COR"),
+                    _offer("São Paulo → Córdoba, executiva", 90000, "travel", sku="FL-EXEC"),
+                    _offer("Hotel Córdoba Centro", 22000, "lodging", sku="HT-COR"),
+                ]
+            }
         if route == "/mandates" and method == "POST":
             return 201, self._create_mandate(body)
         if route.startswith("/mandates/") and route.endswith("/revocation"):
@@ -234,11 +240,11 @@ class _Payload:
         return None
 
 
-def _offer(title: str, minor: int, category: str) -> dict[str, Any]:
+def _offer(title: str, minor: int, category: str, sku: str = "SKU") -> dict[str, Any]:
     return {
         "offer_id": "off_1",
         "merchant_id": "vuelaya",
-        "item": {"sku": "SKU", "title": title, "category": category},
+        "item": {"sku": sku, "title": title, "category": category},
         "total": {"minor_units": minor, "currency": "USD", "scale": 2},
     }
 
@@ -673,3 +679,79 @@ def test_a_crafted_tap_cannot_dispute_someone_elses_purchase(world) -> None:
 
     assert aval.disputes == [], "a stranger must not open a dispute on this purchase"
     assert "não é sua" in api.last_text
+
+
+# ── someone arriving for the first time ─────────────────────────────────────
+def test_the_welcome_leads_with_a_way_to_buy(world) -> None:
+    """The first screen has to answer "what do I do now" without being read twice."""
+    bot, api, _, _ = world
+    bot.handle_update(message("/start"))
+
+    view = api.sent[0][1]
+    first_button = view.buttons[0][0][0]
+    assert "comprar" in first_button.lower(), "buying is the point, so it is the first button"
+    assert "Ver o que posso comprar" in view.text
+
+
+def test_the_catalogue_button_asks_what_the_person_wants(world) -> None:
+    bot, api, _, _ = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(tap("cat:_"))
+
+    view = api.edited[-1][2]
+    assert "O que você quer?" in view.text
+    labels = [label for row in view.buttons for label, _ in row]
+    # Two destinations, not three offers: the person names a wish, the agent picks.
+    assert len(labels) == 2
+    assert any("Córdoba" in label and "US$ 130,00" in label for label in labels)
+
+
+def test_the_catalogue_marks_what_the_mandate_will_refuse(world) -> None:
+    bot, api, _, _ = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(tap("cat:_"))
+
+    lines = [line for line in api.edited[-1][2].text.splitlines() if line.startswith(("✈️", "🏨"))]
+    flight = next(line for line in lines if "✈️" in line)
+    stay = next(line for line in lines if "🏨" in line)
+    assert "⚠️" not in flight, "US$ 130 fits the US$ 200 budget"
+    assert "⚠️" in stay, "lodging is outside the mandate categories"
+
+
+def test_buying_from_the_catalogue_goes_through_the_agent(world) -> None:
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    api.sent.clear()
+    api.edited.clear()
+
+    bot.handle_update(tap("buy:travel-cordoba"))
+
+    sent = [body for path, body in aval.received if path == "POST /agent/purchase"][-1]
+    assert sent["instruction"] == "voo para Córdoba", "the button feeds the agent an intent"
+    assert "Comprado" in api.edited[0][2].text
+    # A purchase produces more than one screen; the extras must not be swallowed.
+    assert "Extrato" in api.sent[-1][1].text
+
+
+def test_a_stale_offer_button_says_so_instead_of_failing(world) -> None:
+    bot, api, _, _ = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(tap("buy:travel-atlantida"))
+
+    assert "saiu do catálogo" in api.edited[-1][2].text
+
+
+def test_a_revoked_mandate_offers_no_way_to_buy(world) -> None:
+    bot, api, _, identities = world
+    bot.handle_update(message("/start"))
+    mandate_id = identities.get(MARTA).mandate_id
+    bot.handle_update(tap(f"rvm:{mandate_id}"))
+    api.sent.clear()
+
+    bot.handle_update(message("/mandato"))
+
+    labels = [label for row in api.sent[0][1].buttons for label, _ in row]
+    assert not any("comprar" in label.lower() for label in labels)
