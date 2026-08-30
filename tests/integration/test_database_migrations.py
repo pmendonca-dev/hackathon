@@ -14,6 +14,7 @@ from aval.application.authorization_core import AuthorizationCore
 from aval.infrastructure.sqlite.engine import create_sqlite_engine
 from aval.infrastructure.sqlite.mandate_repository import SqliteMandateRepository
 from aval.infrastructure.sqlite.models import idempotency_records
+from aval.infrastructure.sqlite.schema_stamp import stamp_head_if_unmanaged
 
 
 LEGACY_SCHEMA_HEAD = "0012_merge_watches_and_browser_sessions"
@@ -252,3 +253,49 @@ def test_core_does_not_create_schema_for_an_explicit_persistent_engine(tmp_path)
     AuthorizationCore(clock=lambda: datetime(2026, 8, 29, tzinfo=UTC), engine=engine)
 
     assert "mandates" not in inspect(engine).get_table_names()
+
+
+def _app_created_database(tmp_path: Path) -> Path:
+    """Boot the composition root exactly as production does, and let it build the schema."""
+    database_path = tmp_path / "app-created.sqlite3"
+    completed = subprocess.run(
+        [sys.executable, "-c", "from aval.main import create_app; create_app()"],
+        capture_output=True,
+        check=False,
+        cwd=_project_root(),
+        env=os.environ.copy() | {"AVAL_DATABASE_PATH": str(database_path)},
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return database_path
+
+
+def test_app_created_database_is_stamped_so_upgrade_head_still_runs(tmp_path):
+    """`create_all` builds head's schema; leaving it unlabelled makes the next start fail.
+
+    Production starts with `alembic upgrade head` and only then opens the port. A
+    database the application built for itself carries every table and, unstamped,
+    sends that upgrade back to `0001_initial_core` — which dies on `table mandates
+    already exists`. The API never listens, and the Telegram bot never starts.
+    """
+    database_path = _app_created_database(tmp_path)
+
+    assert _alembic_version(database_path) == CURRENT_HEAD
+
+    command.upgrade(_alembic_config(database_path), "head")
+
+    assert _alembic_version(database_path) == CURRENT_HEAD
+
+
+def test_stamping_never_relabels_a_database_that_is_genuinely_behind(tmp_path):
+    """Only an unmanaged schema may be labelled; a real revision must survive untouched."""
+    database_path = tmp_path / "behind.sqlite3"
+    command.upgrade(_alembic_config(database_path), LEGACY_SCHEMA_HEAD)
+
+    engine = create_sqlite_engine(database_path)
+    try:
+        assert stamp_head_if_unmanaged(engine) is None
+    finally:
+        engine.dispose()
+
+    assert _alembic_version(database_path) == LEGACY_SCHEMA_HEAD

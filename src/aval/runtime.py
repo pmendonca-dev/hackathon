@@ -22,6 +22,7 @@ from aval.infrastructure.stripe_psp import StripeConfigError, StripePspAdapter
 from aval.infrastructure.sqlite.engine import create_sqlite_engine
 from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
 from aval.infrastructure.sqlite.models import metadata
+from aval.infrastructure.sqlite.schema_stamp import stamp_head_if_unmanaged
 from aval.infrastructure.sqlite.transaction import run_in_write_transaction
 from aval.discovery.core_client import CoreDiscoveryClient
 from aval.discovery.openai_web import OfferDiscovery, build_discovery
@@ -177,6 +178,9 @@ def build_runtime(
     # database, not the application. The composition root is where that schema is put in
     # place, which is what main's own entrypoint did before this was factored out.
     metadata.create_all(engine)
+    # And say so, so `alembic upgrade head` does not later replay 0001 against the
+    # tables that were just built and refuse to start the API at all.
+    stamp_head_if_unmanaged(engine)
     custody = custody or KeyCustodyService()
     operator_authority_seed = resolve_operator_authority_seed()
     custody_seed = resolve_custody_seed()

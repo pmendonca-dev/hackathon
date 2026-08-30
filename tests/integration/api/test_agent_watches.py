@@ -70,7 +70,7 @@ def test_a_watch_whose_price_has_not_fallen_buys_nothing_and_keeps_waiting(harne
     """
     mandate_id = harness.create_mandate()
 
-    created = register(harness, mandate_id, "um voo para Córdoba abaixo de $100")
+    created = register(harness, mandate_id, "a flight to Córdoba under $100")
     assert created.status_code == 201, created.text
 
     fired = tick(harness, mandate_id).json()
@@ -90,7 +90,7 @@ def test_when_the_price_falls_the_agent_buys_with_nobody_typing(harness):
     world changed rather than because somebody asked.
     """
     mandate_id = harness.create_mandate()
-    register(harness, mandate_id, "um voo para Córdoba abaixo de $100")
+    register(harness, mandate_id, "a flight to Córdoba under $100")
     assert tick(harness, mandate_id).json()["fired"] == [], "nada caiu ainda"
 
     drop_price(harness, CHEAPEST_CORDOBA, 9500)
@@ -107,7 +107,7 @@ def test_when_the_price_falls_the_agent_buys_with_nobody_typing(harness):
 def test_a_watch_that_bought_does_not_buy_again(harness):
     """A standing order is spent once. Ticking twice must not charge twice."""
     mandate_id = harness.create_mandate()
-    register(harness, mandate_id, "um voo para Córdoba abaixo de $100")
+    register(harness, mandate_id, "a flight to Córdoba under $100")
     drop_price(harness, CHEAPEST_CORDOBA, 9500)
     tick(harness, mandate_id)
 
@@ -132,7 +132,7 @@ def test_a_revoked_mandate_stops_the_agent_that_nobody_is_watching(harness):
     where revocation only worked while a human was typing would not have revocation.
     """
     mandate_id = harness.create_mandate()
-    register(harness, mandate_id, "um voo para Córdoba abaixo de $100")
+    register(harness, mandate_id, "a flight to Córdoba under $100")
 
     revoke(harness, mandate_id)
     drop_price(harness, CHEAPEST_CORDOBA, 9500)
@@ -150,7 +150,7 @@ def test_a_watch_never_outlives_the_mandate_it_depends_on(harness):
     """Authority first: a standing order cannot be scheduled past its own permission."""
     mandate_id = harness.create_mandate()
 
-    created = register(harness, mandate_id, "um voo para Córdoba abaixo de $100").json()
+    created = register(harness, mandate_id, "a flight to Córdoba under $100").json()
 
     mandate = harness.read_mandate(mandate_id).json()
     assert created["expires_at"][:19] == mandate["expires_at"][:19]
@@ -159,7 +159,7 @@ def test_a_watch_never_outlives_the_mandate_it_depends_on(harness):
 def test_an_expired_watch_closes_without_buying(harness):
     """The person said *until the end of the month*. After that the agent stops."""
     mandate_id = harness.create_mandate()
-    register(harness, mandate_id, "um voo para Córdoba abaixo de $100")
+    register(harness, mandate_id, "a flight to Córdoba under $100")
     drop_price(harness, CHEAPEST_CORDOBA, 9500)
 
     # The demo clock is a judge surface; moving it past the mandate expiry ages the
@@ -177,7 +177,7 @@ def test_ticking_one_mandate_never_runs_another_persons_watches(harness):
     """One bot serves a room of judges. A tick is scoped to the mandate it names."""
     mine = harness.create_mandate()
     theirs = harness.create_mandate()
-    register(harness, theirs, "um voo para Córdoba abaixo de $100")
+    register(harness, theirs, "a flight to Córdoba under $100")
     drop_price(harness, CHEAPEST_CORDOBA, 9500)
 
     assert tick(harness, mine).json()["fired"] == []

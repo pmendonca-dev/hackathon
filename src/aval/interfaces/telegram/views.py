@@ -125,17 +125,17 @@ def welcome(*, display_name: str, mandate: MandateView) -> View:
     for the first time needs the next move to be obvious and one tap away.
     """
     lines = [
-        f"<b>AVAL</b> — olá, {escape(display_name)}.",
+        f"<b>AVAL</b> — hello, {escape(display_name)}.",
         "",
-        "Você acabou de ganhar um <b>agente de compras</b>. Ele compra sozinho,",
-        "mas só até onde você autorizou — e você pode cortar a qualquer momento.",
+        "You just got a <b>shopping agent</b>. It buys on its own,",
+        "but only as far as you authorized — and you can cut it off at any moment.",
         "",
-        "<b>👉 Toque em «Ver o que posso comprar» para começar.</b>",
+        "<b>👉 Tap «See what I can buy» to get started.</b>",
         "",
-        "Ou peça em português: <code>/comprar um voo pra Córdoba</code>",
+        "Or just ask: <code>/buy a flight to Córdoba</code>",
         "",
         "─────────────",
-        "<b>Seu mandato</b>, assinado com a sua chave:",
+        "<b>Your mandate</b>, signed with your own key:",
         _mandate_body(mandate),
     ]
     return View("\n".join(lines), _mandate_buttons(mandate, primary=True))
@@ -149,7 +149,7 @@ def mandate_card(mandate: MandateView, watches: Sequence[WatchView] = ()) -> Vie
     """
     body = _mandate_body(mandate)
     if watches:
-        body += "\n\n\U0001f440 <b>Vigiando</b>\n" + "\n".join(
+        body += "\n\n\U0001f440 <b>Watching</b>\n" + "\n".join(
             f"· <i>{escape(watch.instruction)}</i>" for watch in watches
         )
     return View(body, _mandate_buttons(mandate))
@@ -160,17 +160,17 @@ def _mandate_body(mandate: MandateView) -> str:
     days = max((mandate.expires_at - datetime.now(UTC)).days, 0)
     lines = [
         f"{badge} <b>{escape(mandate.status)}</b> · <code>{escape(mandate.id[:20])}</code>",
-        f"Orçamento: <b>{format_money(mandate.remaining)}</b> livres de {format_money(mandate.limit)}",
+        f"Budget: <b>{format_money(mandate.remaining)}</b> free of {format_money(mandate.limit)}",
     ]
     if mandate.ceiling is not None:
-        lines.append(f"Teto por compra: {format_money(mandate.ceiling)} — <i>ninguém atravessa</i>")
+        lines.append(f"Ceiling per purchase: {format_money(mandate.ceiling)} — <i>nobody gets past it</i>")
     if mandate.max_uses is not None:
         # Frequency reads as authority, not as a counter: what is left, and over what
         # window. The core escalates the use past this — it is not a wall, it is a
         # point where the person is asked again.
         left = max(mandate.max_uses - mandate.uses_in_window, 0)
         lines.append(
-            f"Frequência: <b>{left} de {mandate.max_uses}</b> compra(s) livres "
+            f"Frequency: <b>{left} of {mandate.max_uses}</b> purchase(s) left "
             f"{_window_label(mandate.window_seconds)}"
         )
     if mandate.instrument_label is not None:
@@ -180,36 +180,36 @@ def _mandate_body(mandate: MandateView) -> str:
         # stops claiming the mandate can pay, because it cannot.
         card = escape(mandate.instrument_label)
         lines.append(
-            f"Cartão: <b>{card}</b> — \U0001f534 <b>cancelado</b>, nada pode ser pago"
+            f"Card: <b>{card}</b> — \U0001f534 <b>cancelled</b>, nothing can be paid"
             if mandate.instrument_revoked
-            else f"Paga com: <b>{card}</b>"
+            else f"Pays with: <b>{card}</b>"
         )
     lines += [
-        f"Pode comprar: {escape(', '.join(mandate.categories))} em {escape(', '.join(mandate.merchants))}",
-        f"Vence em {days} dia(s) · política v{mandate.policy_version} · epoch {mandate.revocation_epoch}",
+        f"May buy: {escape(', '.join(mandate.categories))} at {escape(', '.join(mandate.merchants))}",
+        f"Expires in {days} day(s) · policy v{mandate.policy_version} · epoch {mandate.revocation_epoch}",
     ]
     return "\n".join(lines)
 
 
 def _window_label(window_seconds: int | None) -> str:
-    """`2592000` becomes `nos últimos 30 dias` — a person counts in days, not seconds."""
+    """`2592000` becomes `in the last 30 days` — a person counts in days, not seconds."""
     if not window_seconds:
-        return "na janela do mandato"
+        return "in the mandate window"
     days = window_seconds // 86_400
     if days >= 1:
-        return f"nos últimos {days} dia(s)"
-    return f"nas últimas {max(window_seconds // 3_600, 1)} hora(s)"
+        return f"in the last {days} day(s)"
+    return f"in the last {max(window_seconds // 3_600, 1)} hour(s)"
 
 
 def _mandate_buttons(mandate: MandateView, *, primary: bool = False) -> tuple[Row, ...]:
     """Buying is the point; the rest is housekeeping, so it comes first."""
     rows: list[Row] = []
     if mandate.status == "ACTIVE":
-        rows.append((("🛒 Ver o que posso comprar", f"{CALLBACK_CATALOGUE}:_"),))
+        rows.append((("🛒 See what I can buy", f"{CALLBACK_CATALOGUE}:_"),))
     rows.append(
         (
-            ("🔄 Atualizar", f"{CALLBACK_MANDATE}:{mandate.id}"),
-            ("🧾 Extrato", f"{CALLBACK_RECEIPT}:{mandate.id}"),
+            ("🔄 Refresh", f"{CALLBACK_MANDATE}:{mandate.id}"),
+            ("🧾 Statement", f"{CALLBACK_RECEIPT}:{mandate.id}"),
         )
     )
     if mandate.status == "ACTIVE":
@@ -217,9 +217,9 @@ def _mandate_buttons(mandate: MandateView, *, primary: bool = False) -> tuple[Ro
         # card stops the money, the revocation stops the authority.
         if mandate.instrument_label is not None and not mandate.instrument_revoked:
             rows.append(
-                (("💳 Cancelar o cartão", f"{CALLBACK_CARD_MENU}:{mandate.id}"),)
+                (("💳 Cancel the card", f"{CALLBACK_CARD_MENU}:{mandate.id}"),)
             )
-        label = "🛑 Revogar a autoridade" if primary else "🛑 Revogar"
+        label = "🛑 Revoke the authority" if primary else "🛑 Revoke"
         rows.append(((label, f"{CALLBACK_REVOKE_MENU}:{mandate.id}"),))
     return tuple(rows)
 
@@ -232,7 +232,7 @@ def _why(result: PurchaseView) -> str:
     """
     if not result.rationale:
         return ""
-    who = "🤖 O agente escolheu" if result.proposed_by == "llm" else "⚙️ Escolha por regra"
+    who = "🤖 The agent chose" if result.proposed_by == "llm" else "⚙️ Chosen by rule"
     return f"\n\n<b>{who}:</b> <i>{escape(result.rationale)}</i>"
 
 
@@ -242,37 +242,37 @@ def purchase_result(result: PurchaseView) -> View:
     price = f" — <b>{format_money(result.amount)}</b>" if result.amount else ""
     buttons: tuple[Row, ...] = ()
     if result.outcome == "settled":
-        head = f"✅ <b>Comprado.</b>\n{what}{price}"
-        tail = f"\nReferência: <code>{escape(result.settlement_reference or '—')}</code>"
+        head = f"✅ <b>Bought.</b>\n{what}{price}"
+        tail = f"\nReference: <code>{escape(result.settlement_reference or '—')}</code>"
         if result.reservation_id:
             # The bonus the case asks for: a purchase can be denied later, and the
             # trail — not anyone's word — is what answers it.
             buttons = (
-                (("⚠️ Não reconheço esta compra", f"{CALLBACK_DISPUTE}:{result.reservation_id}"),),
+                (("⚠️ I do not recognize this purchase", f"{CALLBACK_DISPUTE}:{result.reservation_id}"),),
             )
     elif result.outcome == "in_doubt":
         # The third state, and the reason it has to exist here too: this branch used to
         # fall through to "Recusado", telling the person their money was free when it
         # was in fact still held. Refused and unanswered are opposite facts about the
         # budget, and the one screen a buyer actually reads had them merged.
-        head = f"🕓 <b>Em confirmação.</b>\n{what}{price}"
+        head = f"🕓 <b>Awaiting confirmation.</b>\n{what}{price}"
         tail = (
-            "\nO processador ainda não respondeu. O orçamento segue retido "
-            "até a reconciliação — nada foi liberado e nada foi entregue."
+            "\nThe processor has not answered yet. The budget stays held "
+            "until reconciliation — nothing was released and nothing was delivered."
         )
     elif result.outcome == "awaiting_human":
-        head = f"🟡 <b>Precisa de você.</b>\n{what}{price}"
-        tail = "\nO agente parou aqui. Decida abaixo."
+        head = f"🟡 <b>Needs you.</b>\n{what}{price}"
+        tail = "\nThe agent stopped here. Decide below."
     elif result.outcome == "needs_clarification":
         # Answered by the catalogue screen, which carries the buttons. This branch
         # exists so a caller that renders only the result still says the right thing.
-        head = "\U0001f914 <b>Preciso saber mais.</b>"
+        head = "\U0001f914 <b>I need to know more.</b>"
         tail = ""
     elif result.outcome == "no_offer":
-        head = "🔍 <b>Nada no catálogo atende.</b>"
-        tail = "\nVeja /catalogo e tente com outras palavras."
+        head = "🔍 <b>Nothing in the catalogue matches.</b>"
+        tail = "\nSee /catalog and try other words."
     else:
-        head = f"⛔ <b>Recusado.</b>\n{what}{price}"
+        head = f"⛔ <b>Refused.</b>\n{what}{price}"
         tail = ""
     return View(
         f"{head}\n\n{escape(result.human_summary)}\n<i>{escape(result.reason_code)}</i>{tail}",
@@ -284,20 +284,20 @@ def escalation_card(escalation: EscalationView) -> View:
     return View(
         "\n".join(
             [
-                "🟡 <b>Aprovação necessária</b>",
+                "🟡 <b>Approval required</b>",
                 "",
-                f"<b>{format_money(escalation.amount)}</b> em {escape(escalation.merchant)}"
+                f"<b>{format_money(escalation.amount)}</b> at {escape(escalation.merchant)}"
                 f" · {escape(escalation.category)}",
                 f"Handle: <code>{escape(escalation.id)}</code>",
                 "",
                 f"<i>{escape(escalation.reason_code)}</i>",
-                "Sua decisão vai assinada com a sua chave.",
+                "Your decision goes signed with your own key.",
             ]
         ),
         (
             (
-                ("✅ Aprovar", f"{CALLBACK_APPROVE}:{escalation.id}"),
-                ("❌ Recusar", f"{CALLBACK_DENY}:{escalation.id}"),
+                ("✅ Approve", f"{CALLBACK_APPROVE}:{escalation.id}"),
+                ("❌ Refuse", f"{CALLBACK_DENY}:{escalation.id}"),
             ),
         ),
     )
@@ -305,7 +305,7 @@ def escalation_card(escalation: EscalationView) -> View:
 
 def escalation_list(escalations: Sequence[EscalationView]) -> tuple[View, ...]:
     if not escalations:
-        return (View("Nada aguardando você. 🟢"),)
+        return (View("Nothing waiting on you. 🟢"),)
     return tuple(escalation_card(item) for item in escalations)
 
 
@@ -313,15 +313,15 @@ def revoke_menu(mandate: MandateView) -> View:
     return View(
         "\n".join(
             [
-                "🛑 <b>Revogar o mandato?</b>",
+                "🛑 <b>Revoke the mandate?</b>",
                 "",
-                "É irreversível e vale a partir da próxima decisão do núcleo.",
-                "Compras já liquidadas não são desfeitas — a autoridade acaba, o histórico fica.",
+                "It is irreversible and applies from the core's next decision on.",
+                "Settled purchases are not undone — the authority ends, the history stays.",
             ]
         ),
         (
-            (("🛑 Revogar agora", f"{CALLBACK_REVOKE_CONFIRM}:{mandate.id}"),),
-            (("← Voltar", f"{CALLBACK_MANDATE}:{mandate.id}"),),
+            (("🛑 Revoke now", f"{CALLBACK_REVOKE_CONFIRM}:{mandate.id}"),),
+            (("← Back", f"{CALLBACK_MANDATE}:{mandate.id}"),),
         ),
     )
 
@@ -331,29 +331,29 @@ def cancel_card_menu(mandate: MandateView) -> View:
     return View(
         "\n".join(
             [
-                f"💳 <b>Cancelar {escape(mandate.instrument_label or 'o cartão')}?</b>",
+                f"💳 <b>Cancel {escape(mandate.instrument_label or 'the card')}?</b>",
                 "",
-                "O <b>mandato continua ativo</b>: o agente segue podendo decidir,",
-                "mas fica sem com o que pagar. A próxima compra é recusada",
-                "por <code>instrument_revoked</code>, não por revogação.",
+                "The <b>mandate stays active</b>: the agent can still decide,",
+                "but it is left with nothing to pay with. The next purchase is refused",
+                "with <code>instrument_revoked</code>, not by revocation.",
                 "",
-                "Compras já liquidadas não são desfeitas.",
+                "Settled purchases are not undone.",
             ]
         ),
         (
-            (("💳 Cancelar o cartão", f"{CALLBACK_CARD_CONFIRM}:{mandate.id}"),),
-            (("← Voltar", f"{CALLBACK_MANDATE}:{mandate.id}"),),
+            (("💳 Cancel the card", f"{CALLBACK_CARD_CONFIRM}:{mandate.id}"),),
+            (("← Back", f"{CALLBACK_MANDATE}:{mandate.id}"),),
         ),
     )
 
 
 def receipt(view: ReceiptView) -> View:
     lines = [
-        "🧾 <b>Extrato</b>",
+        "🧾 <b>Statement</b>",
         "",
         _mandate_body(view.mandate),
         "",
-        "<b>Trilha auditável</b>",
+        "<b>Auditable trail</b>",
     ]
     for entry in view.entries:
         lines.append(
@@ -368,26 +368,26 @@ def receipt(view: ReceiptView) -> View:
 def _chain_line(chain: ChainView) -> str:
     """An extract that says it is auditable without proving it is only a claim."""
     if chain.intact:
-        return f"🔗 <i>Trilha íntegra — {chain.checked} evento(s) conferidos agora.</i>"
-    where = "desconhecido" if chain.broken_at is None else f"#{chain.broken_at}"
+        return f"🔗 <i>Trail intact — {chain.checked} event(s) checked just now.</i>"
+    where = "unknown" if chain.broken_at is None else f"#{chain.broken_at}"
     return (
-        f"⛓️‍💥 <b>TRILHA VIOLADA</b> no evento {where} — {chain.checked} conferidos. "
-        "Nada aqui serve como prova."
+        f"⛓️‍💥 <b>TRAIL TAMPERED</b> at event {where} — {chain.checked} checked. "
+        "Nothing here serves as proof."
     )
 
 
 _DISPUTE_VERDICT = {
     "MANDATE_HELD": (
         "🟢",
-        "O mandato sustenta a compra",
-        "Existe prova de autorização assinada ligando esta compra ao seu mandato. "
-        "Numa contestação real é o emissor que responde ao titular, não o merchant.",
+        "The mandate holds up the purchase",
+        "There is signed authorization proof tying this purchase to your mandate. "
+        "In a real chargeback it is the issuer who answers to the holder, not the merchant.",
     ),
     "MANDATE_FAILED": (
         "🔴",
-        "Nada vincula essa compra ao seu mandato",
-        "Não há prova de autorização para esta reserva. A cobrança não se sustenta "
-        "e o estorno é seu por direito.",
+        "Nothing ties that purchase to your mandate",
+        "There is no authorization proof for this reservation. The charge does not hold up "
+        "and the refund is yours by right.",
     ),
 }
 
@@ -403,28 +403,28 @@ def agent_card(
     still cannot revoke, approve or move a limit.
     """
     lines = [
-        "🪪 <b>Quem é quem nesta compra</b>",
+        "🪪 <b>Who is who in this purchase</b>",
         "",
-        f"👤 <b>Você, o titular</b> — {escape(holder_name)}",
-        f"    <code>{escape(principal_id)}</code> · chave <code>{escape(holder_kid)}</code>",
-        "    Assina: revogar, aprovar, mudar limite.",
+        f"👤 <b>You, the holder</b> — {escape(holder_name)}",
+        f"    <code>{escape(principal_id)}</code> · key <code>{escape(holder_kid)}</code>",
+        "    Signs: revoke, approve, change the limit.",
         "",
     ]
     if profile is None:
-        lines.append("🤖 <b>O agente</b> — perfil indisponível no núcleo agora.")
+        lines.append("🤖 <b>The agent</b> — profile unavailable from the core right now.")
     else:
-        badge = "✅ confiável" if profile.trusted else "⛔ não confiável"
+        badge = "✅ trusted" if profile.trusted else "⛔ not trusted"
         lines += [
-            f"🤖 <b>O agente</b> — {badge}",
-            f"    <code>{escape(profile.agent_id)}</code> · chave <code>{escape(profile.kid)}</code>",
-            "    Assina: as requisições de compra. Nada mais.",
+            f"🤖 <b>The agent</b> — {badge}",
+            f"    <code>{escape(profile.agent_id)}</code> · key <code>{escape(profile.kid)}</code>",
+            "    Signs: the purchase requests. Nothing else.",
         ]
         if profile.profile_url:
             lines.append(f"    <i>{escape(profile.profile_url)}</i>")
     lines += [
         "",
-        "<i>Chaves diferentes. O agente não consegue revogar o próprio mandato, "
-        "e um agente que se passe por este é recusado na porta.</i>",
+        "<i>Different keys. The agent cannot revoke its own mandate, "
+        "and an agent impersonating this one is refused at the door.</i>",
     ]
     return View("\n".join(lines))
 
@@ -437,7 +437,7 @@ def dispute_verdict(dispute: DisputeView) -> View:
     """
     badge, headline, meaning = _DISPUTE_VERDICT.get(
         dispute.status,
-        ("⚪", "Disputa aberta", "O veredito ainda não saiu. A trilha é quem responde."),
+        ("⚪", "Dispute open", "The verdict is not out yet. The trail is what answers."),
     )
     lines = [
         f"{badge} <b>{escape(headline)}</b>",
@@ -468,7 +468,7 @@ class Wish:
 
 
 def _destination(title: str) -> str:
-    """`São Paulo → Córdoba, 17 set · direto` becomes `Córdoba`."""
+    """`São Paulo → Córdoba, 17 Sep · nonstop` becomes `Córdoba`."""
     tail = title.split("→")[-1] if "→" in title else title
     return tail.split(",")[0].split("·")[0].strip()
 
@@ -483,8 +483,8 @@ def _slugify(text: str) -> str:
 # `travel` or `lodging` and nothing else. Offering a button for a category it
 # cannot express would produce a guaranteed `no_offer` — a dead button.
 _WISH_SHAPES = {
-    "travel": ("✈️", "voo para {}"),
-    "lodging": ("🏨", "hotel em {}"),
+    "travel": ("✈️", "flight to {}"),
+    "lodging": ("🏨", "hotel in {}"),
 }
 
 
@@ -538,10 +538,10 @@ def catalogue(items: Sequence[OfferView], *, mandate: MandateView | None = None)
     first. Free text still works and is where the adversarial story lives.
     """
     lines = [
-        "<b>O que você quer?</b>",
+        "<b>What do you want?</b>",
         "",
-        "Diga o destino — <b>quem escolhe a passagem é o seu agente</b>,",
-        "e o mandato decide se ele pode.",
+        "Name the destination — <b>your agent is the one who picks the fare</b>,",
+        "and the mandate decides whether it may.",
         "",
     ]
     rows: list[Row] = []
@@ -553,8 +553,8 @@ def catalogue(items: Sequence[OfferView], *, mandate: MandateView | None = None)
     for wish in sorted(wishes(items), key=lambda w: (not _reachable(w, mandate), w.category, w.cheapest.minor_units)):
         mark = "" if _reachable(wish, mandate) else " ⚠️"
         lines.append(
-            f"{wish.label} — a partir de <b>{format_money(wish.cheapest)}</b>"
-            f" <i>({wish.count} opções)</i>{mark}"
+            f"{wish.label} — from <b>{format_money(wish.cheapest)}</b>"
+            f" <i>({wish.count} options)</i>{mark}"
         )
         rows.append(
             (
@@ -566,9 +566,9 @@ def catalogue(items: Sequence[OfferView], *, mandate: MandateView | None = None)
         )
     lines += [
         "",
-        "⚠️ o agente vai tentar mesmo assim — e o mandato vai barrar.",
+        "⚠️ the agent will try anyway — and the mandate will bar it.",
         "",
-        "Também aceita texto livre: <code>/comprar um voo barato pra Córdoba</code>",
+        "Free text works too: <code>/buy a cheap flight to Córdoba</code>",
     ]
     return View("\n".join(lines), tuple(rows))
 
@@ -588,7 +588,7 @@ def clarification(
     lines = [
         "\U0001f914 <b>" + escape(result.human_summary) + "</b>",
         "",
-        "<i>O agente parou aqui em vez de escolher por você.</i>",
+        "<i>The agent stopped here instead of choosing for you.</i>",
         "",
     ]
     rows: list[Row] = []
@@ -599,7 +599,7 @@ def clarification(
         wishes(items), key=lambda w: (not _reachable(w, mandate), w.category, w.cheapest.minor_units)
     ):
         mark = "" if _reachable(wish, mandate) else " ⚠️"
-        lines.append(f"{wish.label} — a partir de <b>{format_money(wish.cheapest)}</b>{mark}")
+        lines.append(f"{wish.label} — from <b>{format_money(wish.cheapest)}</b>{mark}")
         rows.append(
             (
                 (
@@ -608,7 +608,7 @@ def clarification(
                 ),
             )
         )
-    lines += ["", "Ou responda em texto: <code>/comprar um voo pra Córdoba</code>"]
+    lines += ["", "Or answer in text: <code>/buy a flight to Córdoba</code>"]
     return View("\n".join(lines), tuple(rows))
 
 
@@ -622,17 +622,17 @@ def watch_offer(instruction: str, mandate: MandateView) -> View:
     return View(
         "\n".join(
             [
-                "\U0001f50d <b>Nada atende a esse preço agora.</b>",
+                "\U0001f50d <b>Nothing meets that price right now.</b>",
                 "",
-                f"Você pediu: <i>{escape(instruction)}</i>",
+                f"You asked for: <i>{escape(instruction)}</i>",
                 "",
-                "Posso <b>ficar vigiando</b> e comprar sozinho assim que cair —",
-                "dentro do seu mandato, que decide cada tentativa.",
+                "I can <b>keep watching</b> and buy on my own the moment it drops —",
+                "inside your mandate, which decides every attempt.",
                 "",
-                "Você não precisa fazer mais nada.",
+                "You do not have to do anything else.",
             ]
         ),
-        ((("\U0001f440 Vigiar e comprar quando cair", f"{CALLBACK_WATCH}:{mandate.id}"),),),
+        ((("\U0001f440 Watch and buy when it drops", f"{CALLBACK_WATCH}:{mandate.id}"),),),
     )
 
 
@@ -641,13 +641,13 @@ def watch_registered(watch: WatchView) -> View:
     return View(
         "\n".join(
             [
-                "\U0001f440 <b>Vigiando.</b>",
+                "\U0001f440 <b>Watching.</b>",
                 "",
                 f"<i>{escape(watch.instruction)}</i>",
-                f"Até {days} dia(s), ou até você revogar.",
+                f"For up to {days} day(s), or until you revoke.",
                 "",
-                "Se cair, eu compro e te aviso aqui — <b>sem você pedir</b>.",
-                "Se o mandato não permitir na hora, eu não compro e te conto.",
+                "If it drops, I buy and tell you here — <b>without you asking</b>.",
+                "If the mandate does not allow it then, I do not buy and I tell you.",
             ]
         )
     )
@@ -658,7 +658,7 @@ def watch_registered(watch: WatchView) -> View:
 # charged the person's own test-mode card. Saying so every time is the difference between
 # a demonstration and a claim that is not true.
 NO_EXTERNAL_ORDER = (
-    "Não enviei pedido ao vendedor — a AVAL achou a página e cobrou o seu cartão de teste."
+    "I placed no order with the seller — AVAL found the page and charged your test card."
 )
 
 
@@ -677,14 +677,14 @@ def shopping_preview(shopping: Any) -> View:
     return View(
         "\n".join(
             [
-                "\U0001f50d <b>E vou ficar procurando isto:</b>",
+                "\U0001f50d <b>And I will keep looking for this:</b>",
                 "",
                 f"<i>{escape(shopping.query)}</i>",
-                f"Até <b>{cap}</b>, por <b>{shopping.watch_days} dia(s)</b>.",
+                f"Up to <b>{cap}</b>, for <b>{shopping.watch_days} day(s)</b>.",
                 "",
-                "Se eu achar algo que caiba, <b>compro sozinho</b> e te aviso aqui — "
-                "sem perguntar de novo. Se o mandato não permitir na hora, não compro "
-                "e te conto.",
+                "If I find something that fits, <b>I buy it on my own</b> and tell you here — "
+                "without asking again. If the mandate does not allow it then, I do not buy "
+                "and I tell you.",
                 f"<i>{NO_EXTERNAL_ORDER}</i>",
             ]
         )
@@ -696,12 +696,12 @@ def shopping_armed(shopping: Any) -> View:
     return View(
         "\n".join(
             [
-                "\U0001f440 <b>Vigilância ligada.</b>",
+                "\U0001f440 <b>Watch armed.</b>",
                 "",
                 f"<i>{escape(shopping.query)}</i>",
-                f"Por {shopping.watch_days} dia(s), ou até você revogar.",
+                f"For {shopping.watch_days} day(s), or until you revoke.",
                 "",
-                "Use /mandato para ver o que está armado e /revogar para desligar.",
+                "Use /mandate to see what is armed and /revoke to turn it off.",
             ]
         )
     )
@@ -725,30 +725,30 @@ def watch_event(payload: Mapping[str, Any]) -> View:
         price = f" — <b>{format_money(money)}</b>"
     # The link is the whole point of a real-offer watch: it lets the person check the
     # claim instead of believing it.
-    link = f'\U0001f517 <a href="{escape(url)}">Ver a página</a>' if url else None
+    link = f'\U0001f517 <a href="{escape(url)}">See the page</a>' if url else None
 
     if outcome == "watch_expired":
-        return View("\U0001f440 <b>Parei de vigiar.</b>\n\nO prazo acabou e eu não comprei nada.")
+        return View("\U0001f440 <b>I stopped watching.</b>\n\nThe window ran out and I bought nothing.")
 
     if outcome == "settled":
         lines = [
-            f"✅ <b>Comprei sozinho.</b>\n{title}{price}",
+            f"✅ <b>I bought it on my own.</b>\n{title}{price}",
             "",
-            f"Vendedor: {seller}",
+            f"Seller: {seller}",
         ]
         if link:
             lines.append(link)
         reference = payload.get("settlement_reference")
         if reference:
-            lines.append(f"Referência: <code>{escape(str(reference))}</code>")
+            lines.append(f"Reference: <code>{escape(str(reference))}</code>")
         lines += ["", f"<i>{NO_EXTERNAL_ORDER}</i>"]
         return View("\n".join(lines))
 
-    summary = escape(str(payload.get("human_summary") or "A compra não foi autorizada."))
-    lines = [f"\U0001f6d1 <b>Tentei e não comprei.</b>\n{title}{price}", "", summary]
+    summary = escape(str(payload.get("human_summary") or "The purchase was not authorized."))
+    lines = [f"\U0001f6d1 <b>I tried and did not buy.</b>\n{title}{price}", "", summary]
     if link:
         lines.append(link)
-    lines.append(f"Motivo do núcleo: <code>{escape(outcome or '—')}</code>")
+    lines.append(f"Core's reason: <code>{escape(outcome or '—')}</code>")
     return View("\n".join(lines))
 
 
@@ -762,8 +762,8 @@ def watch_fired(watch: WatchView) -> View:
     what = escape(watch.instruction)
     if watch.purchase is None:
         return View(
-            f"\U0001f440 <b>Parei de vigiar.</b>\n<i>{what}</i>\n\nO prazo acabou "
-            "e eu não comprei nada."
+            f"\U0001f440 <b>I stopped watching.</b>\n<i>{what}</i>\n\nThe window ran out "
+            "and I bought nothing."
         )
     result = watch.purchase
     title = escape(result.title or "—")
@@ -772,33 +772,33 @@ def watch_fired(watch: WatchView) -> View:
         return View(
             "\n".join(
                 [
-                    f"\u2705 <b>Comprei sozinho.</b>\n{title}{price}",
+                    f"\u2705 <b>I bought it on my own.</b>\n{title}{price}",
                     "",
-                    f"O preço caiu e estava dentro do seu mandato. <i>{what}</i>",
-                    f"Referência: <code>{escape(result.settlement_reference or '—')}</code>",
+                    f"The price dropped and it was inside your mandate. <i>{what}</i>",
+                    f"Reference: <code>{escape(result.settlement_reference or '—')}</code>",
                 ]
             )
             + _why(result),
             (
-                (("\u26a0\ufe0f Não reconheço esta compra", f"{CALLBACK_DISPUTE}:{result.reservation_id}"),),
+                (("\u26a0\ufe0f I do not recognize this purchase", f"{CALLBACK_DISPUTE}:{result.reservation_id}"),),
             )
             if result.reservation_id
             else (),
         )
     if result.outcome == "awaiting_human":
         return View(
-            f"\U0001f7e1 <b>O preço caiu e eu parei em você.</b>\n{title}{price}\n\n"
+            f"\U0001f7e1 <b>The price dropped and I stopped at you.</b>\n{title}{price}\n\n"
             f"{escape(result.human_summary)}\n<i>{escape(result.reason_code)}</i>"
         )
     return View(
         "\n".join(
             [
-                f"\u26d4 <b>O preço caiu e eu tentei comprar. Não comprei.</b>\n{title}{price}",
+                f"\u26d4 <b>The price dropped and I tried to buy. I did not.</b>\n{title}{price}",
                 "",
                 escape(result.human_summary),
                 f"<i>{escape(result.reason_code)}</i>",
                 "",
-                "A tentativa está na trilha. Sua autoridade é que decidiu, não eu.",
+                "The attempt is on the trail. Your authority decided this, not me.",
             ]
         )
     )
@@ -808,29 +808,29 @@ def help_text() -> View:
     return View(
         "\n".join(
             [
-                "<b>Comandos</b>",
-                "<i>Ou simplesmente diga o que o agente pode fazer — eu pergunto o que "
-                "faltar e te mostro o mandato para confirmar.</i>",
+                "<b>Commands</b>",
+                "<i>Or simply say what the agent may do — I ask for whatever is "
+                "missing and show you the mandate to confirm.</i>",
                 "",
-                "/comprar &lt;pedido&gt; — o agente tenta comprar em texto livre",
-                "/mandato — orçamento vivo e estado",
-                "/catalogo — o que está à venda",
-                "/aprovacoes — compras aguardando você",
-                "/extrato — recibos e trilha auditável",
-                "/cartao — cadastra o cartão que paga (na página do processador)",
-                "/limite &lt;valor&gt; — muda o orçamento (assinado por você)",
-                "/novo &lt;regra&gt; — refaz o mandato: <i>/novo hotel até 300 por 7 dias, 2x</i>",
-                "/revogar — encerra a autoridade do agente",
-                "/agente — quem é o agente, e por que não é você",
-                "/status — saúde do backend",
-                "/meuid — o id deste chat",
+                "/buy &lt;request&gt; — the agent tries to buy, in free text",
+                "/mandate — live budget and state",
+                "/catalog — what is on sale",
+                "/approvals — purchases waiting on you",
+                "/statement — receipts and the auditable trail",
+                "/card — register the card that pays (on the processor's page)",
+                "/limit &lt;amount&gt; — change the budget (signed by you)",
+                "/new &lt;rule&gt; — remake the mandate: <i>/new hotel up to 300 for 7 days, 2x</i>",
+                "/revoke — end the agent's authority",
+                "/agent — who the agent is, and why it is not you",
+                "/status — backend health",
+                "/myid — this chat's id",
             ]
         )
     )
 
 
 def signed_note(action: str, message: str) -> View:
-    return View(f"✅ <b>{escape(action)}</b>\n{escape(message)}\n\n<i>assinado pela sua chave</i>")
+    return View(f"✅ <b>{escape(action)}</b>\n{escape(message)}\n\n<i>signed by your own key</i>")
 
 
 @dataclass(frozen=True)
@@ -847,16 +847,24 @@ class MandateSpec:
     max_uses: int | None
 
 
+# English is what the bot now speaks, and the Portuguese words stay because a person
+# who typed them yesterday should not be told today that the sentence means nothing.
 _CATEGORY_WORDS = {
-    "lodging": ("hotel", "hospedagem", "pousada", "lodging", "diaria", "diária", "noite"),
-    "travel": ("voo", "viagem", "passagem", "travel", "flight", "aereo", "aéreo"),
+    "lodging": (
+        "hotel", "lodging", "stay", "night", "inn",
+        "hospedagem", "pousada", "diaria", "diária", "noite",
+    ),
+    "travel": (
+        "flight", "travel", "fare", "trip", "air",
+        "voo", "viagem", "passagem", "aereo", "aéreo",
+    ),
 }
-_DAYS = re.compile(r"(\d{1,3})\s*(?:dia|dias|day|days)")
-_USES = re.compile(r"(\d{1,2})\s*(?:x|vez|vezes|compras?|times?)")
+_DAYS = re.compile(r"(\d{1,3})\s*(?:day|days|dia|dias)")
+_USES = re.compile(r"(\d{1,2})\s*(?:x|times?|purchases?|vez|vezes|compras?)")
 
 
 def parse_mandate_spec(raw: str, *, defaults) -> MandateSpec | None:
-    """Read `hospedagem até 300 por 7 dias, 2x`.
+    """Read `lodging up to 300 for 7 days, 2x`.
 
     Deliberately forgiving and deliberately partial: whatever the sentence does not
     say falls back to the configured default, so a person can change one thing
@@ -880,7 +888,7 @@ def parse_mandate_spec(raw: str, *, defaults) -> MandateSpec | None:
     days = _DAYS.search(folded)
     uses = _USES.search(folded)
     # Days and uses are counts, not money: they are struck from the text before the
-    # amount is read, or `por 7 dias` would be a seven-real budget.
+    # amount is read, or `for 7 days` would be a seven-dollar budget.
     without_counts = _USES.sub(" ", _DAYS.sub(" ", folded))
     amount = None
     money = re.search(r"\d[\d.,]*", without_counts)
@@ -902,26 +910,26 @@ def new_mandate_preview(spec: MandateSpec, current: MandateView | None) -> View:
     what was authorized, and it is far too destructive to happen on a typo.
     """
     lines = [
-        "📝 <b>Novo mandato — confira antes</b>",
+        "📝 <b>New mandate — check it first</b>",
         "",
-        f"Pode comprar: <b>{escape(', '.join(spec.categories))}</b>",
-        f"Orçamento: <b>{format_money(spec.limit)}</b>",
-        f"Vale por: <b>{spec.valid_for_days} dia(s)</b>",
-        f"Frequência: <b>{spec.max_uses}</b> compra(s) na janela"
+        f"May buy: <b>{escape(', '.join(spec.categories))}</b>",
+        f"Budget: <b>{format_money(spec.limit)}</b>",
+        f"Valid for: <b>{spec.valid_for_days} day(s)</b>",
+        f"Frequency: <b>{spec.max_uses}</b> purchase(s) per window"
         if spec.max_uses
-        else "Frequência: <b>sem limite de vezes</b>",
-        "Método: <b>nenhum ainda</b> — cadastre em /cartao",
+        else "Frequency: <b>no cap on how many times</b>",
+        "Method: <b>none yet</b> — register one with /card",
     ]
     if current is not None and current.status == "ACTIVE":
         lines += [
             "",
-            f"⚠️ Isto <b>revoga</b> o mandato em vigor (<code>{escape(current.id[:20])}</code>) "
-            "e emite outro. As compras já liquidadas continuam válidas — mas o cartão "
-            "não vem junto: o mandato novo nasce sem meio de pagamento.",
+            f"⚠️ This <b>revokes</b> the mandate in force (<code>{escape(current.id[:20])}</code>) "
+            "and issues another. Settled purchases stay valid — but the card does not "
+            "come along: the new mandate is born with no means of payment.",
         ]
     return View(
         "\n".join(lines),
-        ((("✅ Emitir este mandato", f"{CALLBACK_NEW_CONFIRM}:{(current.id if current else '_')}"),),),
+        ((("✅ Issue this mandate", f"{CALLBACK_NEW_CONFIRM}:{(current.id if current else '_')}"),),),
     )
 
 
@@ -935,15 +943,15 @@ def card_form(session: CardSessionView) -> View:
     return View(
         "\n".join(
             [
-                "💳 <b>Cadastrar o cartão</b>",
+                "💳 <b>Register the card</b>",
                 "",
-                "Abra o link e digite o cartão <b>na página do processador</b>.",
-                "O número não passa por este chat, nem por mim, nem fica salvo aqui.",
+                "Open the link and type the card <b>on the processor's page</b>.",
+                "The number never passes through this chat, or me, and is not stored here.",
                 "",
-                f'<a href="{escape(session.url)}">👉 Abrir a página segura</a>',
+                f'<a href="{escape(session.url)}">👉 Open the secure page</a>',
                 "",
-                "<i>Quando terminar, volte aqui e mande /cartao de novo — eu confiro "
-                "e vinculo ao seu mandato, assinado com a sua chave.</i>",
+                "<i>When you are done, come back and send /card again — I check it "
+                "and bind it to your mandate, signed with your own key.</i>",
             ]
         )
     )
@@ -951,23 +959,23 @@ def card_form(session: CardSessionView) -> View:
 
 def card_pending() -> View:
     return View(
-        "⏳ Ainda não vi um cartão cadastrado nessa página.\n"
-        "<i>Termine o cadastro e mande /cartao de novo.</i>"
+        "⏳ I have not seen a card registered on that page yet.\n"
+        "<i>Finish registering and send /card again.</i>"
     )
 
 
 def card_bound(label: str, *, replaced: bool) -> View:
-    headline = "Cartão trocado" if replaced else "Cartão cadastrado"
+    headline = "Card replaced" if replaced else "Card registered"
     return View(
         "\n".join(
             [
                 f"✅ <b>{headline}</b> — {escape(label)}",
                 "",
-                "O mandato agora tem com o que pagar. O agente apresenta esse cartão",
-                "e nada mais: ele nunca viu o número, e nem eu.",
+                "The mandate now has something to pay with. The agent presents that card",
+                "and nothing else: it never saw the number, and neither did I.",
                 "",
-                "<i>Você pode cancelar só o cartão a qualquer momento em /mandato, "
-                "sem encerrar o agente.</i>",
+                "<i>You can cancel just the card at any time from /mandate, "
+                "without ending the agent.</i>",
             ]
         )
     )
@@ -978,21 +986,21 @@ def plain(message: str) -> View:
 
 
 def denied() -> View:
-    return View("⛔ Este chat não tem autoridade neste bot.")
+    return View("⛔ This chat has no authority on this bot.")
 
 
 def no_mandate() -> View:
-    return View("Você ainda não tem mandato. Mande /start para emitir o seu.")
+    return View("You do not have a mandate yet. Send /start to issue yours.")
 
 
 def unavailable(detail: str, reason_code: str = "") -> View:
     """Fail-closed on screen: an unreachable core is never drawn as a success."""
     tail = f"\n<i>{escape(reason_code)}</i>" if reason_code else ""
-    return View(f"⚠️ Nenhuma ação foi executada.\n{escape(detail)}{tail}")
+    return View(f"⚠️ No action was taken.\n{escape(detail)}{tail}")
 
 
 def chat_id_view(chat_id: int) -> View:
-    return View(f"Este chat é <code>{chat_id}</code>.")
+    return View(f"This chat is <code>{chat_id}</code>.")
 
 
 def status(*, backend: str, base_url: str, open_mode: bool, pending: int) -> View:
@@ -1000,9 +1008,9 @@ def status(*, backend: str, base_url: str, open_mode: bool, pending: int) -> Vie
         "\n".join(
             [
                 "<b>Status</b>",
-                f"Núcleo: <code>{escape(backend)}</code> em {escape(base_url)}",
-                f"Modo: {'aberto (um mandato por pessoa)' if open_mode else 'lista de autorizados'}",
-                f"Aprovações pendentes: {pending}",
+                f"Core: <code>{escape(backend)}</code> at {escape(base_url)}",
+                f"Mode: {'open (one mandate per person)' if open_mode else 'allow-list'}",
+                f"Pending approvals: {pending}",
             ]
         )
     )

@@ -214,9 +214,9 @@ class Bot:
         head, _, argument = text.partition(" ")
         command = head.split("@", 1)[0].lower()
         argument = argument.strip()
-        logger.info("%s de %s", command, chat_id)
+        logger.info("%s from %s", command, chat_id)
 
-        if command in {"/meuid", "/chatid"}:
+        if command in {"/myid", "/meuid", "/chatid"}:
             self._send(chat_id, views.chat_id_view(chat_id))
             return
         if not self._config.may_act(chat_id):
@@ -281,11 +281,11 @@ class Bot:
     ) -> Sequence[View]:
         if command == "/start":
             return (self._start(chat_id, display_name),)
-        if command in {"/ajuda", "/help"}:
+        if command in {"/help", "/ajuda"}:
             return (views.help_text(),)
-        if command in {"/catalogo", "/catálogo"}:
+        if command in {"/catalog", "/catalogo", "/catálogo"}:
             return (self._catalogue(chat_id),)
-        if command == "/agente":
+        if command in {"/agent", "/agente"}:
             identity = self._identities.get(chat_id)
             return (
                 views.agent_card(
@@ -324,21 +324,21 @@ class Bot:
         if mandate is None:
             return (views.no_mandate(),)
 
-        if command == "/mandato":
+        if command in {"/mandate", "/mandato"}:
             return (views.mandate_card(mandate, self._gateway.open_watches(mandate_id)),)
-        if command == "/extrato":
+        if command in {"/statement", "/extrato"}:
             return (views.receipt(self._gateway.receipt(mandate_id)),)
-        if command in {"/aprovacoes", "/aprovações"}:
+        if command in {"/approvals", "/aprovacoes", "/aprovações"}:
             return views.escalation_list(self._gateway.open_escalations(mandate_id))
-        if command == "/revogar":
+        if command in {"/revoke", "/revogar"}:
             return (views.revoke_menu(mandate),)
-        if command == "/comprar":
+        if command in {"/buy", "/comprar"}:
             return self._purchase(identity, argument)
-        if command == "/limite":
+        if command in {"/limit", "/limite"}:
             return (self._replace_limit(identity, argument),)
-        if command == "/cartao" or command == "/cartão":
+        if command in {"/card", "/cartao", "/cartão"}:
             return self._register_card(identity, mandate)
-        if command == "/novo":
+        if command in {"/new", "/novo"}:
             return (self._describe_mandate(identity, mandate, argument),)
         return (views.help_text(),)
 
@@ -386,7 +386,7 @@ class Bot:
 
     def _purchase(self, identity: ChatIdentity, instruction: str) -> Sequence[View]:
         if not instruction:
-            return (views.plain("Diga o que comprar: /comprar um voo pra Córdoba"),)
+            return (views.plain("Say what to buy: /buy a flight to Córdoba"),)
         assert identity.mandate_id is not None
         result = self._gateway.purchase(identity.mandate_id, instruction)
         if result.outcome == "no_offer":
@@ -482,7 +482,7 @@ class Bot:
         spec = views.parse_mandate_spec(argument, defaults=self._config.mandate_defaults)
         if spec is None:
             return views.plain(
-                "Diga o que o agente pode fazer: /novo hotel até 300 por 7 dias, 2x"
+                "Say what the agent may do: /new hotel up to 300 for 7 days, 2x"
             )
         self._pending_spec[identity.chat_id] = spec
         return views.new_mandate_preview(spec, current)
@@ -505,9 +505,9 @@ class Bot:
                 identity,
                 current.id,
                 epoch=current.revocation_epoch,
-                reason="substituído por um novo mandato do titular",
+                reason="replaced by a new mandate from the holder",
             )
-            screens.append(views.signed_note("Mandato anterior revogado", message))
+            screens.append(views.signed_note("Previous mandate revoked", message))
         defaults = self._config.mandate_defaults
         # A shopping mandate has to name the marketplace that re-issues discovered
         # pages, or every offer a search finds is refused as out of scope. It is added,
@@ -569,11 +569,26 @@ class Bot:
         defaults = self._config.mandate_defaults
         limit = views.parse_money(argument, currency=defaults.currency, scale=defaults.scale)
         if limit is None:
-            return views.plain("Informe um valor positivo: /limite 100")
+            return views.plain("Give a positive amount: /limit 100")
         message = self._gateway.replace_limit(identity, identity.mandate_id, limit)
-        return views.signed_note("Limite alterado", message)
+        return views.signed_note("Limit changed", message)
 
     # ── buttons ────────────────────────────────────────────────────────────
+    def _acknowledge(self, callback_id: str, text: str = "") -> None:
+        """Clear the tap's spinner, and never let that be the reason nothing happens.
+
+        `answerCallbackQuery` is a courtesy: it stops Telegram spinning on the button.
+        It also refuses with 400 once the query is old — which is exactly the state
+        every queued tap is in after the bot restarts and drains its backlog. Letting
+        that refusal propagate meant the acknowledgement failed *before* the screens
+        were sent, so the work was done and the person saw nothing come back. The
+        answer is the message; this is only the spinner.
+        """
+        try:
+            self._api.answer_callback(callback_id, text)
+        except TelegramError as error:
+            logger.info("callback %s not acknowledged: %s", callback_id, error)
+
     def _handle_callback(self, query: Mapping[str, Any]) -> None:
         callback_id = str(query.get("id", ""))
         message = query.get("message", {})
@@ -581,24 +596,24 @@ class Bot:
         message_id = int(message.get("message_id", 0))
         parsed = views.parse_callback(str(query.get("data", "")))
         if parsed is None or not chat_id:
-            self._api.answer_callback(callback_id, "Ação inválida.")
+            self._acknowledge(callback_id, "Invalid action.")
             return
         if not self._config.may_act(chat_id):
-            self._api.answer_callback(callback_id, "Chat sem autoridade.")
+            self._acknowledge(callback_id, "This chat has no authority.")
             return
         identity = self._identities.get(chat_id)
         if identity is None:
-            self._api.answer_callback(callback_id, "Mande /start primeiro.")
+            self._acknowledge(callback_id, "Send /start first.")
             return
         verb, argument = parsed
-        logger.info("botao %s de %s", verb, chat_id)
+        logger.info("button %s from %s", verb, chat_id)
         try:
             screens = self._callback_view(verb, argument, identity)
         except GatewayError as error:
-            self._api.answer_callback(callback_id, "AVAL indisponível.")
+            self._acknowledge(callback_id, "AVAL unavailable.")
             self._send(chat_id, views.unavailable(str(error), error.reason_code))
             return
-        self._api.answer_callback(callback_id)
+        self._acknowledge(callback_id)
         # The first screen replaces the message, which retires its buttons so a
         # second tap cannot re-ask. Anything further arrives as a new message.
         self._api.edit_message(chat_id, message_id, screens[0])
@@ -611,12 +626,12 @@ class Bot:
         if verb in {views.CALLBACK_APPROVE, views.CALLBACK_DENY}:
             escalation = self._gateway.escalation(argument)
             if escalation is None:
-                return (views.plain("Escalação não encontrada."),)
+                return (views.plain("Escalation not found."),)
             if not self._owns(identity, escalation.mandate_id):
-                return (views.plain("Essa escalação não é do seu mandato."),)
+                return (views.plain("That escalation does not belong to your mandate."),)
             approve = verb == views.CALLBACK_APPROVE
             message = self._gateway.decide(identity, escalation, approve=approve)
-            return (views.signed_note("Aprovado" if approve else "Recusado", message),)
+            return (views.signed_note("Approved" if approve else "Refused", message),)
 
         if verb == views.CALLBACK_CATALOGUE:
             return (self._catalogue(identity.chat_id),)
@@ -625,7 +640,7 @@ class Bot:
             spec = self._pending_spec.pop(identity.chat_id, None)
             self._history.pop(identity.chat_id, None)
             if spec is None:
-                return (views.plain("Descreva o mandato de novo: /novo hotel até 300 por 7 dias"),)
+                return (views.plain("Describe the mandate again: /new hotel up to 300 for 7 days"),)
             return self._issue_mandate(identity, spec)
 
         if verb == views.CALLBACK_BUY:
@@ -633,7 +648,7 @@ class Bot:
                 return (views.no_mandate(),)
             wish = views.wish_for(self._gateway.catalogue(), argument)
             if wish is None:
-                return (views.plain("Essa opção saiu do catálogo."),)
+                return (views.plain("That option is no longer in the catalogue."),)
             # Deliberately routed through the agent's own free-text path: a button
             # that called capture directly would be a second way to buy that skips
             # the agent, which is exactly what the architecture forbids. The button
@@ -642,26 +657,26 @@ class Bot:
 
         if verb == views.CALLBACK_WATCH:
             if not self._owns(identity, argument):
-                return (views.plain("Esse mandato não é seu."),)
+                return (views.plain("That mandate is not yours."),)
             instruction = self._unmet.get(identity.chat_id)
             if instruction is None:
-                return (views.plain("Peça de novo o que quer, e eu ofereço vigiar."),)
+                return (views.plain("Ask again for what you want, and I will offer to watch."),)
             watch = self._gateway.register_watch(argument, instruction)
             self._unmet.pop(identity.chat_id, None)
             return (views.watch_registered(watch),)
 
         if verb == views.CALLBACK_DISPUTE:
             if not self._identities.owns_reservation(identity.chat_id, argument):
-                return (views.plain("Essa compra não é sua."),)
+                return (views.plain("That purchase is not yours."),)
             dispute = self._gateway.open_dispute(
-                identity, argument, "titular não reconhece a compra (aberta pelo Telegram)"
+                identity, argument, "holder does not recognize the purchase (opened from Telegram)"
             )
             # The verdict comes back in the same tap: the resolution reads the ledger
             # and asks nobody, so making the person wait for it would be theatre.
             return (views.dispute_verdict(dispute),)
 
         if not self._owns(identity, argument):
-            return (views.plain("Esse mandato não é seu."),)
+            return (views.plain("That mandate is not yours."),)
         if verb == views.CALLBACK_MANDATE:
             mandate = self._gateway.mandate(argument)
             if mandate is None:
@@ -672,7 +687,7 @@ class Bot:
         if verb == views.CALLBACK_CARD_MENU:
             mandate = self._gateway.mandate(argument)
             if mandate is None or mandate.instrument_label is None:
-                return (views.plain("Esse mandato não tem cartão para cancelar."),)
+                return (views.plain("That mandate has no card to cancel."),)
             return (views.cancel_card_menu(mandate),)
         if verb == views.CALLBACK_CARD_CONFIRM:
             mandate = self._gateway.mandate(argument)
@@ -681,14 +696,14 @@ class Bot:
             if identity.instrument_scope is None:
                 # Without the scope there is nothing to sign, and the bot must not
                 # invent one: a guessed scope is a signature over the wrong thing.
-                return (views.plain("Não tenho o escopo do cartão deste mandato."),)
+                return (views.plain("I do not have this mandate's card scope."),)
             message = self._gateway.cancel_instrument(
                 identity,
                 argument,
                 scope=identity.instrument_scope,
                 epoch=mandate.revocation_epoch,
             )
-            return (views.signed_note("Cartão cancelado", message),)
+            return (views.signed_note("Card cancelled", message),)
         if verb == views.CALLBACK_REVOKE_MENU:
             mandate = self._gateway.mandate(argument)
             return (views.revoke_menu(mandate) if mandate else views.no_mandate(),)
@@ -702,7 +717,7 @@ class Bot:
                 epoch=mandate.revocation_epoch,
                 reason="revogado pelo titular no Telegram",
             )
-            return (views.signed_note("Mandato revogado", message),)
+            return (views.signed_note("Mandate revoked", message),)
         return (views.help_text(),)
 
     @staticmethod
@@ -734,7 +749,7 @@ class Bot:
                     # Not a fault to report every thirty seconds. The chat is pointing
                     # at a mandate the core does not have, and `/start` is the answer.
                     continue
-                logger.warning("escalações de %s: %s", chat_id, error)
+                logger.warning("escalations for %s: %s", chat_id, error)
                 continue
             for escalation in pending:
                 seen = (chat_id, escalation.id)
@@ -766,7 +781,7 @@ class Bot:
         try:
             events = self._gateway.edge_events()
         except GatewayError as error:
-            logger.warning("caixa de eventos do núcleo: %s", error)
+            logger.warning("core event outbox: %s", error)
             return 0
         delivered = 0
         for event in events:
@@ -780,7 +795,7 @@ class Bot:
                 self._send(identity.chat_id, views.watch_event(event.payload))
             except TelegramError as error:
                 # Undelivered stays undelivered. The next poll tries again.
-                logger.warning("entrega do evento %s falhou: %s", event.id, error)
+                logger.warning("delivery of event %s failed: %s", event.id, error)
                 continue
             self._gateway.ack_edge_event(event.id)
             delivered += 1
@@ -789,9 +804,9 @@ class Bot:
     # ── runtime ────────────────────────────────────────────────────────────
     def run(self) -> None:
         logger.info(
-            "AVAL Telegram bot online · núcleo em %s · modo %s",
+            "AVAL Telegram bot online · core at %s · %s mode",
             self._config.api_base_url,
-            "aberto" if self._config.open_mode else "lista de autorizados",
+            "open" if self._config.open_mode else "allow-list",
         )
         offset: int | None = None
         last_push = 0.0
@@ -799,7 +814,7 @@ class Bot:
             try:
                 updates = self._api.get_updates(offset, timeout=self._config.poll_timeout_seconds)
             except TelegramError as error:
-                logger.warning("getUpdates falhou: %s", error)
+                logger.warning("getUpdates failed: %s", error)
                 time.sleep(max(error.retry_after, 3))
                 continue
             for update in updates:
@@ -811,7 +826,7 @@ class Bot:
                     self.push_pending_approvals()
                     self.push_watch_results()
                 except TelegramError as error:
-                    logger.warning("push de escalações falhou: %s", error)
+                    logger.warning("escalation push failed: %s", error)
 
     def _send(self, chat_id: int, view: View) -> None:
         self._api.send_message(chat_id, view)
@@ -852,4 +867,4 @@ def main() -> None:
         build_bot().run()
     except KeyboardInterrupt:
         # Ctrl+C is how the bot is meant to be stopped, not a crash to report.
-        logger.info("bot encerrado")
+        logger.info("bot stopped")

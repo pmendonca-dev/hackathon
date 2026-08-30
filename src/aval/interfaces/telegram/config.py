@@ -79,7 +79,7 @@ class BotConfig:
             raise ConfigError("TELEGRAM_BOT_TOKEN é obrigatório")
         base_url = env.get("AVAL_API_BASE_URL", "http://127.0.0.1:8099").strip().rstrip("/")
         if not base_url:
-            raise ConfigError("AVAL_API_BASE_URL não pode ser vazio")
+            raise ConfigError("AVAL_API_BASE_URL cannot be empty")
         currency = env.get("AVAL_MANDATE_CURRENCY", "USD").strip().upper()
         if len(currency) != 3:
             raise ConfigError("AVAL_MANDATE_CURRENCY deve ser um código ISO de três letras")
@@ -156,7 +156,7 @@ def _chat_ids(raw: str) -> frozenset[int]:
             ids.add(int(candidate))
         except ValueError as error:
             raise ConfigError(
-                f"TELEGRAM_ALLOWED_CHAT_IDS tem um id não numérico: {candidate!r}"
+                f"TELEGRAM_ALLOWED_CHAT_IDS has a non-numeric id: {candidate!r}"
             ) from error
     return frozenset(ids)
 
