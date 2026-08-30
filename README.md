@@ -143,8 +143,7 @@ uma instância descartável: `AVAL_DATABASE_PATH=:memory:`.
 ### Em produção
 
 ```powershell
-.\scripts\production
-ew-secrets.ps1      # sorteia .env.production
+.\scripts\production\new-secrets.ps1      # sorteia .env.production
 .\scripts\production\start-aval.ps1       # migrations, build, API e túnel HTTPS
 ```
 
@@ -152,6 +151,39 @@ Ver `docs/production-runbook.md`. A variável que faz a diferença entre uma dem
 implantação é `AVAL_CUSTODY_SEED`: sem ela cada boot sorteia chaves novas enquanto o
 banco segue guardando a metade pública antiga, e toda compra depois de um restart morre
 com `signature_invalid`.
+
+### Em dois computadores — a vigília de ofertas reais
+
+A demo acima compra dentro de um catálogo que o próprio sistema assina. Há um segundo
+modo: o agente procura na **web aberta**, acha uma página de verdade, e cobra um cartão
+Stripe em modo de teste — com o núcleo decidindo cada passo, como sempre.
+
+Isso roda em duas máquinas, e a separação é o ponto:
+
+| | **A — conversa** | **B — autoridade** |
+|---|---|---|
+| Roda | bot do Telegram, ponta de descoberta | API, banco, agendador, Stripe |
+| Guarda | `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY` | semente de custódia, chave Stripe, banco |
+| Nunca guarda | nada do B | o token do Telegram, a chave da OpenAI |
+
+O computador que mais fala com texto não-confiável é o que menos pode fazer com ele: A
+não importa o núcleo nem a Stripe — há um teste que sobe um interpretador novo e falha
+se algum dia importar. As duas metades conversam por HTTP assinado com HMAC, com um
+segredo por direção, e nada assinado com eles cria mandato, autoriza gasto ou captura
+pagamento.
+
+```bash
+./scripts/core_b_up.sh          # no B: migrations, API, agendador
+./scripts/discovery_edge_up.sh  # no A: descoberta e bot
+```
+
+Cada launcher recusa subir se o segredo da outra máquina estiver no ambiente. O ensaio
+completo — cartões de teste, o que dizer em voz alta, e as recusas que são a demo de
+verdade — está em `docs/verification/two-computer-telegram-rehearsal.md`.
+
+Uma frase que a cópia nunca deixa de dizer: **nenhum pedido é enviado ao vendedor.** A
+AVAL achou uma página pública e cobrou o cartão de teste do próprio comprador. Uma oferta
+assinada mais uma cobrança real leem como "um pedido foi feito", e não foi.
 
 ### O navegador
 

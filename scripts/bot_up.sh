@@ -14,6 +14,15 @@ PY=.venv/Scripts/python.exe
 [ -f .env ] || { echo "falta .env com TELEGRAM_BOT_TOKEN" >&2; exit 1; }
 set -a; . ./.env; set +a
 
+# One machine, one file: this launcher is the single-computer path, where the bot and
+# the core share a process boundary but not a machine boundary. The two-computer split
+# has its own launchers — `scripts/discovery_edge_up.sh` on A, `scripts/core_b_up.sh`
+# on B — because there the whole point is that neither side reads the other's file.
+if [ -n "${AVAL_EDGE_MODE:-}" ]; then
+  echo "AVAL_EDGE_MODE está definido: use scripts/discovery_edge_up.sh, não este" >&2
+  exit 2
+fi
+
 powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { \$_.CommandLine -match 'aval.interfaces.telegram' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" 2>/dev/null || true
 
 curl -sf -m 5 "${AVAL_API_BASE_URL}/health" >/dev/null || {
