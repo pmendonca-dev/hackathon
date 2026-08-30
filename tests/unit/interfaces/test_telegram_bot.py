@@ -1293,3 +1293,86 @@ def test_one_chat_is_still_answered_in_the_order_it_typed(world) -> None:
         time.sleep(0.01)
     assert "AVAL" in api.sent[0][1].text
     assert "Extrato" in api.sent[2][1].text
+
+
+# ── the person defines the mandate, not the environment ─────────────────────
+def test_the_spec_reads_what_how_much_and_until_when(world) -> None:
+    """The case's first line, read off one sentence.
+
+    Counts and money share a sentence and must not be confused: `por 7 dias` is a
+    deadline, not a seven-real budget.
+    """
+    bot, _, _, _ = world
+    defaults = bot._config.mandate_defaults
+
+    spec = views.parse_mandate_spec("hotel até 300 por 7 dias, 2x", defaults=defaults)
+
+    assert spec.categories == ("lodging",)
+    assert spec.limit.minor_units == 30_000
+    assert spec.valid_for_days == 7
+    assert spec.max_uses == 2
+    assert spec.with_card is True
+
+
+def test_an_empty_spec_is_refused_rather_than_defaulted(world) -> None:
+    """Silence is not a mandate: the defaults must never stand in for consent."""
+    bot, _, _, _ = world
+    assert views.parse_mandate_spec("   ", defaults=bot._config.mandate_defaults) is None
+
+
+def test_what_the_sentence_omits_falls_back_to_the_default(world) -> None:
+    bot, _, _, _ = world
+    defaults = bot._config.mandate_defaults
+
+    spec = views.parse_mandate_spec("voo, sem cartão", defaults=defaults)
+
+    assert spec.categories == ("travel",)
+    assert spec.limit.minor_units == defaults.limit_minor_units
+    assert spec.valid_for_days == defaults.valid_for.days
+    assert spec.with_card is False
+
+
+def test_a_new_mandate_is_previewed_before_anything_is_issued(world) -> None:
+    """Replacing a mandate revokes the one in force — far too much for a typo."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    first = identities.get(MARTA).mandate_id
+    api.sent.clear()
+
+    bot.handle_update(message("/novo hotel até 300 por 7 dias"))
+
+    assert "confira antes" in api.last_text
+    assert "revoga" in api.last_text
+    assert identities.get(MARTA).mandate_id == first
+    assert aval.mandates[first]["status"] == "ACTIVE"
+
+
+def test_confirming_revokes_the_old_mandate_and_issues_the_described_one(world) -> None:
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    first = identities.get(MARTA).mandate_id
+    bot.handle_update(message("/novo hotel até 300 por 7 dias, 2x, sem cartão"))
+
+    bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
+
+    second = identities.get(MARTA).mandate_id
+    assert second != first
+    assert aval.mandates[first]["status"] == "REVOKED"
+    issued = aval.mandates[second]
+    assert issued["allowed_categories"] == ["lodging"]
+    assert issued["limit"]["minor_units"] == 30_000
+    assert issued["usage_limit"]["max_uses"] == 2
+    # "sem cartão" is a payment method too: a mandate that authorizes nothing to pay.
+    assert issued.get("instrument_label") is None
+
+
+def test_confirming_a_spec_the_bot_no_longer_holds_issues_nothing(world) -> None:
+    """A restart between describing and confirming must not invent the mandate."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    first = identities.get(MARTA).mandate_id
+
+    bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
+
+    assert identities.get(MARTA).mandate_id == first
+    assert "Descreva o mandato de novo" in api.last_text

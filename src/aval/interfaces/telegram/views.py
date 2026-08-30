@@ -44,6 +44,7 @@ CALLBACK_CARD_MENU = "crd"
 CALLBACK_CARD_CONFIRM = "crm"
 CALLBACK_CATALOGUE = "cat"
 CALLBACK_BUY = "buy"
+CALLBACK_NEW_CONFIRM = "new"
 
 _VERBS = frozenset(
     {
@@ -59,6 +60,7 @@ _VERBS = frozenset(
         CALLBACK_CARD_MENU,
         CALLBACK_CARD_CONFIRM,
         CALLBACK_WATCH,
+        CALLBACK_NEW_CONFIRM,
     }
 )
 
@@ -702,6 +704,7 @@ def help_text() -> View:
                 "/aprovacoes — compras aguardando você",
                 "/extrato — recibos e trilha auditável",
                 "/limite &lt;valor&gt; — muda o orçamento (assinado por você)",
+                "/novo &lt;regra&gt; — refaz o mandato: <i>/novo hotel até 300 por 7 dias, 2x</i>",
                 "/revogar — encerra a autoridade do agente",
                 "/agente — quem é o agente, e por que não é você",
                 "/status — saúde do backend",
@@ -713,6 +716,99 @@ def help_text() -> View:
 
 def signed_note(action: str, message: str) -> View:
     return View(f"✅ <b>{escape(action)}</b>\n{escape(message)}\n\n<i>assinado pela sua chave</i>")
+
+
+@dataclass(frozen=True)
+class MandateSpec:
+    """What a person just said their agent may do.
+
+    A spec is not a mandate: it is the sentence, read. Nothing here is authority
+    until the core registers it and the person's own key signs the swap.
+    """
+
+    categories: tuple[str, ...]
+    limit: MoneyView
+    valid_for_days: int
+    max_uses: int | None
+    with_card: bool
+
+
+_CATEGORY_WORDS = {
+    "lodging": ("hotel", "hospedagem", "pousada", "lodging", "diaria", "diária", "noite"),
+    "travel": ("voo", "viagem", "passagem", "travel", "flight", "aereo", "aéreo"),
+}
+_DAYS = re.compile(r"(\d{1,3})\s*(?:dia|dias|day|days)")
+_USES = re.compile(r"(\d{1,2})\s*(?:x|vez|vezes|compras?|times?)")
+
+
+def parse_mandate_spec(raw: str, *, defaults) -> MandateSpec | None:
+    """Read `hospedagem até 300 por 7 dias, 2x, sem cartão`.
+
+    Deliberately forgiving and deliberately partial: whatever the sentence does not
+    say falls back to the configured default, so a person can change one thing
+    without restating the other three. Saying nothing at all is not a mandate,
+    though — an empty spec would silently mean "the defaults", and a mandate the
+    person did not actually describe is the one thing this must not create.
+    """
+    text = raw.strip().lower()
+    if not text:
+        return None
+    folded = "".join(
+        char
+        for char in unicodedata.normalize("NFD", text)
+        if unicodedata.category(char) != "Mn"
+    )
+    categories = tuple(
+        name
+        for name, words in _CATEGORY_WORDS.items()
+        if any(word in folded for word in words)
+    )
+    days = _DAYS.search(folded)
+    uses = _USES.search(folded)
+    # Days and uses are counts, not money: they are struck from the text before the
+    # amount is read, or `por 7 dias` would be a seven-real budget.
+    without_counts = _USES.sub(" ", _DAYS.sub(" ", folded))
+    amount = None
+    money = re.search(r"\d[\d.,]*", without_counts)
+    if money:
+        amount = parse_money(money.group(), currency=defaults.currency, scale=defaults.scale)
+    return MandateSpec(
+        categories=categories or tuple(defaults.categories),
+        limit=amount
+        or MoneyView(defaults.limit_minor_units, defaults.currency, defaults.scale),
+        valid_for_days=int(days.group(1)) if days else defaults.valid_for.days,
+        max_uses=int(uses.group(1)) if uses else defaults.max_uses,
+        with_card="sem cartao" not in folded and "sem cartão" not in text,
+    )
+
+
+def new_mandate_preview(spec: MandateSpec, current: MandateView | None) -> View:
+    """Say what is about to be granted, and what it costs, before it is granted.
+
+    Replacing a mandate revokes the one in force — that is the honest way to change
+    what was authorized, and it is far too destructive to happen on a typo.
+    """
+    lines = [
+        "📝 <b>Novo mandato — confira antes</b>",
+        "",
+        f"Pode comprar: <b>{escape(', '.join(spec.categories))}</b>",
+        f"Orçamento: <b>{format_money(spec.limit)}</b>",
+        f"Vale por: <b>{spec.valid_for_days} dia(s)</b>",
+        f"Frequência: <b>{spec.max_uses}</b> compra(s) na janela"
+        if spec.max_uses
+        else "Frequência: <b>sem limite de vezes</b>",
+        f"Método: <b>{'cartão de teste tokenizado' if spec.with_card else 'nenhum — não paga nada'}</b>",
+    ]
+    if current is not None and current.status == "ACTIVE":
+        lines += [
+            "",
+            f"⚠️ Isto <b>revoga</b> o mandato em vigor (<code>{escape(current.id[:20])}</code>) "
+            "e emite outro. As compras já liquidadas continuam válidas.",
+        ]
+    return View(
+        "\n".join(lines),
+        ((("✅ Emitir este mandato", f"{CALLBACK_NEW_CONFIRM}:{(current.id if current else '_')}"),),),
+    )
 
 
 def plain(message: str) -> View:

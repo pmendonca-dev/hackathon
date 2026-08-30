@@ -12,6 +12,7 @@ room of judges share one bot without sharing any authority.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import timedelta
 from typing import Any
 import json
 import logging
@@ -24,7 +25,7 @@ import urllib.request
 
 from aval.interfaces.telegram import views
 from aval.interfaces.telegram.config import BotConfig
-from aval.interfaces.telegram.gateway import AvalGateway, GatewayError, MoneyView
+from aval.interfaces.telegram.gateway import AvalGateway, GatewayError, MandateView, MoneyView
 from aval.interfaces.telegram.identity import ChatIdentity, IdentityStore
 from aval.interfaces.telegram.views import View
 
@@ -145,6 +146,10 @@ class Bot:
         # an empty queue. Fine for a demo; a pool with idle timeouts if it outlives one.
         self._inboxes: dict[int, queue.Queue] = {}
         self._inboxes_lock = threading.Lock()
+        # ponytail: the mandate each chat described but has not confirmed yet, in
+        # memory. A restart forgets it and the person types the sentence again —
+        # which beats issuing a mandate from words the bot can no longer show them.
+        self._pending_spec: dict[int, views.MandateSpec] = {}
 
     # ── updates ────────────────────────────────────────────────────────────
     def dispatch(self, update: Mapping[str, Any]) -> None:
@@ -259,6 +264,8 @@ class Bot:
             return self._purchase(identity, argument)
         if command == "/limite":
             return (self._replace_limit(identity, argument),)
+        if command == "/novo":
+            return (self._describe_mandate(identity, mandate, argument),)
         return (views.help_text(),)
 
     def _start(self, chat_id: int, display_name: str) -> View:
@@ -340,6 +347,67 @@ class Bot:
             screens.append(views.receipt(self._gateway.receipt(identity.mandate_id)))
         return tuple(screens)
 
+    def _describe_mandate(
+        self, identity: ChatIdentity, current: "MandateView", argument: str
+    ) -> View:
+        """The case's first line: the person says what, how much and until when.
+
+        Nothing is issued from the sentence alone. Replacing a mandate revokes the one
+        in force, so it goes through a confirmation the same way a revocation does.
+        """
+        spec = views.parse_mandate_spec(argument, defaults=self._config.mandate_defaults)
+        if spec is None:
+            return views.plain(
+                "Diga o que o agente pode fazer: /novo hotel até 300 por 7 dias, 2x"
+            )
+        self._pending_spec[identity.chat_id] = spec
+        return views.new_mandate_preview(spec, current)
+
+    def _issue_mandate(self, identity: ChatIdentity, spec: views.MandateSpec) -> Sequence[View]:
+        """Revoke what is in force, then grant what was described.
+
+        Changing what an agent may buy is withdrawing authority and granting other
+        authority — both signed by the holder, both on the ledger, in that order. A
+        mandate quietly edited underneath a running agent would be neither.
+        """
+        screens: list[View] = []
+        current = (
+            self._gateway.mandate(identity.mandate_id)
+            if identity.mandate_id is not None
+            else None
+        )
+        if current is not None and current.status == "ACTIVE":
+            message = self._gateway.revoke(
+                identity,
+                current.id,
+                epoch=current.revocation_epoch,
+                reason="substituído por um novo mandato do titular",
+            )
+            screens.append(views.signed_note("Mandato anterior revogado", message))
+        defaults = self._config.mandate_defaults
+        mandate_id, instrument_scope = self._gateway.create_mandate(
+            identity,
+            merchants=defaults.merchants,
+            categories=spec.categories,
+            limit=spec.limit,
+            ceiling=(
+                None
+                if defaults.ceiling_minor_units is None
+                else MoneyView(defaults.ceiling_minor_units, defaults.currency, defaults.scale)
+            ),
+            valid_for=timedelta(days=spec.valid_for_days),
+            card_number=defaults.card_number if spec.with_card else None,
+            max_uses=spec.max_uses,
+            usage_window=defaults.usage_window,
+        )
+        self._identities.bind_mandate(
+            identity.chat_id, mandate_id, instrument_scope=instrument_scope
+        )
+        mandate = self._gateway.mandate(mandate_id)
+        if mandate is None:
+            return (*screens, views.no_mandate())
+        return (*screens, views.mandate_card(mandate))
+
     def _replace_limit(self, identity: ChatIdentity, argument: str) -> View:
         assert identity.mandate_id is not None
         defaults = self._config.mandate_defaults
@@ -396,6 +464,12 @@ class Bot:
 
         if verb == views.CALLBACK_CATALOGUE:
             return (self._catalogue(identity.chat_id),)
+
+        if verb == views.CALLBACK_NEW_CONFIRM:
+            spec = self._pending_spec.pop(identity.chat_id, None)
+            if spec is None:
+                return (views.plain("Descreva o mandato de novo: /novo hotel até 300 por 7 dias"),)
+            return self._issue_mandate(identity, spec)
 
         if verb == views.CALLBACK_BUY:
             if identity.mandate_id is None:
