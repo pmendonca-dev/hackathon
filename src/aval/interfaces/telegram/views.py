@@ -1,44 +1,51 @@
 """Pure rendering: gateway data in, message text and buttons out.
 
-Nothing here imports Telegram or performs I/O, so the whole conversation
-surface is testable without a token, a network or the backend.
+Nothing here performs I/O or decides anything, so every screen the judges will
+touch is testable without a token, a network or a server. Reason codes are shown
+next to the core's own `human_summary` and never rewritten — the bot repeats what
+the core decided, it does not paraphrase it.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from html import escape
 
 from aval.interfaces.telegram.gateway import (
-    ActionResult,
-    ActivityView,
-    ApprovalView,
+    EscalationView,
     MandateView,
     MoneyView,
+    PurchaseView,
+    ReceiptView,
 )
 
 Button = tuple[str, str]
 Row = tuple[Button, ...]
 
-# Callback payloads are capped at 64 bytes by Telegram, so keep verbs at three
-# characters and carry only an id.
+# Telegram caps callback data at 64 bytes, so verbs stay at three characters.
 CALLBACK_APPROVE = "apr"
 CALLBACK_DENY = "den"
 CALLBACK_MANDATE = "mnd"
+CALLBACK_RECEIPT = "rec"
 CALLBACK_REVOKE_MENU = "rvk"
-CALLBACK_REVOKE_MANDATE = "rvm"
-CALLBACK_REVOKE_BUDGET = "rvb"
-CALLBACK_MANDATE_LIST = "lst"
+CALLBACK_REVOKE_CONFIRM = "rvm"
+CALLBACK_DISPUTE = "dsp"
 
-_STATUS_BADGE = {
-    "ACTIVE": "🟢",
-    "ESCALATED": "🟡",
-    "REVOKED": "🔴",
-    "EXPIRED": "⚫",
-}
+_VERBS = frozenset(
+    {
+        CALLBACK_APPROVE,
+        CALLBACK_DENY,
+        CALLBACK_MANDATE,
+        CALLBACK_RECEIPT,
+        CALLBACK_REVOKE_MENU,
+        CALLBACK_REVOKE_CONFIRM,
+        CALLBACK_DISPUTE,
+    }
+)
 
+_STATUS_BADGE = {"ACTIVE": "🟢", "REVOKED": "🔴", "EXPIRED": "⚫"}
 _SYMBOL = {"BRL": "R$", "USD": "US$", "EUR": "€"}
 
 
@@ -51,9 +58,7 @@ class View:
 def format_money(amount: MoneyView) -> str:
     """Integer arithmetic only. Money never becomes a float, not even to print."""
     sign = "-" if amount.minor_units < 0 else ""
-    units = abs(amount.minor_units)
-    divisor = 10**amount.scale
-    whole, fraction = divmod(units, divisor)
+    whole, fraction = divmod(abs(amount.minor_units), 10**amount.scale)
     grouped = f"{whole:,}".replace(",", ".")
     symbol = _SYMBOL.get(amount.currency, amount.currency)
     if amount.scale == 0:
@@ -61,57 +66,176 @@ def format_money(amount: MoneyView) -> str:
     return f"{sign}{symbol} {grouped},{fraction:0{amount.scale}d}"
 
 
+def parse_money(raw: str, *, currency: str, scale: int) -> MoneyView | None:
+    """Read what a person typed. No float ever touches the amount."""
+    cleaned = raw.strip().replace(_SYMBOL.get(currency, currency), "").strip()
+    cleaned = cleaned.replace(".", "").replace(",", ".") if "," in cleaned else cleaned
+    if not cleaned:
+        return None
+    whole, _, decimals = cleaned.partition(".")
+    if not whole.isdigit() or (decimals and not decimals.isdigit()):
+        return None
+    decimals = (decimals + "0" * scale)[:scale]
+    minor = int(whole) * 10**scale + (int(decimals) if decimals else 0)
+    return MoneyView(minor, currency, scale) if minor > 0 else None
+
+
 def parse_callback(data: str) -> tuple[str, str] | None:
-    """Callback data arrives from a client; treat it as untrusted input."""
+    """Callback data comes from a client; treat it as untrusted input."""
     if not data or len(data) > 64:
         return None
     verb, _, argument = data.partition(":")
-    if verb not in {
-        CALLBACK_APPROVE,
-        CALLBACK_DENY,
-        CALLBACK_MANDATE,
-        CALLBACK_REVOKE_MENU,
-        CALLBACK_REVOKE_MANDATE,
-        CALLBACK_REVOKE_BUDGET,
-        CALLBACK_MANDATE_LIST,
-    }:
+    if verb not in _VERBS or not argument:
         return None
-    if verb == CALLBACK_MANDATE_LIST:
-        return verb, ""
-    if not argument or not all(char.isalnum() or char in "_-" for char in argument):
+    if not all(char.isalnum() or char in "_-" for char in argument):
         return None
     return verb, argument
 
 
-def welcome(*, chat_id: int, allowed: bool, mock_mode: bool, demo_mode: bool = False) -> View:
+# ── screens ─────────────────────────────────────────────────────────────────
+def welcome(*, display_name: str, mandate: MandateView, catalogue: Sequence[tuple]) -> View:
     lines = [
-        "<b>AVAL</b> — autoridade de pagamento agêntico.",
+        f"<b>AVAL</b> — olá, {escape(display_name)}.",
         "",
-        "Seu agente compra. Você mantém a autoridade: aprova, recusa e revoga por aqui.",
+        "Seu agente compra sozinho. Você mantém a autoridade.",
+        "Acabei de emitir <b>seu</b> mandato, assinado pela sua chave:",
+        "",
+        _mandate_body(mandate),
+        "",
+        "Peça uma compra em português: <code>/comprar um voo pra Córdoba</code>",
+        "Ou veja o que está à venda com /catalogo.",
     ]
-    if demo_mode:
-        return View(
-            "\n".join(
-                lines
-                + [
-                    "",
-                    "🧪 <b>Demo aberta.</b> Você recebeu seus próprios mandatos de teste.",
-                    "Só você decide sobre eles — ninguém mais vê nem toca no seu estado.",
-                    "",
-                    "Use /ajuda para ver os comandos.",
-                ]
-            )
+    return View("\n".join(lines), _mandate_buttons(mandate))
+
+
+def mandate_card(mandate: MandateView) -> View:
+    return View(_mandate_body(mandate), _mandate_buttons(mandate))
+
+
+def _mandate_body(mandate: MandateView) -> str:
+    badge = _STATUS_BADGE.get(mandate.status, "⚪")
+    days = max((mandate.expires_at - datetime.now(UTC)).days, 0)
+    lines = [
+        f"{badge} <b>{escape(mandate.status)}</b> · <code>{escape(mandate.id[:20])}</code>",
+        f"Orçamento: <b>{format_money(mandate.remaining)}</b> livres de {format_money(mandate.limit)}",
+    ]
+    if mandate.ceiling is not None:
+        lines.append(f"Teto por compra: {format_money(mandate.ceiling)} — <i>ninguém atravessa</i>")
+    lines += [
+        f"Pode comprar: {escape(', '.join(mandate.categories))} em {escape(', '.join(mandate.merchants))}",
+        f"Vence em {days} dia(s) · política v{mandate.policy_version} · epoch {mandate.revocation_epoch}",
+    ]
+    return "\n".join(lines)
+
+
+def _mandate_buttons(mandate: MandateView) -> tuple[Row, ...]:
+    rows: list[Row] = [
+        (
+            ("🔄 Atualizar", f"{CALLBACK_MANDATE}:{mandate.id}"),
+            ("🧾 Extrato", f"{CALLBACK_RECEIPT}:{mandate.id}"),
         )
-    if not allowed:
-        lines += [
-            "",
-            "⛔ Este chat ainda não está autorizado.",
-            f"Adicione <code>{chat_id}</code> a <code>TELEGRAM_ALLOWED_CHAT_IDS</code> e reinicie o bot.",
-        ]
+    ]
+    if mandate.status == "ACTIVE":
+        rows.append((("🛑 Revogar", f"{CALLBACK_REVOKE_MENU}:{mandate.id}"),))
+    return tuple(rows)
+
+
+def purchase_result(result: PurchaseView) -> View:
+    """Four outcomes, four different things to say. Never a silent approval."""
+    what = escape(result.title or "—")
+    price = f" — <b>{format_money(result.amount)}</b>" if result.amount else ""
+    buttons: tuple[Row, ...] = ()
+    if result.outcome == "settled":
+        head = f"✅ <b>Comprado.</b>\n{what}{price}"
+        tail = f"\nReferência: <code>{escape(result.settlement_reference or '—')}</code>"
+        if result.reservation_id:
+            # The bonus the case asks for: a purchase can be denied later, and the
+            # trail — not anyone's word — is what answers it.
+            buttons = (
+                (("⚠️ Não reconheço esta compra", f"{CALLBACK_DISPUTE}:{result.reservation_id}"),),
+            )
+    elif result.outcome == "awaiting_human":
+        head = f"🟡 <b>Precisa de você.</b>\n{what}{price}"
+        tail = "\nO agente parou aqui. Decida abaixo."
+    elif result.outcome == "no_offer":
+        head = "🔍 <b>Nada no catálogo atende.</b>"
+        tail = "\nVeja /catalogo e tente com outras palavras."
     else:
-        lines += ["", "Use /ajuda para ver os comandos."]
-    if mock_mode:
-        lines += ["", "⚠️ <i>Modo mock: backend AVAL ainda não conectado.</i>"]
+        head = f"⛔ <b>Recusado.</b>\n{what}{price}"
+        tail = ""
+    return View(
+        f"{head}\n\n{escape(result.human_summary)}\n<i>{escape(result.reason_code)}</i>{tail}",
+        buttons,
+    )
+
+
+def escalation_card(escalation: EscalationView) -> View:
+    return View(
+        "\n".join(
+            [
+                "🟡 <b>Aprovação necessária</b>",
+                "",
+                f"<b>{format_money(escalation.amount)}</b> em {escape(escalation.merchant)}"
+                f" · {escape(escalation.category)}",
+                f"Handle: <code>{escape(escalation.id)}</code>",
+                "",
+                f"<i>{escape(escalation.reason_code)}</i>",
+                "Sua decisão vai assinada com a sua chave.",
+            ]
+        ),
+        (
+            (
+                ("✅ Aprovar", f"{CALLBACK_APPROVE}:{escalation.id}"),
+                ("❌ Recusar", f"{CALLBACK_DENY}:{escalation.id}"),
+            ),
+        ),
+    )
+
+
+def escalation_list(escalations: Sequence[EscalationView]) -> tuple[View, ...]:
+    if not escalations:
+        return (View("Nada aguardando você. 🟢"),)
+    return tuple(escalation_card(item) for item in escalations)
+
+
+def revoke_menu(mandate: MandateView) -> View:
+    return View(
+        "\n".join(
+            [
+                "🛑 <b>Revogar o mandato?</b>",
+                "",
+                "É irreversível e vale a partir da próxima decisão do núcleo.",
+                "Compras já liquidadas não são desfeitas — a autoridade acaba, o histórico fica.",
+            ]
+        ),
+        (
+            (("🛑 Revogar agora", f"{CALLBACK_REVOKE_CONFIRM}:{mandate.id}"),),
+            (("← Voltar", f"{CALLBACK_MANDATE}:{mandate.id}"),),
+        ),
+    )
+
+
+def receipt(view: ReceiptView) -> View:
+    lines = [
+        "🧾 <b>Extrato</b>",
+        "",
+        _mandate_body(view.mandate),
+        "",
+        "<b>Trilha auditável</b>",
+    ]
+    for entry in view.entries:
+        lines.append(
+            f"{entry.occurred_at:%d/%m %H:%M} · <code>{escape(entry.event_type)}</code>"
+            f"\n    {escape(entry.human_summary)}"
+        )
+    return View("\n".join(lines), _mandate_buttons(view.mandate))
+
+
+def catalogue(items: Sequence[tuple[str, MoneyView, str]]) -> View:
+    lines = ["<b>Catálogo VuelaYa</b>", ""]
+    for title, total, category in items:
+        lines.append(f"• {escape(title)} — <b>{format_money(total)}</b> <i>{escape(category)}</i>")
+    lines += ["", "Peça em português: <code>/comprar o voo pra Córdoba</code>"]
     return View("\n".join(lines))
 
 
@@ -120,149 +244,54 @@ def help_text() -> View:
         "\n".join(
             [
                 "<b>Comandos</b>",
-                "/mandatos — mandatos ativos e orçamento vivo",
+                "/comprar &lt;pedido&gt; — o agente tenta comprar em texto livre",
+                "/mandato — orçamento vivo e estado",
+                "/catalogo — o que está à venda",
                 "/aprovacoes — compras aguardando você",
-                "/atividade — últimos eventos auditáveis",
-                "/revogar &lt;id&gt; — revoga um mandato agora",
-                "/status — saúde do backend e modo atual",
-                "/meuid — mostra o id deste chat",
+                "/extrato — recibos e trilha auditável",
+                "/limite &lt;valor&gt; — muda o orçamento (assinado por você)",
+                "/revogar — encerra a autoridade do agente",
+                "/status — saúde do backend",
+                "/meuid — o id deste chat",
             ]
         )
     )
 
 
+def signed_note(action: str, message: str) -> View:
+    return View(f"✅ <b>{escape(action)}</b>\n{escape(message)}\n\n<i>assinado pela sua chave</i>")
+
+
+def plain(message: str) -> View:
+    return View(escape(message))
+
+
 def denied() -> View:
-    return View("⛔ Este chat não tem autoridade sobre nenhum mandato.")
+    return View("⛔ Este chat não tem autoridade neste bot.")
 
 
-def unavailable(detail: str) -> View:
-    """Fail-closed surface: an unreachable backend is never rendered as success."""
-    return View(f"⚠️ AVAL indisponível. Nenhuma ação foi executada.\n<code>{escape(detail)}</code>")
+def no_mandate() -> View:
+    return View("Você ainda não tem mandato. Mande /start para emitir o seu.")
+
+
+def unavailable(detail: str, reason_code: str = "") -> View:
+    """Fail-closed on screen: an unreachable core is never drawn as a success."""
+    tail = f"\n<i>{escape(reason_code)}</i>" if reason_code else ""
+    return View(f"⚠️ Nenhuma ação foi executada.\n{escape(detail)}{tail}")
 
 
 def chat_id_view(chat_id: int) -> View:
     return View(f"Este chat é <code>{chat_id}</code>.")
 
 
-def status(*, backend: str, mock_mode: bool, pending: int, demo_mode: bool = False) -> View:
-    mode = "demo aberta (sandbox por pessoa)" if demo_mode else "mock (fixtures)" if mock_mode else "backend AVAL"
+def status(*, backend: str, base_url: str, open_mode: bool, pending: int) -> View:
     return View(
         "\n".join(
             [
                 "<b>Status</b>",
-                f"Modo: {escape(mode)}",
-                f"Saúde: <code>{escape(backend)}</code>",
+                f"Núcleo: <code>{escape(backend)}</code> em {escape(base_url)}",
+                f"Modo: {'aberto (um mandato por pessoa)' if open_mode else 'lista de autorizados'}",
                 f"Aprovações pendentes: {pending}",
             ]
         )
     )
-
-
-def mandate_list(mandates: Sequence[MandateView]) -> View:
-    if not mandates:
-        return View("Nenhum mandato emitido ainda.")
-    lines = ["<b>Mandatos</b>"]
-    rows: list[Row] = []
-    for mandate in mandates:
-        badge = _STATUS_BADGE.get(mandate.status, "⚪")
-        lines.append(
-            f"{badge} <code>{escape(mandate.id)}</code> — {escape(mandate.agent)}"
-            f"\n    {format_money(mandate.spent)} de {format_money(mandate.limit)}"
-        )
-        rows.append(((f"{badge} {mandate.id}", f"{CALLBACK_MANDATE}:{mandate.id}"),))
-    return View("\n".join(lines), tuple(rows))
-
-
-def mandate_detail(mandate: MandateView, *, now: datetime | None = None) -> View:
-    moment = now or datetime.now(timezone.utc)
-    remaining = MoneyView(
-        mandate.limit.minor_units - mandate.spent.minor_units,
-        mandate.limit.currency,
-        mandate.limit.scale,
-    )
-    badge = _STATUS_BADGE.get(mandate.status, "⚪")
-    days = (mandate.expires_at - moment).days
-    lines = [
-        f"{badge} <b>{escape(mandate.id)}</b>",
-        f"Titular: {escape(mandate.principal)}",
-        f"Agente: {escape(mandate.agent)}",
-        f"Teto: {format_money(mandate.limit)}",
-        f"Gasto: {format_money(mandate.spent)}",
-        f"Disponível: {format_money(remaining)}",
-        f"Merchants: {escape(', '.join(mandate.merchants) or '—')}",
-        f"Expira em: {days} dia(s)",
-        f"Política v{mandate.policy_version} · epoch de revogação {mandate.revocation_epoch}",
-    ]
-    buttons: tuple[Row, ...] = ()
-    if mandate.status == "ACTIVE":
-        buttons = (
-            (("🛑 Revogar", f"{CALLBACK_REVOKE_MENU}:{mandate.id}"),),
-            (("← Mandatos", CALLBACK_MANDATE_LIST),),
-        )
-    else:
-        buttons = ((("← Mandatos", CALLBACK_MANDATE_LIST),),)
-    return View("\n".join(lines), buttons)
-
-
-def revoke_menu(mandate: MandateView) -> View:
-    return View(
-        "\n".join(
-            [
-                f"<b>Revogar {escape(mandate.id)}</b>",
-                "",
-                "A revogação é irreversível e vale a partir da próxima decisão.",
-                "Capturas já liquidadas não são desfeitas.",
-            ]
-        ),
-        (
-            (("🛑 Revogar mandato inteiro", f"{CALLBACK_REVOKE_MANDATE}:{mandate.id}"),),
-            (("💸 Zerar orçamento", f"{CALLBACK_REVOKE_BUDGET}:{mandate.id}"),),
-            (("← Voltar", f"{CALLBACK_MANDATE}:{mandate.id}"),),
-        ),
-    )
-
-
-def approval_card(approval: ApprovalView) -> View:
-    return View(
-        "\n".join(
-            [
-                "🟡 <b>Aprovação necessária</b>",
-                "",
-                f"{escape(approval.item)} — <b>{format_money(approval.amount)}</b>",
-                f"Merchant: {escape(approval.merchant)}",
-                f"Mandato: <code>{escape(approval.mandate_id)}</code>",
-                "",
-                escape(approval.human_summary),
-                f"<i>{escape(approval.reason_code)}</i>",
-            ]
-        ),
-        (
-            (
-                ("✅ Aprovar", f"{CALLBACK_APPROVE}:{approval.id}"),
-                ("❌ Recusar", f"{CALLBACK_DENY}:{approval.id}"),
-            ),
-        ),
-    )
-
-
-def approval_list(approvals: Sequence[ApprovalView]) -> tuple[View, ...]:
-    if not approvals:
-        return (View("Nada aguardando você. 🟢"),)
-    return tuple(approval_card(approval) for approval in approvals)
-
-
-def activity_list(events: Sequence[ActivityView]) -> View:
-    if not events:
-        return View("Sem eventos registrados.")
-    lines = ["<b>Atividade</b>"]
-    for event in events:
-        lines.append(
-            f"{event.occurred_at:%d/%m %H:%M} · <code>{escape(event.event_type)}</code>"
-            f"\n    {escape(event.human_summary)}"
-        )
-    return View("\n".join(lines))
-
-
-def action_result(result: ActionResult) -> View:
-    prefix = "✅" if result.ok else "⚠️"
-    return View(f"{prefix} {escape(result.message)}")
