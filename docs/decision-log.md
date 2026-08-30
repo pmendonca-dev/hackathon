@@ -388,3 +388,17 @@ Use the configured `AVAL_DATABASE_PATH` in both entrypoints
 **What we chose:** `create_app()` now uses the same configured durable database path as the ASGI entrypoint whenever a caller does not explicitly supply one.
 
 **Why:** A restarted runtime must reopen the database that operators migrated and verified. Divergent implicit locations can leave one entrypoint on an obsolete schema and break durable authorization facts.
+
+## Idempotency retention purge boundary
+
+**Decision:** Eligibility for explicit idempotency-record removal
+
+**Options considered (one per line):**
+
+Delete all records past `retained_until`, regardless of state
+Delete completed records only after a startup sweep
+Delete completed records only when an operator invokes maintenance at or after `retained_until`
+
+**What we chose:** The explicit maintenance operation deletes only `COMPLETED` records with `retained_until <= now` and returns only the count removed.
+
+**Why:** A completed record must remain available for the full replay window, while an `IN_FLIGHT` record protects an unfinished side effect indefinitely. A caller-supplied UTC cutoff makes the operation deterministic and prevents retention cleanup from becoming an implicit startup side effect.
