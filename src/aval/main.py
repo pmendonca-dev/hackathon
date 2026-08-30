@@ -196,6 +196,7 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
             clock=clock,
         ),
         clock=clock,
+        engine=runtime.engine,
     )
     # The scoped payment credential: the agent is handed a token that works at this
     # merchant, for this checkout, up to this amount — never a card.
@@ -271,6 +272,7 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
             can_read=lambda identity_id, mandate_id: payment_runtime.can_read_mandate(
                 identity_id=identity_id, mandate_id=mandate_id
             ),
+            mandate_exists=payment_runtime.mandate_exists,
         )
     )
 

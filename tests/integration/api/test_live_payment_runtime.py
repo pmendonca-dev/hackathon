@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import secrets
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -36,6 +37,7 @@ def _signed_headers(
     components += ' "content-digest" "content-type"'
     signature_input = (
         f'sig1=({components});keyid="{signing_kid}";alg="ES256"'
+        f';created={int(app.state.runtime.clock.now().timestamp())};nonce="{secrets.token_hex(16)}"'
     )
     request = SignedRequest(
         method=method, authority="merchant.aval.local", path=path,

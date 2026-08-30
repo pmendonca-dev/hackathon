@@ -7,16 +7,18 @@
 **Options considered (one per line):**
 
 Reuse the plan's historical `0006_browser_ui_sessions` identifier
-Rewrite already published migrations to insert a new revision at `0006`
-Add a forward-only revision after the published `0008_capture_ap2_evidence` head
+Relabel the published browser-session revision after `0010_mandate_instrument`
+Keep the published browser-session revision and join it with an Alembic merge revision
 
-**What we chose:** Add `0009_browser_ui_sessions` as the forward-only migration.
+**What we chose:** Preserve `0009_browser_ui_sessions` and add
+`0011_merge_browser_ui_sessions` with both it and `0010_mandate_instrument` as
+parents.
 
-**Why:** Revisions `0006_escalations`, `0007_payment_runtime`, and
-`0008_capture_ap2_evidence` are already published runtime history. Reusing or
-inserting `0006` would create an Alembic identity conflict and make an existing
-database ambiguous. The new revision preserves the schema chain while adding
-only the server-side session table.
+**Why:** Revisions through `0010_mandate_instrument` are already published runtime
+history on `main`, while databases initialized by the BFF branch already carry the
+browser-session revision identity. Relabeling it would orphan those databases and
+leaving the branch unmerged would make `alembic upgrade head` ambiguous. The merge
+revision creates one upgrade head while preserving both durable histories.
 
 ## Browser projection scope for multi-merchant mandates
 
@@ -37,6 +39,20 @@ facts and cannot prove that every event is attributable to one merchant. A
 heuristic filter could disclose another merchant's checkout or settlement
 facts, so the BFF fails closed until a future evidence model provides an
 authoritative merchant partition.
+
+## Browser workspace mandate source
+
+**Decision:** Scope of the Core mandate read used by browser workspace projections
+
+**Options considered (one per line):**
+
+Keep the Core limited to principal-scoped mandate reads and omit auditor and operator workspaces
+Expose a transport-level all-mandates endpoint for the browser
+Provide an internal Core read that the already-authenticated BFF filters into role-scoped projections
+
+**What we chose:** Provide the internal Core read and keep all role checks and redaction in the BFF projection service.
+
+**Why:** The published BFF contract grants auditors a redacted cross-merchant summary and operators mandate status, while merchant and holder projections remain narrower. The new read is not an HTTP surface and does not bypass the BFF session and role checks; exposing it through the agent APIs would weaken their RFC 9421 boundary.
 
 ## Browser operator revocation idempotency binding
 
