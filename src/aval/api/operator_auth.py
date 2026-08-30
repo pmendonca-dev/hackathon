@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hmac
 import os
+from datetime import UTC, datetime
 
 from fastapi import Request
 
@@ -53,6 +54,20 @@ DEFAULT_SESSION_TTL_SECONDS = 1800
 JOURNALLED_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
 
 
+def wall_clock_now() -> datetime:
+    """Real time, deliberately not the demo clock.
+
+    Everything about *mandates* is read against the runtime clock, because a judge is
+    invited to move it and watch validity end. An operator session is a different kind
+    of fact: it is about who is holding this console right now. Tying it to the demo
+    clock had two consequences, both found by running the browser journey rather than
+    the unit tests — a judge who advanced the clock to expire a mandate logged
+    themselves out mid-demonstration, and an operator could end *another* operator's
+    session by turning a knob that is supposed to age mandates and nothing else.
+    """
+    return datetime.now(UTC)
+
+
 def session_ttl_seconds() -> int:
     """How long a console session lives. Short by default: the credential exists to be
     forgotten, and a judge who needs longer opens another one."""
@@ -67,7 +82,7 @@ def authenticated_operator(request: Request) -> str:
     runtime = runtime_of(request)
     session_token = request.headers.get(OPERATOR_SESSION_HEADER, "")
     if session_token:
-        now = runtime.clock.now()
+        now = wall_clock_now()
         with runtime.engine.connect() as connection:
             try:
                 session_id = SqliteOperatorSessions(connection).authenticate(

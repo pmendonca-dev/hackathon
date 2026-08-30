@@ -70,17 +70,25 @@ test('a free-text purchase goes to the agent surface and returns the ladder', as
   assert.deepEqual(run.evaluation_trace, trace);
 });
 
-test('the operator token travels only on operator routes', async () => {
-  const { gateway, calls } = gatewayWith(
-    [{ status: 200, body: { mandates: [] } }, { status: 200, body: { mode: 'offline' } }],
-    { operatorToken: 'demo-token' },
-  );
+test('the operator credential travels only on operator routes', async () => {
+  const { gateway, calls } = gatewayWith([
+    { status: 201, body: { session_id: 'ops_1', session_token: 'ops_1.secret', expires_at: 'x' } },
+    { status: 200, body: { mandates: [] } },
+    { status: 200, body: { mode: 'offline' } },
+  ]);
+  await gateway.openOperatorSession('demo-token');
 
   await gateway.listMandates('usr_marta');
   await gateway.setPspMode('offline');
 
-  assert.equal('X-Aval-Operator' in calls[0].headers, false);
-  assert.equal(calls[1].headers['X-Aval-Operator'], 'demo-token');
+  // The holder's own listing must never carry an operator credential: the two lanes
+  // answer different questions, and a page that mixed them would be claiming that
+  // running the instance is a way of seeing someone's mandates.
+  assert.equal('X-Aval-Operator-Session' in calls[1].headers, false);
+  assert.equal(calls[2].headers['X-Aval-Operator-Session'], 'ops_1.secret');
+  // And the permanent token appears once, in the exchange, and never again.
+  assert.equal(calls[0].headers['X-Aval-Operator'], 'demo-token');
+  assert.equal('X-Aval-Operator' in calls[2].headers, false);
 });
 
 test('an operator command without a configured token fails before it is sent', async () => {
@@ -223,15 +231,16 @@ test('dropping a catalogue price is an operator action, never a holder one', asy
   // The standing order needs something that ends the waiting. Repricing sells nothing
   // and authorizes nothing — it moves the catalogue, which is why it sits with the
   // processor switch and not with the holder key.
-  const { gateway, calls } = gatewayWith(
-    [{ status: 200, body: { sku: 'FL-SAO-COR-0918', minor_units: 9000 } }],
-    { operatorToken: 'demo-token' },
-  );
+  const { gateway, calls } = gatewayWith([
+    { status: 201, body: { session_id: 'ops_1', session_token: 'ops_1.secret', expires_at: 'x' } },
+    { status: 200, body: { sku: 'FL-SAO-COR-0918', minor_units: 9000 } },
+  ]);
+  await gateway.openOperatorSession('demo-token');
 
   await gateway.repriceOffer('FL-SAO-COR-0918', 9000);
 
-  assert.equal(calls[0].url, 'http://api.test/admin/catalog/price');
-  assert.equal(calls[0].method, 'POST');
-  assert.equal(calls[0].headers['X-Aval-Operator'], 'demo-token');
-  assert.deepEqual(JSON.parse(calls[0].body), { sku: 'FL-SAO-COR-0918', minor_units: 9000 });
+  assert.equal(calls[1].url, 'http://api.test/admin/catalog/price');
+  assert.equal(calls[1].method, 'POST');
+  assert.equal(calls[1].headers['X-Aval-Operator-Session'], 'ops_1.secret');
+  assert.deepEqual(JSON.parse(calls[1].body), { sku: 'FL-SAO-COR-0918', minor_units: 9000 });
 });

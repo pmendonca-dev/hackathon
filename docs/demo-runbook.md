@@ -25,13 +25,21 @@ Em outro terminal:
 ```powershell
 Set-Location web
 $env:VITE_AVAL_API_BASE_URL  = "http://127.0.0.1:8099"
-$env:VITE_AVAL_OPERATOR_TOKEN = "demo-token"
 npm run dev
 ```
+
+O token de operador **não** vai para o navegador. No console trial-by-fire ele é digitado
+uma vez e trocado por uma sessão curta; o que a página guarda expira sozinha e some ao
+fechar a aba. Um token embutido no bundle é um token publicado.
 
 `AVAL_DEMO_TAMPER` é opcional e **destrutivo por natureza**: sem ele a rota de
 adulteração não é montada — 404 de verdade, ausente até do OpenAPI. Ligue apenas para
 a demonstração da cadeia de hash.
+
+`AVAL_DEMO_ROGUE` segue a mesma regra e monta a cobrança por fora do núcleo: é o agente
+que nunca perguntou ao mandato, e o único caminho que produz dinheiro que a camada não
+consegue justificar — logo, o único em que o veredito devolve o valor. Ligue quando for
+mostrar a disputa terminando em estorno.
 
 O agente roda por regras. Para demonstrá-lo com um modelo de verdade — que pode
 alucinar, e ser recusado mesmo assim:

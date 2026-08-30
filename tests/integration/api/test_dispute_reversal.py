@@ -169,3 +169,19 @@ def test_the_rogue_charge_route_still_needs_the_operator(rogue_harness) -> None:
     )
 
     assert response.status_code == 401, response.text
+
+
+def test_the_holder_can_name_the_purchase_they_do_not_recognise(harness) -> None:
+    """A dispute is opened against a reservation, so the person's own record has to
+    carry that id. Without it the button exists only where a developer can read the
+    database, which is not where the holder is."""
+    mandate_id = harness.create_mandate()
+    reservation_id = harness.capture(
+        harness.purchase(mandate_id) | {"idempotency_key": "cap_rev_2"}
+    ).json()["reservation_id"]
+
+    record = harness.human_ledger(mandate_id).json()
+
+    assert any(
+        entry["detail"].get("reservation_id") == reservation_id for entry in record["entries"]
+    )

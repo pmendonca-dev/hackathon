@@ -20,8 +20,9 @@ levanta limite, porque isso é autoridade do titular e se prova com a chave dele
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
+from aval.infrastructure.sqlite.models import operator_sessions
 from tests.integration.api.conftest import Harness
 
 
@@ -71,14 +72,38 @@ def test_an_unknown_session_is_refused(harness: Harness) -> None:
 
 
 def test_an_expired_session_stops_working(harness: Harness) -> None:
-    """A credential that outlived its window is a credential nobody is watching."""
-    headers = session_headers(harness)
+    """A credential that outlived its window is a credential nobody is watching.
 
-    harness.clock.advance(timedelta(hours=9))
-    response = harness.client.post("/admin/psp", headers=headers, json={"mode": "offline"})
+    The window is real time, not the demo clock — the row is aged here directly for the
+    same reason: sessions must not be reachable by the knob that ages mandates."""
+    issued = open_session(harness)
+    with harness.runtime.engine.begin() as connection:
+        connection.execute(
+            operator_sessions.update()
+            .where(operator_sessions.c.id == issued["session_id"])
+            .values(expires_at=datetime.now(UTC) - timedelta(minutes=1))
+        )
+
+    response = harness.client.post(
+        "/admin/psp",
+        headers={"X-Aval-Operator-Session": issued["session_token"]},
+        json={"mode": "offline"},
+    )
 
     assert response.status_code == 403, response.text
     assert response.json()["reason_code"] == "operator_session_expired"
+
+
+def test_moving_the_demo_clock_does_not_end_the_session(harness: Harness) -> None:
+    """Found by running the browser journey, not by the unit tests: the trial by fire
+    asks a judge to advance the clock and watch a mandate expire, and that was logging
+    them out of the console in the same gesture. The clock ages mandates; it is not a
+    way to end somebody's session — least of all somebody else's."""
+    headers = session_headers(harness)
+
+    harness.client.post("/admin/clock", headers=harness.operator, json={"advance_seconds": 864000})
+
+    assert harness.client.post("/admin/psp", headers=headers, json={"mode": "offline"}).status_code == 200
 
 
 def test_a_session_can_be_closed_before_it_expires(harness: Harness) -> None:

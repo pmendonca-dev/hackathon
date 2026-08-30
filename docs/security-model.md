@@ -6,20 +6,22 @@ chamar sua API?"*.
 
 ---
 
-## As três autoridades, e por que são separadas
+## As autoridades, e por que são separadas
 
-O sistema responde a três perguntas distintas com três mecanismos distintos. Confundi-las
-é o erro que transforma uma camada de autorização em teatro.
+O sistema responde a perguntas distintas com mecanismos distintos. Confundi-las é o erro
+que transforma uma camada de autorização em teatro.
 
 | pergunta | mecanismo | quem detém | onde |
 |---|---|---|---|
 | *Quem está chamando?* | assinatura HTTP RFC 9421 (ES256) | o agente, com chave própria | `security/http_signature.py` |
 | *Esta compra pode acontecer?* | avaliação do mandato | ninguém — é determinística | `application/authorization_core.py` |
+| *Este mandato existe por vontade de quem?* | JWS ES256 do titular sobre os termos de criação | o humano dono do mandato | `_verified_creation` |
 | *Quem autoriza mudar a autoridade?* | JWS ES256 do titular | o humano dono do mandato | `_verified_approval` |
-| *Quem opera esta instância?* | token de operador | o time | `api/operator_auth.py` |
+| *Quem pode ler o registro desta pessoa?* | JWS ES256 de leitura | o humano dono do mandato | `mandates_readable_by` |
+| *Quem opera esta instância?* | token de operador, ou sessão curta trocada por ele | o time | `api/operator_auth.py` |
 
-A divisão que mais importa: **o operador não pode mexer em dinheiro.** O token de
-operador libera registro de agente e o interruptor do PSP; ele **não** libera aumentar
+A divisão que mais importa: **o operador não pode mexer em dinheiro.** A credencial de
+operador libera registro de agente e o interruptor do PSP; ela **não** libera aumentar
 um limite nem aprovar uma escalação. Essas duas coisas exigem a chave do titular. Um
 operador capaz de subir um limite seria um operador capaz de gastar o dinheiro dos
 outros.
@@ -37,24 +39,66 @@ autenticado ainda recebe exatamente o que o mandato permite. Autenticar não é 
 | `PATCH /mandates/{id}/limit` | **JWS do titular** sobre mandato + valor exato |
 | `POST /mandates/{id}/revocation` | **JWS do titular** sobre o mandato nomeado |
 | `POST /escalations/{id}/decision` | **JWS do titular** sobre handle + mandato + valor + decisão |
-| `POST /agents` | token de operador |
-| `POST /admin/psp`, `GET /admin/psp`, `POST /reconcile` | token de operador |
-| `POST /mandates` | nada — criar mandato próprio não afeta terceiros |
-| `POST /agent/purchase`, `GET /ledger`, `POST /disputes` | conhecimento do `mandate_id` |
+| `POST /agents` | credencial de operador |
+| `POST /admin/psp`, `GET /admin/psp`, `POST /reconcile` | credencial de operador |
+| `POST /admin/operator/sessions` | **token** de operador — uma sessão não abre outra |
+| `GET /admin/operator/journal` | credencial de operador |
+| `POST /mandates` | **JWS do titular** sobre os termos que o mandato nasce carregando |
+| `GET /mandates/{id}`, `GET /ledger?view=human` | **JWS de leitura** do titular daquele mandato |
+| `GET /ledger?view=auditor` | nada — é a superfície de transparência, e publica a cadeia |
+| `POST /agent/purchase`, `POST /disputes` | conhecimento do `mandate_id` |
 
-### O modelo de capability do `mandate_id`
+Onde se lê *credencial de operador*: o token permanente, apresentado por um chamador de
+máquina, ou uma sessão curta trocada por ele. A sessão existe para que nenhuma página
+precise carregar o token — um segredo permanente embutido num bundle é um segredo
+permanente publicado. A expiração é medida em tempo real, e **não** no relógio de
+demonstração: senão avançar o relógio para expirar um mandato derrubaria a sessão de
+quem está apresentando, e um operador poderia encerrar a sessão de outro girando um botão
+que existe para envelhecer mandatos.
 
-`mandate_id` é UUID4 (128 bits). Quem o conhece pode instruir o agente a comprar dentro
-do escopo e ler a visão humana da trilha — é um modelo de *capability URL*, deliberado e
-adequado a uma demo operada por jurados. **Está declarado aqui porque um modelo de
-segurança implícito não é um modelo de segurança.**
+### A criação é assinada, e o nonce é de uso único
 
-O que o `mandate_id` **não** dá, mesmo para quem o conhece: aumentar o limite, revogar,
-aprovar uma escalação, comprar acima do teto ou fora do escopo. Todo dano possível está
-limitado pelo que o mandato já autorizava.
+`POST /mandates` verifica um JWS ES256 de uma autoridade *holder* **do próprio mandato**
+sobre principal, merchants, categorias, limite, teto, frequência e validade. A verificação
+acontece antes de qualquer escrita, contra as autoridades que estão sendo registradas: a
+chave que amanhã revoga é a que hoje autoriza a existência.
 
-Em produção, `/agent/purchase` e `/ledger` ficariam atrás da sessão do titular. O núcleo
-não muda: ele nunca confiou no chamador.
+O `creation_nonce` é único no banco. Uma revogação replayada não muda nada; uma criação é
+aditiva, e a mesma assinatura enviada duas vezes cunharia um segundo mandato com os mesmos
+termos — dobrando o que o agente pode gastar sem ninguém assinar duas vezes.
+
+Consequência na arbitragem: *mandate repudiation* passa a ser refutada pela posição 0 da
+cadeia, sem depender de a pessoa ter aprovado ou revogado algo depois.
+
+### O que restou do modelo de capability do `mandate_id`
+
+`mandate_id` é UUID4 (128 bits) e **nunca foi segredo**: viaja no recibo do agente, na
+barra de endereço e em qualquer print de tela. Por isso ele deixou de abrir o registro da
+pessoa: `GET /mandates/{id}` e a visão humana da trilha exigem uma assinatura de leitura
+verificada contra a autoridade *daquele* mandato — a mesma regra que a listagem por
+titular já aplicava. Uma chave que não é autoridade recebe `403 read_forbidden`.
+
+O que sobra atrás do id é a lane de agente: instruir o agente e abrir uma disputa. É
+deliberado, e é seguro pela mesma razão de sempre — **convencer o agente a querer algo não
+é o mesmo que poder fazê-lo**, e uma disputa aberta por terceiro não move dinheiro: quem
+decide é a trilha, e o veredito é recalculado da evidência a cada leitura.
+
+O que o `mandate_id` **não** dá, mesmo para quem o conhece: ler o registro do titular,
+aumentar o limite, revogar, aprovar uma escalação, comprar acima do teto ou fora do
+escopo. Todo dano possível está limitado pelo que o mandato já autorizava.
+
+### O diário do operador
+
+Ninguém assina para operar, então a autoridade de operador é a única aqui sem autor
+criptográfico. O substituto é uma cadeia de hash com a mesma disciplina da trilha de
+mandato: `GET /admin/operator/journal` publica cada escrita, com a sessão que a praticou,
+e a cadeia acusa a posição exata se alguma linha for editada. Ela não prova quem digitou —
+prova que nada foi retirado depois. Leituras não entram: ler não é operar, e um diário que
+registrasse as próprias leituras enterraria as três linhas que importam.
+
+O corpo das requisições **não** é registrado. Um corpo pode carregar número de cartão, e
+o diário é legível por qualquer credencial de operador: ele registra *que a instância foi
+operada*, nunca o que alguém digitou nela.
 
 ---
 

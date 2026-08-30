@@ -19,6 +19,7 @@ from aval.api.operator_auth import (
     authenticated_operator,
     require_operator,
     session_ttl_seconds,
+    wall_clock_now,
 )
 from aval.infrastructure.sqlite.operator_repository import (
     SqliteOperatorJournal,
@@ -48,7 +49,7 @@ def open_session(request: Request) -> dict[str, Any]:
     issued = run_in_write_transaction(
         runtime.engine,
         lambda connection: SqliteOperatorSessions(connection).issue(
-            now=runtime.clock.now(), ttl_seconds=session_ttl_seconds()
+            now=wall_clock_now(), ttl_seconds=session_ttl_seconds()
         ),
     )
     return {
@@ -72,7 +73,7 @@ def close_session(request: Request, actor: str = Depends(require_operator)) -> d
     run_in_write_transaction(
         runtime.engine,
         lambda connection: SqliteOperatorSessions(connection).revoke(
-            session_id, now=runtime.clock.now()
+            session_id, now=wall_clock_now()
         ),
     )
     return {"session_id": session_id, "status": "closed"}

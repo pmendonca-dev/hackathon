@@ -87,6 +87,9 @@ HUMAN_VISIBLE_DETAIL = frozenset(
         # itself stays with the auditor: the person needs to recognise their own key,
         # not to re-verify a signature their browser produced.
         "creation_kid",
+        # The purchase a dispute is opened against. Their own purchase, in their own
+        # record — and the one thing a person needs in order to say "not this one".
+        "reservation_id",
     }
 )
 

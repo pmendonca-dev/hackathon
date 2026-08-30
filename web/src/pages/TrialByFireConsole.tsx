@@ -1,5 +1,16 @@
 import { useState } from 'react';
-import { Clock, KeyRound, PlugZap, RefreshCcw, ShieldOff, TrendingDown, Wallet } from 'lucide-react';
+import {
+  Clock,
+  KeyRound,
+  LogOut,
+  PlugZap,
+  RefreshCcw,
+  ScrollText,
+  ShieldOff,
+  Siren,
+  TrendingDown,
+  Wallet,
+} from 'lucide-react';
 
 import { useAval } from '../state/AvalContext.ts';
 import { Badge, Button, EmptyNotice, Panel } from '../components/ui.tsx';
@@ -20,6 +31,8 @@ export function TrialByFireConsole() {
     selectedMandateId,
     walletReady,
     operatorAvailable,
+    operatorSessionExpiresAt,
+    operatorJournal,
     receipts,
     changeLimit,
     revokeSelected,
@@ -29,12 +42,20 @@ export function TrialByFireConsole() {
     advanceClock,
     offers,
     repriceOffer,
+    openOperatorSession,
+    closeOperatorSession,
+    loadOperatorJournal,
+    rogueCharge,
   } = useAval();
 
   const [newLimit, setNewLimit] = useState('100');
   const [hours, setHours] = useState('24');
   const [sku, setSku] = useState('');
   const [newPrice, setNewPrice] = useState('90');
+  // Held for exactly as long as it takes to press the button: never in state that
+  // outlives the exchange, never in storage, and never sent anywhere but the exchange.
+  const [operatorToken, setOperatorToken] = useState('');
+  const [rogueAmount, setRogueAmount] = useState('90');
   const [busy, setBusy] = useState(false);
   const selected = mandates.find((item) => item.mandate_id === selectedMandateId) ?? null;
   const chosenSku = sku || offers[0]?.item.sku || '';
@@ -106,15 +127,54 @@ export function TrialByFireConsole() {
           action={<PlugZap size={18} className="text-hold" aria-hidden="true" />}
         >
           {!operatorAvailable ? (
-            <p className="text-[13px] leading-relaxed text-fg-mute">
-              Nenhum token de operador configurado nesta sessão. Estes comandos não são
-              enviados, e nada é simulado no navegador.
-            </p>
+            <>
+              {/* The token is typed here and exchanged for a session. It used to be
+                  built into the bundle, which published it: anyone who opened devtools
+                  on this page kept the processor switch forever. */}
+              <p className="mb-4 text-[13px] leading-relaxed text-fg-mute">
+                Nenhuma sessão de operador aberta nesta aba. Apresente o token uma vez — o
+                que fica na página é uma credencial curta, que expira sozinha.
+              </p>
+              <label className="block">
+                <span className="eyebrow">Token de operador</span>
+                <input
+                  className="form-control"
+                  type="password"
+                  autoComplete="off"
+                  value={operatorToken}
+                  onChange={(event) => setOperatorToken(event.target.value)}
+                />
+              </label>
+              <Button
+                variant="ghost"
+                className="mt-2 w-full"
+                disabled={busy || operatorToken.length === 0}
+                onClick={() =>
+                  fire(async () => {
+                    await openOperatorSession(operatorToken);
+                    setOperatorToken('');
+                  })
+                }
+              >
+                <KeyRound size={13} aria-hidden="true" />Abrir sessão de operador
+              </Button>
+              <p className="safe-note mt-4">
+                <ShieldOff size={15} aria-hidden="true" />
+                Nada aqui move dinheiro. Aumentar limite e aprovar escalação continuam
+                exigindo a chave do titular, que esta sessão não tem e não pode obter.
+              </p>
+            </>
           ) : (
             <>
-              <p className="mb-4 text-[13px] leading-relaxed text-fg-mute">
+              <p className="mb-2 text-[13px] leading-relaxed text-fg-mute">
                 Estas superfícies operam a instância e, de propósito, não mexem em
                 dinheiro nenhum.
+              </p>
+              <p className="mb-4 flex flex-wrap items-center gap-2">
+                <Badge tone="hold">sessão até {operatorSessionExpiresAt ?? '—'}</Badge>
+                <Button variant="ghost" disabled={busy} onClick={() => fire(closeOperatorSession)}>
+                  <LogOut size={13} aria-hidden="true" />Encerrar sessão
+                </Button>
               </p>
               <div className="grid gap-2 sm:grid-cols-3">
                 <Button variant="ghost" disabled={busy} onClick={() => fire(() => setPspMode('offline'))}>Processador offline</Button>
@@ -170,6 +230,34 @@ export function TrialByFireConsole() {
               >
                 <TrendingDown size={13} aria-hidden="true" />O preço caiu — e agora?
               </Button>
+              {/* The agent that goes around AVAL entirely: it charges the card and
+                  never asks the mandate. It is the only way to produce money this layer
+                  cannot justify holding — and therefore the only way to watch the
+                  verdict give it back. Mounted only with AVAL_DEMO_ROGUE. */}
+              <label className="mt-4 block">
+                <span className="eyebrow">Cobrança por fora do núcleo (USD)</span>
+                <input
+                  className="form-control"
+                  value={rogueAmount}
+                  onChange={(event) => setRogueAmount(event.target.value)}
+                />
+              </label>
+              <Button
+                variant="danger"
+                className="mt-2 w-full"
+                disabled={busy || !selected}
+                onClick={() => fire(() => rogueCharge(Math.round(Number(rogueAmount) * 100)))}
+              >
+                <Siren size={13} aria-hidden="true" />Cobrar sem passar pelo mandato
+              </Button>
+              <Button
+                variant="ghost"
+                className="mt-2 w-full"
+                disabled={busy}
+                onClick={() => fire(loadOperatorJournal)}
+              >
+                <ScrollText size={13} aria-hidden="true" />Ler o diário do operador
+              </Button>
               <p className="safe-note mt-4">
                 <Clock size={15} aria-hidden="true" />
                 O relógio só avança. Rebobinar reviveria um mandato expirado, e isso
@@ -179,6 +267,53 @@ export function TrialByFireConsole() {
           )}
         </Panel>
       </section>
+
+      {operatorJournal && (
+        <Panel
+          eyebrow="O outro lado da simetria"
+          title={`Diário do operador — ${operatorJournal.entries.length} ato(s)`}
+          action={
+            <Badge tone={operatorJournal.chain.intact ? 'verify' : 'deny'}>
+              {operatorJournal.chain.intact
+                ? 'CADEIA ÍNTEGRA'
+                : `QUEBRADA EM ${operatorJournal.chain.broken_at}`}
+            </Badge>
+          }
+        >
+          {operatorJournal.entries.length === 0 ? (
+            <EmptyNotice
+              title="Nada foi operado ainda"
+              body="Escritas entram aqui; leituras não, porque ler não é um ato de operação."
+            />
+          ) : (
+            <ul className="space-y-2">
+              {operatorJournal.entries
+                .slice()
+                .reverse()
+                .map((entry) => (
+                  <li
+                    key={entry.sequence}
+                    className="rounded-lg border border-line bg-ink-800/40 p-3"
+                  >
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="mono text-[11px] text-hold">{entry.action}</span>
+                      <span className="mono text-[10px] text-fg-mute">
+                        {formatDateTime(entry.occurred_at)}
+                      </span>
+                    </div>
+                    <p className="mono mt-1 text-[11px] text-fg-mute">{entry.actor}</p>
+                  </li>
+                ))}
+            </ul>
+          )}
+          <p className="safe-note mt-4">
+            <ScrollText size={15} aria-hidden="true" />
+            O titular assina para gastar; ninguém assina para operar. No lugar da
+            assinatura entra a cadeia: ela não prova quem digitou, e prova que nada foi
+            retirado depois.
+          </p>
+        </Panel>
+      )}
 
       <Panel eyebrow="O que o runtime respondeu" title="Recibos desta sessão">
         {receipts.length === 0 ? (

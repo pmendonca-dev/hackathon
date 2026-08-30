@@ -6,8 +6,10 @@ import type {
   Escalation,
   LedgerEntry,
   MandateView,
+  Dispute,
   Metrics,
   Money,
+  OperatorJournal,
   Watch,
 } from '../gateways/authorizationGateway.ts';
 
@@ -36,8 +38,18 @@ export interface AvalContextValue {
   view: View;
   loading: boolean;
   error: string | null;
-  /** Present only when an operator token was configured for this session. */
+  /**
+   * Whether this tab currently holds an operator session.
+   *
+   * Not "was a token configured": nothing permanent is configured any more. A judge
+   * types the token into the console, gets a session that expires on its own, and this
+   * turns false again the moment it is closed or the runtime stops honouring it.
+   */
   operatorAvailable: boolean;
+  /** When the open session dies by itself. Null when there is none. */
+  operatorSessionExpiresAt: string | null;
+  /** What operator credentials did, chained. Null until the console asks for it. */
+  operatorJournal: OperatorJournal | null;
 
   mandates: MandateView[];
   selectedMandateId: string | null;
@@ -53,6 +65,8 @@ export interface AvalContextValue {
   metrics: Metrics | null;
   /** Standing orders on the selected mandate — the agent still working unwatched. */
   watches: Watch[];
+  /** Disputes on the selected mandate, each with the verdict recomputed from the trail. */
+  disputes: Dispute[];
   /** The merchant's signed offers, so a judge can pick the price to drop. */
   offers: CatalogOffer[];
   /**
@@ -88,6 +102,19 @@ export interface AvalContextValue {
   changeLimit(minorUnits: number): Promise<void>;
   revokeSelected(): Promise<void>;
   revokeEverything(): Promise<void>;
+  /** Trade the typed token for a session. The token is never stored anywhere. */
+  openOperatorSession(token: string): Promise<void>;
+  closeOperatorSession(): Promise<void>;
+  loadOperatorJournal(): Promise<void>;
+  /**
+   * "I do not recognise this purchase." Open to the holder alone, and it costs the
+   * merchant nothing to answer: the trail decides, not the loudest party.
+   */
+  disputePurchase(reservationId: string, reason: string): Promise<void>;
+  /** Resolve by reading the trail. When it cannot justify the charge, money goes back. */
+  resolveDispute(disputeId: string): Promise<void>;
+  /** Stage a charge that never passed the core, so the reversal can be seen happening. */
+  rogueCharge(minorUnits: number): Promise<void>;
   setPspMode(mode: 'online' | 'offline' | 'decline'): Promise<void>;
   reconcile(): Promise<void>;
   advanceClock(seconds: number): Promise<void>;

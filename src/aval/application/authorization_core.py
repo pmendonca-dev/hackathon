@@ -981,9 +981,10 @@ class AuthorizationCore:
     # *mandate repudiation*, and both are questions this trail can answer — so it
     # answers them, in a fixed order, the way the authorization ladder does.
     REPUDIATION_UNPROVEN_NOTE = (
-        "A criação do mandato não é assinada nesta implementação, e nenhum artefato "
-        "assinado pelo titular nomeia este mandato. A trilha prova que o agente ficou "
-        "dentro do mandato; não prova que a pessoa o criou."
+        "Este mandato não carrega prova de criação assinada, e nenhum outro artefato "
+        "assinado pelo titular o nomeia. A trilha prova que o agente ficou dentro do "
+        "mandato; não prova que esta pessoa o criou. Todo mandato criado por HTTP nasce "
+        "assinado — esta resposta só alcança um mandato registrado em processo."
     )
 
     #: Ledger event types, mapped to the three outcomes the core can reach. Reading the

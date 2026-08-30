@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link2, Link2Off, ScrollText, ShieldAlert } from 'lucide-react';
+import { Link2, Link2Off, PenLine, Scale, ScrollText, ShieldAlert } from 'lucide-react';
 
 import { useAval } from '../state/AvalContext.ts';
 import { Badge, Button, EmptyNotice, Field, Panel } from '../components/ui.tsx';
@@ -14,7 +14,8 @@ import { formatDateTime, shortHash } from '../utils/format.ts';
  * started with the demo flag — its absence is the normal state.
  */
 export function AuditorTrailView() {
-  const { auditorEntries, chain, selectedMandateId, tamperLedger, operatorAvailable } = useAval();
+  const { auditorEntries, chain, disputes, selectedMandateId, tamperLedger, operatorAvailable } =
+    useAval();
   const [sequence, setSequence] = useState('1');
   const [busy, setBusy] = useState(false);
 
@@ -84,6 +85,63 @@ export function AuditorTrailView() {
         </Panel>
 
         <div className="space-y-4">
+          <Panel
+            eyebrow="Arbitragem"
+            title="Quem responde, derivado da trilha"
+            action={<Scale size={18} className="text-hold" aria-hidden="true" />}
+          >
+            {disputes.length === 0 ? (
+              <EmptyNotice
+                title="Nenhuma disputa"
+                body="Quando uma compra é negada, o veredito aparece aqui com as linhas que o sustentam."
+              />
+            ) : (
+              <ul className="space-y-3">
+                {disputes.map((dispute) => (
+                  <li key={dispute.id} className="rounded-xl border border-line bg-ink-850/70 p-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="mono text-[11px] text-hold">{dispute.reservation_id}</span>
+                      <Badge tone={dispute.liability.liable_party === 'holder' ? 'deny' : 'allow'}>
+                        {dispute.liability.verdict}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-[12px] text-fg-mute">
+                      responde: {dispute.liability.liable_party}
+                    </p>
+                    {/* The verdict is not stored. It is recomputed from append-only
+                        evidence on every read, and these are the exact lines it read —
+                        a conclusion nobody has to take on faith. */}
+                    <ul className="mt-2 space-y-1">
+                      {dispute.liability.basis.map((line, index) => (
+                        <li key={index} className="text-[12px] leading-relaxed text-fg-mute">
+                          · {line}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 flex flex-wrap items-center gap-2">
+                      <Badge
+                        tone={dispute.liability.mandate_repudiation === 'refuted' ? 'verify' : 'hold'}
+                      >
+                        repudiação: {dispute.liability.mandate_repudiation}
+                      </Badge>
+                      {dispute.liability.holder_signatures.map((signature) => (
+                        <span key={signature.kid + signature.kind} className="mono text-[10px] text-fg-faint">
+                          <PenLine size={11} aria-hidden="true" /> {signature.kind} · {signature.kid}
+                        </span>
+                      ))}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="safe-note mt-4">
+              <Scale size={15} aria-hidden="true" />
+              O mandato nasce assinado pela chave do titular, e essa assinatura é a
+              posição 0 desta cadeia. É ela que responde a um “eu nunca criei esse
+              mandato” sem depender de nada que a pessoa tenha feito depois.
+            </p>
+          </Panel>
+
           <Panel eyebrow="Verificação" title="Estado da cadeia">
             <dl>
               <Field label="Mandato">{selectedMandateId ?? '—'}</Field>

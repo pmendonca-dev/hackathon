@@ -19,10 +19,7 @@ import { mandateCreationClaims } from '../src/wallet/mandateCreation.ts';
 const baseUrl = process.argv[2] ?? 'http://127.0.0.1:8137';
 const principalId = `usr_browser_${Date.now()}`;
 
-const gateway = new AuthorizationGateway({
-  baseUrl,
-  operatorToken: process.env.AVAL_OPERATOR_TOKEN ?? 'demo-token',
-});
+const gateway = new AuthorizationGateway({ baseUrl });
 
 const steps = [];
 function check(label, condition, detail = '') {
@@ -32,6 +29,17 @@ function check(label, condition, detail = '') {
 }
 
 const wallet = await generateHolderKeyPair(`${principalId}_browser_k1`);
+
+// 0 — the console holds no permanent secret. The token is presented once, here, and
+// what the page keeps from now on is a session that expires on its own.
+const operatorSession = await gateway.openOperatorSession(
+  process.env.AVAL_OPERATOR_TOKEN ?? 'demo-token',
+);
+check(
+  'o token vira sessão de operador e não fica no bundle',
+  gateway.hasOperatorSession && Boolean(operatorSession.expires_at),
+  operatorSession.session_id,
+);
 
 // 1 — the holder creates a mandate, registering this browser's public key.
 const created = await gateway.createMandate({
@@ -237,6 +245,61 @@ check(
   watchAfterRevocation !== 'comprou mesmo revogada',
   watchAfterRevocation,
 );
+
+// 10 — the operator leaves a trail too. Nobody signs to operate, so what replaces the
+// signature is a chain: it cannot prove who typed, and it proves nothing was removed.
+const journal = await gateway.operatorJournal();
+check(
+  'o diário do operador registra o que foi operado',
+  journal.entries.length > 0 && journal.chain.intact,
+  `${journal.entries.length} ato(s), cadeia ${journal.chain.intact ? 'íntegra' : 'quebrada'}`,
+);
+check(
+  'e nomeia a sessão que agiu, não apenas "o operador"',
+  journal.entries.some((entry) => entry.actor.startsWith('operator:session:')),
+  journal.entries.at(-1)?.actor ?? '—',
+);
+
+// 11 — a charge that never passed the core. The mandate is revoked by now, which is
+// exactly the point: going around the core means the mandate is never asked, so only
+// the trail can answer for the money afterwards. This is the only shape of money this layer
+// cannot justify holding, and therefore the only one a verdict gives back. It needs the
+// runtime to have been started with AVAL_DEMO_ROGUE.
+let reversal = 'rota não montada';
+try {
+  const rogue = await gateway.rogueCharge(mandateId, 9000);
+  const spentBefore = (await gateway.readMandate(mandateId, readToken)).spent
+    .minor_units;
+  const opened = await gateway.openDispute(rogue.reservation_id, 'não reconheço esta compra');
+  const resolved = await gateway.resolveDispute(opened.dispute_id);
+  const spentAfter = (await gateway.readMandate(mandateId, readToken)).spent
+    .minor_units;
+  reversal = `${resolved.liability.verdict}: ${spentBefore} → ${spentAfter}`;
+  check(
+    'o veredito devolve o dinheiro que a trilha não sustenta',
+    resolved.liability.verdict === 'AGENT_OVERREACH' && spentAfter < spentBefore,
+    reversal,
+  );
+  check(
+    'e a repudiação é refutada pela assinatura de criação',
+    resolved.liability.holder_signatures.some(
+      (signature) => signature.kind === 'mandate_creation',
+    ),
+    resolved.liability.mandate_repudiation,
+  );
+} catch (error) {
+  check('o veredito devolve o dinheiro que a trilha não sustenta', false, String(error));
+}
+
+// 12 — closing the session ends the operator's reach in this tab immediately.
+await gateway.closeOperatorSession();
+let refusedAfterClose = false;
+try {
+  await gateway.setPspMode('online');
+} catch (error) {
+  refusedAfterClose = error.reasonCode === 'operator_session_missing';
+}
+check('encerrar a sessão fecha as superfícies de operador', refusedAfterClose);
 
 const failed = steps.filter((step) => !step.ok);
 console.log(`\n${steps.length - failed.length}/${steps.length} passos verdes contra ${baseUrl}`);

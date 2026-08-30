@@ -17,7 +17,10 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 ## A. Obrigatório — o sistema deve permitir
 
 ### A1. Humano cria mandato verificável, sem expor o cartão
-✅ Entidade `Mandate` completa e validada (`src/aval/domain/entities.py`).
+✅ Entidade `Mandate` completa e validada (`src/aval/domain/entities.py`), e **o mandato
+nasce assinado**: `POST /mandates` exige JWS ES256 de uma autoridade *holder* do próprio
+mandato sobre os termos de criação, com nonce de uso único. A prova entra no evento
+`mandate_registered`, que é a posição 0 da cadeia. `tests/integration/api/test_mandate_genesis.py`
 
 > **Corrigido em 29/08:** o mandato não dizia **o que** podia ser comprado. `Mandate.allowed_categories` agora é obrigatório (invariante de conjunto não vazio) e o núcleo escala `category_not_allowed`. Antes disso a categoria viajava assinada na oferta e era ignorada — mandato de voos autorizava hotel.
 
@@ -241,7 +244,10 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 
 ## D. Bônus
 
-- [x] **Disputa completa** — `POST /disputes`, `GET /disputes`, `POST /disputes/{id}/resolution`.
+- [x] **Disputa completa, com tela e com dinheiro** — `POST /disputes`, `GET /disputes`,
+  `POST /disputes/{id}/resolution`. O titular nega a compra no próprio registro do
+  navegador; o auditor lê o veredito com as linhas exatas que o sustentam; e quando a
+  trilha não sustenta a cobrança o valor é estornado e o orçamento volta.
   A resolução lê a trilha: prova de autorização sobre reserva comprometida → `MANDATE_HELD`;
   ausência → `MANDATE_FAILED`. Abertura e resolução entram na cadeia de hash, e a cadeia
   continua verificando depois. O botão está no bot: todo recibo liquidado traz *Não reconheço esta compra*.
@@ -297,6 +303,10 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 | 11 | **Teto de reservas vivas** — griefing de orçamento, o ataque que não move um centavo | `test_reservation_griefing.py` |
 | 12 | **Rodapé ao vivo** — as afirmações do pitch lidas da própria trilha encadeada | `test_metrics.py` |
 | 13 | **Pseudônimo pareado** — cliente recorrente para o merchant, incorrelacionável entre lojas | `test_merchant_pairwise_identity.py` |
+| 14 | **Gênese assinada** — o mandato nasce assinado pela chave que poderá revogá-lo; repudiação refutada na posição 0 | `test_mandate_genesis.py` |
+| 15 | **Ver é autoridade** — o registro do titular exige assinatura de leitura; o id nunca foi senha | `test_ledger_read_authority.py` |
+| 16 | **Sessão de operador + diário encadeado** — o token sai do bundle e todo ato de operador vira cadeia verificável | `test_operator_session.py` |
+| 17 | **O veredito move dinheiro** — estorno automático quando a trilha não sustenta a cobrança | `test_dispute_reversal.py` |
 
 ---
 

@@ -60,6 +60,40 @@ export interface AgentRun {
   evaluation_trace: EvaluationStep[];
 }
 
+/** Who answers for a purchase, recomputed from the trail on every read. */
+export interface Liability {
+  verdict: string;
+  liable_party: string;
+  basis: string[];
+  holder_signatures: Array<{ kind: string; kid: string }>;
+  mandate_repudiation: string;
+  repudiation_note: string;
+}
+
+/** A purchase the holder says they do not recognise, and what the trail answered. */
+export interface Dispute {
+  id: string;
+  reservation_id: string;
+  reason: string;
+  status: string;
+  resolution: string | null;
+  opened_at: string;
+  resolved_at: string | null;
+  liability: Liability;
+}
+
+/** What operator credentials did, and the chain that proves nothing was removed. */
+export interface OperatorJournal {
+  entries: Array<{
+    sequence: number;
+    action: string;
+    actor: string;
+    occurred_at: string;
+    sha256: string;
+  }>;
+  chain: { intact: boolean; checked: number; broken_at: number | null };
+}
+
 /** A signed offer from the merchant. The price is what a standing order waits on. */
 export interface CatalogOffer {
   offer_id: string;
@@ -128,50 +162,92 @@ export class GatewayError extends Error {
 export interface AuthorizationGatewayOptions {
   baseUrl: string;
   fetch?: typeof globalThis.fetch;
-  /**
-   * Guards the processor switch, reconcile, the demo clock and the tamper tool. It is
-   * deliberately powerless over money: raising a limit or approving an escalation
-   * needs the holder's key, which lives in the browser wallet and never here.
-   */
-  operatorToken?: string;
 }
 
 export class AuthorizationGateway {
   readonly #baseUrl: string;
   readonly #fetch: typeof globalThis.fetch;
-  readonly #operatorToken?: string;
+  /**
+   * The operator credential this page holds, if someone opened one.
+   *
+   * It is a *session*, never the token. The token used to be built into the bundle,
+   * which means anyone who opened devtools on the demo page walked away with the
+   * processor switch, the clock and the price knob — permanently. Now the token is
+   * typed once, exchanged here, and what stays in memory expires on its own and can be
+   * closed. It is still deliberately powerless over money: raising a limit or approving
+   * an escalation needs the holder's key, which lives in the wallet and never here.
+   */
+  #operatorSession?: string;
 
-  constructor({ baseUrl, fetch, operatorToken }: AuthorizationGatewayOptions) {
+  constructor({ baseUrl, fetch }: AuthorizationGatewayOptions) {
     this.#baseUrl = baseUrl.replace(/\/$/, '');
     this.#fetch = fetch ?? globalThis.fetch.bind(globalThis);
-    this.#operatorToken = operatorToken;
   }
 
-  get hasOperatorToken(): boolean {
-    return Boolean(this.#operatorToken);
+  get hasOperatorSession(): boolean {
+    return Boolean(this.#operatorSession);
+  }
+
+  /** Present the token once, keep the session. Nothing is written to storage: a
+   *  credential persisted across reloads is a credential a shared laptop inherits. */
+  async openOperatorSession(token: string): Promise<{ session_id: string; expires_at: string }> {
+    const issued = await this.#request<{
+      session_id: string;
+      session_token: string;
+      expires_at: string;
+    }>('/admin/operator/sessions', { method: 'POST', headers: { 'X-Aval-Operator': token } });
+    this.#operatorSession = issued.session_token;
+    return { session_id: issued.session_id, expires_at: issued.expires_at };
+  }
+
+  async closeOperatorSession(): Promise<void> {
+    if (!this.#operatorSession) return;
+    try {
+      await this.#request('/admin/operator/sessions/current', { method: 'DELETE', operator: true });
+    } finally {
+      // Forgotten here whatever the runtime answered: a console that kept a credential
+      // it just tried to end would be lying about what it holds.
+      this.#operatorSession = undefined;
+    }
+  }
+
+  /** What operator credentials did, and the chain that proves nothing was removed. */
+  operatorJournal(): Promise<OperatorJournal> {
+    return this.#request('/admin/operator/journal', { operator: true });
+  }
+
+  /** A charge that never passed the core, so the reversal can be watched instead of
+   *  described. Mounted only when the runtime was started with AVAL_DEMO_ROGUE. */
+  rogueCharge(mandateId: string, minorUnits: number): Promise<{ reservation_id: string }> {
+    return this.#request('/admin/demo/rogue-charge', {
+      method: 'POST',
+      body: { mandate_id: mandateId, minor_units: minorUnits },
+      operator: true,
+    });
   }
 
   async #request<T>(
     path: string,
-    { method = 'GET', body, operator = false }: {
+    { method = 'GET', body, operator = false, headers: extraHeaders }: {
       method?: string;
       body?: unknown;
       operator?: boolean;
+      headers?: Record<string, string>;
     } = {},
   ): Promise<T> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...extraHeaders };
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (operator) {
-      // Fail before the request rather than after a 401: a judge who forgot the token
-      // should be told what is missing, not shown a refusal from the server.
-      if (!this.#operatorToken) {
+      // Fail before the request rather than after a 403: a judge whose session ran out
+      // should be asked for the token again, not shown a refusal from the server.
+      if (!this.#operatorSession) {
         throw new GatewayError(
-          'operator_token_missing',
-          'Nenhum token de operador configurado nesta sessão.',
+          'operator_session_missing',
+          'Nenhuma sessão de operador aberta nesta aba.',
           0,
         );
       }
-      headers['X-Aval-Operator'] = this.#operatorToken;
+      headers['X-Aval-Operator-Session'] = this.#operatorSession;
     }
 
     let response: Response;
@@ -194,8 +270,16 @@ export class AuthorizationGateway {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const detail = (payload as { detail?: { code?: string } }).detail;
+      const reasonCode =
+        (payload as { reason_code?: string }).reason_code ?? detail?.code ?? 'request_failed';
+      // A credential the runtime has stopped honouring is not a credential. Dropping it
+      // here is what makes the console ask for the token again instead of retrying with
+      // something dead and reporting a mystery.
+      if (reasonCode === 'operator_session_expired' || reasonCode === 'operator_session_invalid') {
+        this.#operatorSession = undefined;
+      }
       throw new GatewayError(
-        (payload as { reason_code?: string }).reason_code ?? detail?.code ?? 'request_failed',
+        reasonCode,
         (payload as { human_summary?: string }).human_summary ?? `HTTP ${response.status}`,
         response.status,
       );
@@ -307,7 +391,7 @@ export class AuthorizationGateway {
     });
   }
 
-  listDisputes(mandateId: string): Promise<{ disputes: Array<Record<string, unknown>> }> {
+  listDisputes(mandateId: string): Promise<{ disputes: Dispute[] }> {
     return this.#request(`/disputes?mandate_id=${encodeURIComponent(mandateId)}`);
   }
 
@@ -414,7 +498,12 @@ export class AuthorizationGateway {
     });
   }
 
-  resolveDispute(disputeId: string): Promise<Record<string, unknown>> {
+  resolveDispute(disputeId: string): Promise<{
+    dispute_id: string;
+    status: string;
+    resolution: string | null;
+    liability: Liability;
+  }> {
     return this.#request(`/disputes/${encodeURIComponent(disputeId)}/resolution`, {
       method: 'POST',
     });

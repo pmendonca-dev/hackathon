@@ -63,8 +63,13 @@ O banco fica em `var/aval.db`. Para uma instância descartável:
 
 ```bash
 cd web && npm install
-VITE_AVAL_API_BASE_URL=http://127.0.0.1:8099 VITE_AVAL_OPERATOR_TOKEN=demo-token npm run dev
+VITE_AVAL_API_BASE_URL=http://127.0.0.1:8099 npm run dev
 ```
+
+O token de operador **não** entra no bundle. O console pede uma vez e troca por uma
+sessão curta, que expira sozinha e some ao fechar a aba: um segredo permanente embutido
+numa página é um segredo permanente publicado, e quem abrisse o devtools levava embora o
+interruptor do processador para sempre.
 
 Quatro visões — titular, merchant, auditor e o console trial-by-fire — todas contra o
 runtime de verdade. Não existe fixture por trás: se o servidor não responde, a tela diz
@@ -127,7 +132,7 @@ curl "localhost:8099/ledger/verify?mandate_id=mandate_..."
 
 ---
 
-## As dez decisões que sustentam o sistema
+## As catorze decisões que sustentam o sistema
 
 ### 1. O núcleo decide; a borda só autentica
 
@@ -171,19 +176,22 @@ inteiro fica no ledger: é a resposta direta a um "eu nunca autorizei isso" post
 E a aprovação **não ressuscita** um mandato: tudo é reavaliado no momento da retomada,
 então uma revogação que chegou enquanto a pessoa decidia ainda recusa a compra.
 
-### 5. Quatro autoridades, quatro provas — e elas não se substituem
+### 5. Seis autoridades, seis provas — e elas não se substituem
 
 | pergunta | prova | quem detém |
 |---|---|---|
 | *quem está chamando?* | assinatura RFC 9421 | o agente |
 | *esta compra pode acontecer?* | avaliação do mandato | ninguém: é determinística |
+| *este mandato existe por vontade de quem?* | JWS ES256 sobre os termos de criação | o titular |
 | *quem muda a autoridade de gasto?* | JWS ES256 | o titular |
-| *quem opera a instância?* | token de operador | o time |
+| *quem pode ler o registro desta pessoa?* | JWS ES256 de leitura | o titular |
+| *quem opera a instância?* | sessão curta, trocada pelo token | o time |
 
-A separação que mais importa: **o operador não pode mexer em dinheiro.** O token libera
-registro de agente e o interruptor do PSP; aumentar limite e aprovar escalação exigem a
-chave do titular. Um operador capaz de subir um limite seria um operador capaz de gastar
-o dinheiro dos outros. Ver [modelo de segurança](docs/security-model.md).
+A separação que mais importa: **o operador não pode mexer em dinheiro.** A credencial de
+operador libera registro de agente e o interruptor do PSP; aumentar limite e aprovar
+escalação exigem a chave do titular. Um operador capaz de subir um limite seria um
+operador capaz de gastar o dinheiro dos outros. Ver
+[modelo de segurança](docs/security-model.md).
 
 ### 6. Identidade do agente ≠ identidade do humano
 
@@ -291,11 +299,63 @@ Cada veredito cita as linhas exatas que o sustentam, e o veredito **não é arma
 sempre a mesma resposta — e um veredito guardado que tivesse divergido da evidência
 embaixo dele seria pior do que nenhum.
 
-**O limite, declarado em vez de escondido:** a criação do mandato não é assinada nesta
-implementação. A trilha prova que o agente ficou dentro do mandato; ela **não** prova
-que a pessoa criou o mandato. Quando existe um artefato assinado pelo titular nomeando
-aquele mandato — uma aprovação de escalação, uma revogação — a repudiação fica `refuted`
-e o veredito diz por quê. Sem nenhum, ela fica `unproven`, com a razão escrita.
+**E o veredito move dinheiro.** Quando a trilha não sustenta a cobrança, o valor é
+estornado e o orçamento volta com ele; quando sustenta, nada é devolvido e o recibo diz
+qual prova o sustenta. Três recusas honestas em vez de uma mentira: processador fora do
+ar vira `reversal_in_doubt` com o valor retido, recusa de estorno vira
+`reversal_refused`, e só a aprovação vira `purchase_reversed`. Silêncio não é estorno, do
+mesmo jeito que nunca foi recusa.
+
+### 12. O mandato nasce assinado, e essa assinatura é a posição 0 da trilha
+
+`POST /mandates` exige um JWS ES256 de uma autoridade *holder* **do próprio mandato**
+sobre os termos que ele nasce carregando: principal, merchants, categorias, limite, teto,
+frequência e validade. A verificação acontece contra as autoridades que estão sendo
+registradas — a mesma chave que amanhã revoga é a que hoje autoriza a existência — e
+antes de qualquer linha ser escrita, então uma criação recusada não deixa nada para trás.
+
+O nonce é de uso único. Uma revogação replayada não muda nada, mas uma criação é
+*aditiva*: a mesma assinatura enviada duas vezes cunharia um segundo mandato com os
+mesmos termos e dobraria o que o agente pode gastar sem ninguém assinar duas vezes.
+Replay devolve `409 mandate_creation_replayed`.
+
+O que isso fecha é a pergunta que a disputa não sabia responder: *"eu nunca criei esse
+mandato"*. A prova inteira entra no evento `mandate_registered`, que já era o elo 0 da
+cadeia, e a repudiação passa a ser refutada dali — sem depender de a pessoa ter aprovado
+ou revogado alguma coisa depois. Nomear um principal nunca foi o mesmo que ter a chave
+dele, e agora o sistema recusa quem só nomeia.
+
+### 13. Ver também é autoridade
+
+`mandate_id` nunca foi segredo: ele viaja no recibo do agente, na barra de endereço e em
+qualquer print de tela. Mesmo assim, ele abria o registro inteiro da pessoa — orçamento,
+gasto, merchants, histórico. Agora `GET /ledger?view=human` e `GET /mandates/{id}` exigem
+a mesma assinatura de leitura que a listagem já exigia, verificada contra a autoridade
+*daquele* mandato.
+
+A visão do auditor continua aberta, de propósito e declarado: ela é a peça de
+transparência que um jurado abre sem credencial, e o que ela publica é a cadeia — que é
+justamente o que um auditor existe para conferir.
+
+### 14. Quem opera a instância também deixa rastro
+
+O titular assina para gastar. Ninguém assina para operar, e é por isso que o outro lado
+da simetria precisava de alguma coisa:
+
+| o quê | onde |
+|---|---|
+| o token vira sessão curta | `POST /admin/operator/sessions` |
+| a sessão morre sozinha, ou por encerramento | `DELETE /admin/operator/sessions/current` |
+| todo ato de operador entra numa cadeia | `GET /admin/operator/journal` |
+
+O token permanente segue valendo para chamador de máquina — o smoke e o CI não têm
+navegador de onde ser roubados. O que mudou é que nenhuma **página** carrega um segredo
+permanente, e que derrubar o processador na frente de um jurado deixa de ser um gesto que
+só o time sabe que aconteceu: o diário nomeia a sessão que agiu, e a cadeia prova que
+nada foi retirado depois. Escritas entram; leituras não, porque ler não é operar.
+
+A sessão continua sem poder nenhum sobre dinheiro: subir limite e aprovar escalação
+exigem a chave do titular, e há teste que falha se um dia deixarem de exigir.
 
 ---
 
@@ -317,6 +377,10 @@ e o veredito diz por quê. Sem nenhum, ela fica `unproven`, com a razão escrita
 | agente sequestrado | uma assinatura encerra todos os mandatos daquela chave | `test_principal_kill_switch.py` |
 | **pagamento sem resposta** | vira estado, não erro: *em confirmação*, orçamento retido | `test_payment_in_doubt.py` |
 | **agente congela o orçamento** | teto de reservas vivas; recusa sem oferecer aprovação | `test_reservation_griefing.py` |
+| **mandato criado por quem não tem a chave** | recusado antes de qualquer escrita | `test_mandate_genesis.py` |
+| **criação replayada** | nonce de uso único → `409 mandate_creation_replayed` | `test_mandate_genesis.py` |
+| **registro lido por quem não é autoridade** | `403 read_forbidden`; o id nunca foi senha | `test_ledger_read_authority.py` |
+| **cobrança por fora do núcleo** | `AGENT_OVERREACH`, e o valor volta | `test_dispute_reversal.py` |
 
 ### O timeout que não vira recusa — nem sucesso
 
@@ -356,6 +420,9 @@ pagamento que pode ter acontecido é exatamente a mentira que este estado remove
 | **ver o agente comprar sozinho** | `POST /agent/watches` + preço cai | o mesmo mandato de sempre |
 | **adulterar a trilha** | `POST /admin/ledger/{id}/tamper` | token de operador + `AVAL_DEMO_TAMPER` |
 | **congelar o orçamento** | `POST /agent/purchase` × N com o PSP fora | teto de reservas vivas |
+| **cobrar por fora do núcleo** | `POST /admin/demo/rogue-charge` | token de operador + `AVAL_DEMO_ROGUE` |
+| **negar a compra e ver o dinheiro voltar** | `POST /disputes/{id}/resolution` | a própria trilha |
+| **ler o que o operador fez** | `GET /admin/operator/journal` | cadeia de hash |
 | atacar em texto livre | `POST /agent/purchase` | ninguém: o núcleo recusa |
 
 E o rodapé do console lê tudo isso ao vivo, de `GET /metrics`:
@@ -481,6 +548,14 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
   e o resto do sistema não percebe.
 - **Sem PAN em lugar nenhum.** Não é que o cartão esteja guardado com segurança: ele
   nunca existe no sistema.
+- **A visão do auditor é aberta.** É a superfície de transparência da demonstração, e o
+  que ela publica é a cadeia que um auditor existe para conferir. O registro do titular
+  não é: aquele exige assinatura da chave que detém o mandato. Numa implantação real o
+  auditor seria uma credencial de instância; aqui ele é a aba que o jurado abre sozinho.
+- **A cobrança por fora é encenada sob flag.** `AVAL_DEMO_ROGUE` monta a rota que simula
+  o agente que nunca perguntou ao mandato. Sem ela o caminho do estorno seria inalcançável
+  numa demonstração — toda captura que passa pelo núcleo emite prova — e o código que
+  devolve dinheiro seria código que nunca roda.
 
 ---
 

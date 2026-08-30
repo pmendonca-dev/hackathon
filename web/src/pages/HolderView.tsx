@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { Clock, Eye, KeyRound, Send, ShieldOff, Sparkles } from 'lucide-react';
+import { Clock, Eye, Gavel, KeyRound, Scale, Send, ShieldOff, Sparkles } from 'lucide-react';
 
 import { useAval } from '../state/AvalContext.ts';
 import { AttackScenarios } from '../components/AttackScenarios.tsx';
@@ -36,8 +36,11 @@ export function HolderView() {
     holderKid,
     walletReady,
     watches,
+    disputes,
     serverNow,
     createMandate,
+    disputePurchase,
+    resolveDispute,
     runAgent,
     watchInstruction,
     tickWatches,
@@ -306,10 +309,71 @@ export function HolderView() {
                   </div>
                   <p className="mt-1 text-[13px] leading-relaxed">{entry.human_summary}</p>
                   <PaymentState entry={entry} />
+                  <DenyPurchase
+                    entry={entry}
+                    disputes={disputes}
+                    busy={busy}
+                    onDeny={(reservationId) =>
+                      void guard(() =>
+                        disputePurchase(reservationId, 'A titular não reconhece esta compra.'),
+                      )
+                    }
+                  />
                 </li>
               ))}
             </ul>
           )}
+        </Panel>
+
+        <Panel
+          eyebrow="Disputas"
+          title="Quem responde por esta compra"
+          action={<Scale size={18} className="text-hold" aria-hidden="true" />}
+        >
+          {disputes.length === 0 ? (
+            <EmptyNotice
+              title="Nenhuma compra contestada"
+              body="Cada compra liquidada traz um botão para negá-la. A trilha decide o resto."
+            />
+          ) : (
+            <ul className="space-y-2">
+              {disputes.map((dispute) => (
+                <li key={dispute.id} className="rounded-lg border border-line bg-ink-800/40 p-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="mono text-[11px] text-hold">{dispute.reservation_id}</span>
+                    <Badge tone={dispute.status === 'OPEN' ? 'hold' : 'verify'}>
+                      {dispute.status}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-[13px] leading-relaxed">{dispute.reason}</p>
+                  {dispute.resolution && (
+                    <p className="mt-1 text-[12px] text-fg-mute">{dispute.resolution}</p>
+                  )}
+                  {dispute.status === 'OPEN' ? (
+                    <Button
+                      className="mt-3"
+                      disabled={busy}
+                      onClick={() => void guard(() => resolveDispute(dispute.id))}
+                    >
+                      <Gavel size={13} aria-hidden="true" />Resolver pela trilha
+                    </Button>
+                  ) : (
+                    <p className="mt-2">
+                      <Badge tone={dispute.liability.liable_party === 'holder' ? 'deny' : 'allow'}>
+                        {dispute.liability.verdict} · responde: {dispute.liability.liable_party}
+                      </Badge>
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="safe-note mt-4">
+            <Scale size={15} aria-hidden="true" />
+            Negar não devolve dinheiro por si: quem devolve é o veredito. Quando a trilha
+            não sustenta a cobrança, o valor volta e o orçamento volta com ele; quando
+            sustenta, o recibo diz exatamente qual prova o sustenta.
+          </p>
         </Panel>
 
         <Panel eyebrow="Encerrar" title="Retirar autoridade" action={<ShieldOff size={18} className="text-deny" aria-hidden="true" />}>
@@ -333,6 +397,40 @@ export function HolderView() {
         </Panel>
       </section>
     </div>
+  );
+}
+
+/**
+ * "I do not recognise this purchase", on the purchase itself.
+ *
+ * It only appears where it can mean something: a settled purchase, whose reservation
+ * the person's own record names. Offering it beside a refusal would invite a dispute
+ * about money nobody took, and a purchase already disputed shows its dispute instead of
+ * a second button.
+ */
+function DenyPurchase({
+  entry,
+  disputes,
+  busy,
+  onDeny,
+}: {
+  entry: { [key: string]: unknown };
+  disputes: Array<{ reservation_id: string }>;
+  busy: boolean;
+  onDeny(reservationId: string): void;
+}) {
+  const detail = (entry.detail ?? {}) as Record<string, unknown>;
+  const reservationId = typeof detail.reservation_id === 'string' ? detail.reservation_id : null;
+  const settled = detail.payment_state === 'settled';
+  if (!reservationId || !settled) return null;
+  if (disputes.some((dispute) => dispute.reservation_id === reservationId)) {
+    return <p className="mt-2 text-[11px] text-fg-mute">Compra já contestada.</p>;
+  }
+
+  return (
+    <Button variant="danger" className="mt-3" disabled={busy} onClick={() => onDeny(reservationId)}>
+      <Gavel size={13} aria-hidden="true" />Não reconheço esta compra
+    </Button>
   );
 }
 

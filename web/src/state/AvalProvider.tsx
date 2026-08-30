@@ -8,7 +8,9 @@ import {
   type LedgerEntry,
   type MandateView,
   type CatalogOffer,
+  type Dispute,
   type Metrics,
+  type OperatorJournal,
   type Watch,
 } from '../gateways/authorizationGateway.ts';
 import { signCompactJws, type HolderWallet } from '../wallet/holderKey.ts';
@@ -25,13 +27,17 @@ import {
 const environment = import.meta.env;
 
 /**
- * Built once, outside render. The gateway holds the operator token and the base URL;
- * rebuilding it per render would reopen the question of which instance a command went
- * to every time React re-rendered.
+ * Built once, outside render. It holds the base URL and, once a judge opens one, the
+ * operator session; rebuilding it per render would reopen the question of which
+ * instance a command went to every time React re-rendered.
+ *
+ * There is deliberately no operator token here. Reading one from the environment baked
+ * a permanent secret into the bundle, which is a permanent secret published: anyone who
+ * opened devtools on the demo page kept the processor switch, the clock and the price
+ * knob forever. The console asks for it instead, once, and holds a session in memory.
  */
 const DEFAULT_GATEWAY = new AuthorizationGateway({
   baseUrl: environment.VITE_AVAL_API_BASE_URL ?? 'http://127.0.0.1:8099',
-  operatorToken: environment.VITE_AVAL_OPERATOR_TOKEN,
 });
 
 const DEFAULT_PRINCIPAL = environment.VITE_AVAL_PRINCIPAL_ID ?? 'usr_marta';
@@ -68,6 +74,11 @@ export function AvalProvider({
   const [watches, setWatches] = useState<Watch[]>([]);
   const [serverNow, setServerNow] = useState<string | null>(null);
   const [offers, setOffers] = useState<CatalogOffer[]>([]);
+  const [disputes, setDisputes] = useState<Dispute[]>([]);
+  // Mirrors the gateway's own credential so React re-renders when it comes and goes.
+  // The token itself is never held here, or anywhere else in this page.
+  const [operatorSessionExpiresAt, setOperatorSessionExpiresAt] = useState<string | null>(null);
+  const [operatorJournal, setOperatorJournal] = useState<OperatorJournal | null>(null);
 
   // `reload` must not depend on the selection — it would re-create the callback and
   // re-fire the load effect on every mandate click. The ref carries the current choice
@@ -195,7 +206,16 @@ export function AvalProvider({
         } catch {
           setWatches([]);
         }
+        // Same reasoning as the standing orders: an instance that does not serve
+        // disputes still shows the mandate and the trail, so their absence must not
+        // blank a page that is otherwise answering.
+        try {
+          setDisputes((await gateway.listDisputes(current)).disputes);
+        } catch {
+          setDisputes([]);
+        }
       } else {
+        setDisputes([]);
         setHumanEntries([]);
         setAuditorEntries([]);
         setMerchantEntries([]);
@@ -229,7 +249,9 @@ export function AvalProvider({
       view,
       loading,
       error,
-      operatorAvailable: gateway.hasOperatorToken,
+      operatorAvailable: gateway.hasOperatorSession,
+      operatorSessionExpiresAt,
+      operatorJournal,
       mandates,
       selectedMandateId,
       escalations,
@@ -242,6 +264,7 @@ export function AvalProvider({
       receipts,
       metrics,
       watches,
+      disputes,
       serverNow,
       offers,
 
@@ -418,6 +441,69 @@ export function AvalProvider({
         if (accepted) await reload();
       },
 
+      async openOperatorSession(token: string) {
+        const accepted = await run('Abrir sessão de operador', async () => {
+          const issued = await gateway.openOperatorSession(token);
+          setOperatorSessionExpiresAt(issued.expires_at);
+          return `Sessão ${issued.session_id} aberta até ${issued.expires_at}.`;
+        });
+        // The typed token is not kept anywhere — not in state, not in storage. What
+        // this tab holds from here on is a credential that dies on its own.
+        if (!accepted) setOperatorSessionExpiresAt(null);
+      },
+
+      async closeOperatorSession() {
+        await run('Encerrar sessão de operador', async () => {
+          await gateway.closeOperatorSession();
+          return 'Sessão encerrada. As superfícies de operador voltam a pedir o token.';
+        });
+        setOperatorSessionExpiresAt(null);
+        setOperatorJournal(null);
+      },
+
+      async loadOperatorJournal() {
+        const accepted = await run('Ler o diário do operador', async () => {
+          const journal = await gateway.operatorJournal();
+          setOperatorJournal(journal);
+          return `${journal.entries.length} ato(s) de operador, cadeia ${
+            journal.chain.intact ? 'íntegra' : `quebrada em ${journal.chain.broken_at}`
+          }.`;
+        });
+        if (!accepted) {
+          setOperatorJournal(null);
+          // A session the runtime has stopped honouring is gone from the gateway too,
+          // so the console must stop claiming this tab is operating anything.
+          if (!gateway.hasOperatorSession) setOperatorSessionExpiresAt(null);
+        }
+      },
+
+      async disputePurchase(reservationId: string, reason: string) {
+        const accepted = await run('Não reconheço esta compra', async () => {
+          const opened = await gateway.openDispute(reservationId, reason);
+          return `Disputa ${opened.dispute_id} aberta sobre ${reservationId}.`;
+        });
+        if (accepted) await reload();
+      },
+
+      async resolveDispute(disputeId: string) {
+        const accepted = await run('Resolver pela trilha', async () => {
+          const resolved = await gateway.resolveDispute(disputeId);
+          const liability = resolved.liability;
+          return `${resolved.status} · ${liability.verdict} — responde: ${liability.liable_party}.`;
+        });
+        if (accepted) await reload();
+      },
+
+      async rogueCharge(minorUnits: number) {
+        const mandateId = selectedRef.current;
+        if (!mandateId) return;
+        const accepted = await run('Cobrança por fora do núcleo', async () => {
+          const charged = await gateway.rogueCharge(mandateId, minorUnits);
+          return `${charged.reservation_id} cobrada sem passar pelo mandato. Nenhuma prova foi emitida.`;
+        });
+        if (accepted) await reload();
+      },
+
       async setPspMode(mode) {
         await run(`Processador ${mode}`, async () => {
           await gateway.setPspMode(mode);
@@ -478,6 +564,9 @@ export function AvalProvider({
       receipts,
       metrics,
       watches,
+      disputes,
+      operatorSessionExpiresAt,
+      operatorJournal,
       serverNow,
       offers,
       reload,
