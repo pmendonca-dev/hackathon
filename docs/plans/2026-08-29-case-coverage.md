@@ -24,7 +24,7 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 > **Também corrigido:** `Mandate.ceiling`, opcional e fixo na criação. Acima dele o núcleo devolve `mandate_ceiling` e **não** oferece aprovação. `replace_live_limit` move o orçamento e não move o teto — há teste. Sem isso, o momento do roteiro em 4:00–4:45 não tinha código por trás.
 - [x] `POST /mandates` — cria, valida invariantes, devolve `mandate_id` e `revocation_id`
 - [x] `GET /mandates/{id}` — estado vivo com orçamento gasto e restante
-- [ ] Fluxo de criação no Telegram *(outra lane)*
+- [x] Fluxo de criação no Telegram — `/start` emite chave P-256 do chat e mandato em nome dela
 - [ ] `POST /vault/tokens` — token escopado por checkout
 
 > **Nenhum PAN existe no sistema.** O mandato nunca recebe dado de cartão e o agente
@@ -50,6 +50,13 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 
 > **Privacidade testada, não prometida.** `test_the_merchant_verification_never_returns_the_mandate_or_the_buyer`
 > falha se `mandate_id` ou `principal_id` aparecerem em qualquer lugar da resposta.
+
+> **Telegram integrado em 29/08.** O bot deixou de falar com fixtures e passa a
+> chamar a API viva. Cada chat recebe a própria chave P-256 e o próprio mandato,
+> então uma sala de jurados usa um bot só sem compartilhar autoridade nenhuma —
+> um jurado não revoga o mandato do outro porque não tem a chave dele. Aprovação,
+> revogação e mudança de limite viajam assinadas pelo titular; o servidor nunca
+> assina no lugar dele. Ver [contrato do bot](../contracts/aval-telegram-gateway.md).
 
 ### A3. Agente descobre, decide e paga ponta a ponta
 ✅ `POST /agent/purchase` recebe texto livre e executa a compra inteira. 10 testes.
@@ -85,7 +92,7 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 ### A4. Humano recebe registro do que foi comprado e sob qual mandato
 🟡 O dado existe e é servido; falta a entrega no chat.
 - [x] `GET /ledger?view=human` — o que foi comprado, sob qual mandato, quanto sobrou
-- [ ] Recibo no Telegram após liquidação *(outra lane; consome este endpoint)*
+- [x] Recibo no Telegram após liquidação — chega sozinho depois da compra, sem precisar pedir
 
 ### A5. Humano, merchant e auditor leem a trilha
 ✅ Completo, e a trilha se verifica sozinha. 17 testes.
@@ -123,7 +130,7 @@ Fontes: `ideias/case.txt` (enunciado) e `docs/hackathon-rules.md` (regras e aval
 - [x] `POST /escalations/{id}/decision`, `GET /escalations`, `GET /escalations/{id}`
 - [x] Aprovação assinada (ES256) guardada inteira no ledger como evidência
 - [x] Retomada da captura após aprovação, com idempotência derivada do handle
-- [ ] Push no Telegram com botões Aprovar / Negar *(outra lane; consome estes endpoints)*
+- [x] Push no Telegram com botões Aprovar / Negar — a decisão vai assinada pela chave do chat
 
 > **A aprovação vincula a compra, não o motivo.** O JWS nomeia `decision_handle`,
 > `mandate_id`, `decision` e `amount_minor_units`, e os quatro são conferidos contra a
@@ -191,7 +198,7 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
 - [x] **Disputa completa** — `POST /disputes`, `GET /disputes`, `POST /disputes/{id}/resolution`.
   A resolução lê a trilha: prova de autorização sobre reserva comprometida → `MANDATE_HELD`;
   ausência → `MANDATE_FAILED`. Abertura e resolução entram na cadeia de hash, e a cadeia
-  continua verificando depois. **Falta** apenas o botão no bot *(outra lane)*.
+  continua verificando depois. O botão está no bot: todo recibo liquidado traz *Não reconheço esta compra*.
 - [x] **Agente adversarial** — o agente aceita texto livre e tenta de verdade. Cinco
   caminhos criativos testados: teto, orçamento acumulado, merchant fora do escopo,
   categoria fora do escopo e retentativa. Nenhum passa.
@@ -223,7 +230,7 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
   um servidor HTTP real e passa. Rodar de novo a partir de um clone do zero antes do freeze.
 - [x] **Agente sem dependência de LLM** — nenhuma chave de API, nenhum timeout possível
   no palco. A decisão de autorização nunca dependeu do modelo, e agora isso é visível.
-- [ ] **Telegram por long polling, não webhook** *(outra lane)*
+- [x] **Telegram por long polling, não webhook** — sem URL pública, sem túnel no palco
 - [ ] **Ensaio em 7 minutos**, com 3 sobrando para os jurados
 - [ ] **Confirmar qual máquina apresenta** e rodar o smoke nela
 
