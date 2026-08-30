@@ -2,12 +2,62 @@
 
 ## Status
 
-**GREEN ON THE REAL SAME-ORIGIN FASTAPI DELIVERY.** `origin/main` commit
-`b7e94dddc50f05addd71fafe3ce02a2a3312f44a` after PR #16 serves the production SPA and the
-browser BFF on `http://127.0.0.1:8000`. Laptop B consumes only `/ui-api/v1/`,
-keeps CSRF in transient React memory, and ships no fixture, payment credential,
-proof value, signing implementation, agent route, or persistent-storage API in
-the production artifact.
+**GREEN ON THE REAL SAME-ORIGIN FASTAPI DELIVERY.** Final manual acceptance was
+repeated from `origin/main` commit `c919b65c468acca54393d7be88b4cd0cb1761e3d`
+on branch `codex/laptop-b-final-browser-acceptance`. FastAPI served the production
+SPA and browser BFF on `http://127.0.0.1:8000` against a freshly migrated,
+disposable SQLite database. All local credentials and the operator authority seed
+were supplied only through the process environment and were not printed.
+
+## Final manual Browser BFF acceptance on `c919b65`
+
+### Observed browser flows
+
+| Scenario | Observed result |
+|---|---|
+| `GET /` | `200 text/html`; the production SPA and hashed assets were served by FastAPI |
+| Merchant login/logout | `200` login and workspace projection; `204` logout; only `merchant_01` and its safe mandate projection were rendered |
+| Holder login/logout | `200`; mandate, authorized audit timeline, and reconstructed dispute rendered from BFF projections |
+| Auditor login/logout | `200`; ordered audit ledger and reconstructed dispute rendered from BFF projections |
+| Operator login/logout | `200`; only the published revocation intent was enabled |
+| Operator revocation | `POST /ui-api/v1/mandates/mandate_01/revocations` returned `202`; the UI reported `accepted`, cleared both retained command inputs, and a later auditor projection contained `mandate.revoked` |
+| Expired holder session | A forced expiry made `GET /ui-api/v1/workspace` return `401`; the holder projection disappeared, login returned, no input value remained, and the focused error reported `ui_session_required` |
+| Invalid operator CSRF | A forced CSRF rotation made the revocation return `403`; the operator projection disappeared, login returned, no command input remained, and the error reported `csrf_invalid` without retrying the mutation |
+| Unknown BFF route | `GET /ui-api/v1/inexistente` returned `404 application/json` with `{"detail":"Not Found"}`, never `index.html` |
+| Unsigned agent API | `GET /audit/mandates/mandate_01` returned `422 application/json` with `ucp_agent_invalid` |
+
+The browser DOM scan found zero local credential or operator-seed values, PAN-like
+values, compact JWS values, vault-token values, proof values, private-key markers,
+session-cookie names, or CSRF field names. No input retained a value after login,
+logout, expiry, CSRF rejection, or successful revocation. The browser console had
+zero entries. FastAPI access logs contained only same-origin paths and HTTP status
+codes; request bodies, credentials, cookie values, CSRF values, and signing material
+were absent.
+
+The emitted JavaScript asset was `assets/index-umXnDPKl.js`. A byte-level scan found
+zero local credential or seed values, `vt_` values, compact JWS values, private-key
+markers, `mockAvalGateway`, or persistent browser-storage APIs. The sole textual
+`proof_` occurrence was the public stable error code `authorization_proof_invalid`,
+not an authorization-proof value. The production-artifact regression also passed.
+
+The browser-control safety boundary does not permit direct inspection of cookies or
+browser storage contents. Storage safety was therefore verified at the source and
+emitted-artifact boundaries: the production browser code and bundle contain no
+Local Storage, Session Storage, IndexedDB, or Cache Storage API. Direct navigation
+to the raw JSON 404 was blocked by the in-app browser, so the exact content type,
+status, and body were verified over HTTP against the same running FastAPI process.
+
+### Final verification matrix
+
+| Command | Result |
+|---|---|
+| `uv sync` | Initial attempt hit Windows/OneDrive hardlink error 396; the same clean sync passed with process-local `UV_LINK_MODE=copy` |
+| `uv run alembic upgrade head` | PASS on the disposable database through migration `0013_repair_legacy_mandate_frequency` |
+| `npm --prefix web ci` | PASS; 45 packages installed, zero vulnerabilities |
+| `npm --prefix web test` | PASS, 39/39 |
+| `npm --prefix web run build` | PASS, 1,837 modules transformed |
+| `npm --prefix web run lint` | PASS, zero warnings and errors |
+| `uv run python -m pytest tests/integration/e2e -q` | PASS, 15/15 |
 
 ## Browser-safe BFF final validation after PR #16
 
