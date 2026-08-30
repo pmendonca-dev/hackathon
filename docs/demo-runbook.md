@@ -1,3 +1,10 @@
+> ⚠️ **Um servidor só, e sem `--reload`.** Cada processo gera a chave do agente em
+> memória e regrava o perfil no banco compartilhado, então dois `uvicorn` na mesma
+> porta — ou um `--reload` recarregando no meio da demo — fazem o último a subir vencer
+> e o outro passar a assinar com uma chave que o banco não reconhece: todo `/comprar`
+> morre com `signature_invalid`. Antes do pitch: `netstat -ano | findstr 8099` e garanta
+> que só existe um.
+
 # Roteiro da demo ao vivo
 
 Duas superfícies, um núcleo. O navegador é onde o titular, o merchant e o auditor

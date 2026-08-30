@@ -32,6 +32,19 @@ class MerchantOfferService:
     def __init__(self, *, clock: Callable[[], datetime], custody: KeyCustodyService) -> None:
         self._clock = clock
         self._custody = custody
+        # A seller may change its own prices. The override is applied *before* the
+        # payload is hashed and signed, so a repriced offer is as signed as any other
+        # and the terms hash moves with it — a judge dropping a price is changing what
+        # the merchant sells, not slipping a number past the verification.
+        self._prices: dict[str, int] = {}
+
+    def reprice(self, sku: str, minor_units: int) -> None:
+        if minor_units <= 0:
+            raise ValueError("a price must be positive")
+        self._prices[sku] = minor_units
+
+    def price_of(self, item: CatalogItem) -> int:
+        return self._prices.get(item.sku, item.minor_units)
 
     def public_jwks(self) -> dict[str, Any]:
         """Every seller's key, so any offer in the catalogue verifies offline."""
@@ -51,7 +64,7 @@ class MerchantOfferService:
                 **item.attributes(),
             },
             "total": {
-                "minor_units": item.minor_units,
+                "minor_units": self.price_of(item),
                 "currency": item.currency,
                 "scale": item.scale,
             },

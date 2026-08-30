@@ -17,6 +17,7 @@ import unicodedata
 
 from aval.interfaces.telegram.gateway import (
     EscalationView,
+    WatchView,
     OfferView,
     MandateView,
     MoneyView,
@@ -35,6 +36,7 @@ CALLBACK_RECEIPT = "rec"
 CALLBACK_REVOKE_MENU = "rvk"
 CALLBACK_REVOKE_CONFIRM = "rvm"
 CALLBACK_DISPUTE = "dsp"
+CALLBACK_WATCH = "wat"
 CALLBACK_CARD_MENU = "crd"
 CALLBACK_CARD_CONFIRM = "crm"
 CALLBACK_CATALOGUE = "cat"
@@ -53,6 +55,7 @@ _VERBS = frozenset(
         CALLBACK_BUY,
         CALLBACK_CARD_MENU,
         CALLBACK_CARD_CONFIRM,
+        CALLBACK_WATCH,
     }
 )
 
@@ -131,8 +134,18 @@ def welcome(*, display_name: str, mandate: MandateView) -> View:
     return View("\n".join(lines), _mandate_buttons(mandate, primary=True))
 
 
-def mandate_card(mandate: MandateView) -> View:
-    return View(_mandate_body(mandate), _mandate_buttons(mandate))
+def mandate_card(mandate: MandateView, watches: Sequence[WatchView] = ()) -> View:
+    """The mandate, plus anything armed to fire without being asked.
+
+    A standing order is authority the person granted once and can no longer see.
+    Listing it here is what keeps it from becoming invisible authority.
+    """
+    body = _mandate_body(mandate)
+    if watches:
+        body += "\n\n\U0001f440 <b>Vigiando</b>\n" + "\n".join(
+            f"· <i>{escape(watch.instruction)}</i>" for watch in watches
+        )
+    return View(body, _mandate_buttons(mandate))
 
 
 def _mandate_body(mandate: MandateView) -> str:
@@ -474,6 +487,99 @@ def clarification(
         )
     lines += ["", "Ou responda em texto: <code>/comprar um voo pra Córdoba</code>"]
     return View("\n".join(lines), tuple(rows))
+
+
+def watch_offer(instruction: str, mandate: MandateView) -> View:
+    """Nothing meets the target *yet*, which is a standing order, not a dead end.
+
+    The case's own scenario starts here — *buy me a flight if it drops below $150* —
+    and answering "nothing matched" would throw away the one behaviour that makes the
+    buyer an agent instead of a form.
+    """
+    return View(
+        "\n".join(
+            [
+                "\U0001f50d <b>Nada atende a esse preço agora.</b>",
+                "",
+                f"Você pediu: <i>{escape(instruction)}</i>",
+                "",
+                "Posso <b>ficar vigiando</b> e comprar sozinho assim que cair —",
+                "dentro do seu mandato, que decide cada tentativa.",
+                "",
+                "Você não precisa fazer mais nada.",
+            ]
+        ),
+        ((("\U0001f440 Vigiar e comprar quando cair", f"{CALLBACK_WATCH}:{mandate.id}"),),),
+    )
+
+
+def watch_registered(watch: WatchView) -> View:
+    days = max((watch.expires_at - datetime.now(UTC)).days, 0)
+    return View(
+        "\n".join(
+            [
+                "\U0001f440 <b>Vigiando.</b>",
+                "",
+                f"<i>{escape(watch.instruction)}</i>",
+                f"Até {days} dia(s), ou até você revogar.",
+                "",
+                "Se cair, eu compro e te aviso aqui — <b>sem você pedir</b>.",
+                "Se o mandato não permitir na hora, eu não compro e te conto.",
+            ]
+        )
+    )
+
+
+def watch_fired(watch: WatchView) -> View:
+    """What the agent did while nobody was looking.
+
+    The wording carries the whole point: on success it says it bought *by itself*, and
+    on a refusal it says it tried and did not. An agent that only reported its wins
+    would be hiding the half the mandate exists for.
+    """
+    what = escape(watch.instruction)
+    if watch.purchase is None:
+        return View(
+            f"\U0001f440 <b>Parei de vigiar.</b>\n<i>{what}</i>\n\nO prazo acabou "
+            "e eu não comprei nada."
+        )
+    result = watch.purchase
+    title = escape(result.title or "—")
+    price = f" — <b>{format_money(result.amount)}</b>" if result.amount else ""
+    if result.outcome == "settled":
+        return View(
+            "\n".join(
+                [
+                    f"\u2705 <b>Comprei sozinho.</b>\n{title}{price}",
+                    "",
+                    f"O preço caiu e estava dentro do seu mandato. <i>{what}</i>",
+                    f"Referência: <code>{escape(result.settlement_reference or '—')}</code>",
+                ]
+            )
+            + _why(result),
+            (
+                (("\u26a0\ufe0f Não reconheço esta compra", f"{CALLBACK_DISPUTE}:{result.reservation_id}"),),
+            )
+            if result.reservation_id
+            else (),
+        )
+    if result.outcome == "awaiting_human":
+        return View(
+            f"\U0001f7e1 <b>O preço caiu e eu parei em você.</b>\n{title}{price}\n\n"
+            f"{escape(result.human_summary)}\n<i>{escape(result.reason_code)}</i>"
+        )
+    return View(
+        "\n".join(
+            [
+                f"\u26d4 <b>O preço caiu e eu tentei comprar. Não comprei.</b>\n{title}{price}",
+                "",
+                escape(result.human_summary),
+                f"<i>{escape(result.reason_code)}</i>",
+                "",
+                "A tentativa está na trilha. Sua autoridade é que decidiu, não eu.",
+            ]
+        )
+    )
 
 
 def help_text() -> View:

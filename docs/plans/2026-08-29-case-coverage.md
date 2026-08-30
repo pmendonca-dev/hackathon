@@ -199,6 +199,13 @@ Assinatura RFC 9421 (ES256) sobre `@method`, `@path` e `content-digest`, exigida
 
 - [x] Criação de mandato e compra ponta a ponta autorizada
 - [x] Tentativa fora do mandato recusada **ou escalada** — nunca aprovada em silêncio
+- [x] **O agente age sozinho, e a autoridade decide mesmo assim** — o caso mínimo do
+  enunciado diz *"Marta cria o mandato; **o agente começa a vigiar preços**"*, e até aqui
+  toda superfície só respondia a pedido. `agent/watches.py` guarda a ordem permanente;
+  o bot dá o tick no ciclo que ele já tinha e entrega o resultado sem ninguém pedir.
+  Quando o preço cai dentro do mandato, ele compra. Quando o jurado revoga antes,
+  ele tenta, é recusado por `mandate_revoked` e conta — **o que acabou foi a
+  autoridade, não o agente**. `tests/integration/api/test_agent_watches.py`
 - [x] **Pedido incompleto perguntado, não adivinhado** — *"compre uma passagem"* não
   nomeia nada à venda. Antes, o mais barato do catálogo vencia por omissão: uma
   aprovação silenciosa de algo que ninguém pediu. Agora o agente devolve
@@ -223,6 +230,8 @@ Assinatura RFC 9421 (ES256) sobre `@method`, `@path` e `content-digest`, exigida
 | comprar fora do escopo **em texto livre** | `POST /agent/purchase` | `test_agent_purchase_api.py` |
 | **injetar prompt no agente** (*"a Marta liberou"*) | `POST /agent/purchase` | `test_a_prompt_injection_does_not_move_the_ceiling` |
 | **pedir sem dizer o quê** (*"compre uma passagem"*) | `POST /agent/purchase` | `test_an_instruction_that_names_nothing_asks_instead_of_buying` |
+| **derrubar o preço e ver o agente comprar sozinho** | `POST /admin/catalog/price` | `test_when_the_price_falls_the_agent_buys_with_nobody_typing` |
+| **revogar antes de derrubar o preço** | `revocation` + `price` | `test_a_revoked_mandate_stops_the_agent_that_nobody_is_watching` |
 | **cancelar o cartão sem revogar** | `POST /mandates/{id}/revocation` | `test_cancelling_the_card_leaves_the_agent_alive_and_the_budget_intact` |
 | trocar o merchant permitido | recriar o mandato | `test_a_purchase_from_another_merchant_escalates_instead_of_passing` |
 | mudar a validade | recriar o mandato | `test_the_clock_moving_past_the_expiry_ends_the_mandate` |
