@@ -7,7 +7,6 @@ the HTTP layer. Nothing below this line reaches for a global.
 from __future__ import annotations
 
 import os
-import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -38,14 +37,8 @@ DEMO_AGENT_PROFILE_URL = "https://agents.aval.local/agent_aval_demo"
 
 
 def resolve_operator_token() -> str:
-    """The configured operator token, or a fresh random one for this process.
-
-    Minting one when none is configured keeps a default deployment closed rather than
-    open: the operator surfaces refuse everything until someone reads the token off the
-    startup line or sets `AVAL_OPERATOR_TOKEN`.
-    """
-    configured = os.environ.get("AVAL_OPERATOR_TOKEN", "").strip()
-    return configured or secrets.token_urlsafe(24)
+    """Return only an explicit local operator token; missing configuration is closed."""
+    return os.environ.get("AVAL_OPERATOR_TOKEN", "").strip()
 
 
 @dataclass(frozen=True)

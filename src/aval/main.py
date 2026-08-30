@@ -40,7 +40,8 @@ from aval.api.middleware.raw_body import RawBodyMiddleware
 from aval.api.routers.audit import create_audit_router
 from aval.api.routers.delegate_payment import create_delegate_payment_router
 from aval.api.routers.payment_capture import create_payment_capture_router
-from aval.api.routers.revocations import create_revocation_router
+from aval.api.routers.revocation import create_revocation_router
+from aval.api.routers.ui_sessions import create_ui_session_router, ui_local_http_enabled
 from aval.api.routers.ucp_checkout import create_ucp_checkout_router
 from aval.api.routers.ucp_discovery import create_ucp_discovery_router
 from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
@@ -54,6 +55,7 @@ from aval.application.services.dispute import DisputeService
 from aval.application.services.payment_runtime import PaymentRuntime
 from aval.application.services.receipts import ReceiptService
 from aval.application.services.vault import VaultService
+from aval.application.services.ui_sessions import UiLocalCredentials, UiSessionService
 from aval.domain.entities import AgentIdentity, Mandate, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
@@ -254,6 +256,17 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
     )
 
 
+def _mount_browser_session_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[], datetime]) -> None:
+    """Mount the browser-only session boundary without changing agent authentication."""
+    sessions = UiSessionService(
+        engine=runtime.engine,
+        clock=clock,
+        credentials=UiLocalCredentials.from_environment(),
+    )
+    app.state.ui_sessions = sessions
+    app.include_router(create_ui_session_router(sessions, secure_cookie=not ui_local_http_enabled()))
+
+
 def create_app(
     *,
     database_path: Path | None = None,
@@ -282,6 +295,7 @@ def create_app(
     app = create_authorization_app(runtime)
     _seed_protocol_fixtures(runtime, runtime.clock.now)
     _mount_protocol_lane(app, runtime, runtime.clock.now)
+    _mount_browser_session_lane(app, runtime, runtime.clock.now)
     return app
 
 
