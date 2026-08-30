@@ -11,6 +11,25 @@ one screen in [`docs/decision-log-short.md`](https://github.com/pmendonca-dev/ha
 Each entry records the decision, the alternatives that were real at the time, what
 we chose, and why.
 
+## Browser visual-system restoration
+
+**Decision:** Restore the approved blue/lilac palette and desktop-collapsible
+sidebar without changing the current header's information hierarchy.
+
+**Options considered (one per line):**
+
+Keep the translated paper/teal presentation
+Restore the previous shell wholesale, including its older header
+Restore the palette and sidebar interaction while keeping the current header
+
+**What we chose:** Restore the indigo visual tokens, divider treatment, and
+collapsible desktop navigation. The current header continues to show runtime
+context on the left and Reload on the right.
+
+**Why:** The earlier visual affordances were lost during the English frontend
+integration, while the newer header arrangement is the preferred operational
+layout. Preserving that arrangement avoids regressing the current workflow.
+
 ## Browser BFF session migration identity
 
 **Decision:** Alembic revision number for durable browser sessions

@@ -1,34 +1,31 @@
 @import "tailwindcss";
 
 @theme {
-  /* Paper, ink and four quiet elevations. The token names are semantic rather than
-     literal — `ink-950` is the ground, not "almost black" — so the runtime views keep
-     their structure while the product reads as an editorial workspace instead of a
-     dark console. */
-  --color-ink-950: #f5f3ee;
-  --color-ink-900: #efede6;
-  --color-ink-850: #fffdfa;
-  --color-ink-800: #f7f5f0;
-  --color-ink-750: #e9e5db;
-  --color-line: #d8d5cb;
-  --color-line-hi: #bbb9b0;
+  /* Product surfaces use the approved blue/lilac system. */
+  --color-ink-950: #ffffff;
+  --color-ink-900: #f8f8fd;
+  --color-ink-850: #ffffff;
+  --color-ink-800: #f4f5fc;
+  --color-ink-750: #e8eaf5;
+  --color-line: #d7daf1;
+  --color-line-hi: #b7bde9;
 
-  --color-fg: #193440;
-  --color-fg-dim: #405965;
-  --color-fg-mute: #6d7c81;
-  --color-fg-faint: #9aa3a2;
+  --color-fg: #000000;
+  --color-fg-dim: #202231;
+  --color-fg-mute: #60647a;
+  --color-fg-faint: #9a9db0;
 
   /* Meaning, not decoration: every accent corresponds to a runtime decision. */
-  --color-allow: #28736e;
-  --color-allow-dk: #dcece7;
-  --color-escalate: #ad7b25;
-  --color-escalate-dk: #f5ead5;
-  --color-deny: #bf6553;
-  --color-deny-dk: #f5ded8;
-  --color-verify: #326f89;
-  --color-verify-dk: #deedf1;
-  --color-hold: #586e9d;
-  --color-hold-dk: #e5e8f3;
+  --color-allow: #0C7E63;
+  --color-allow-dk: #E2F3ED;
+  --color-escalate: #A66000;
+  --color-escalate-dk: #FFF0DB;
+  --color-deny: #C43E4A;
+  --color-deny-dk: #FFE7E9;
+  --color-verify: #3E4FE0;
+  --color-verify-dk: #E8EAF5;
+  --color-hold: #6872c8;
+  --color-hold-dk: #eceefc;
 
   --font-display: "Newsreader", Georgia, "Times New Roman", serif;
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
@@ -43,8 +40,8 @@
   body {
     min-width: 320px;
     background:
-      radial-gradient(72rem 38rem at 82% -14%, rgba(40, 115, 110, 0.12), transparent 62%),
-      radial-gradient(58rem 32rem at -12% 40%, rgba(173, 123, 37, 0.07), transparent 60%),
+      radial-gradient(72rem 42rem at 88% -18%, rgba(62, 79, 224, 0.11), transparent 62%),
+      radial-gradient(56rem 34rem at -18% 46%, rgba(232, 234, 245, 0.9), transparent 60%),
       var(--color-ink-950);
     background-attachment: fixed;
     color: var(--color-fg);
@@ -56,12 +53,12 @@
   button, input, select { font: inherit; }
   button:not(:disabled) { cursor: pointer; }
 
-  ::selection { background: var(--color-allow); color: #fffdfa; }
+  ::selection { background: var(--color-verify); color: #ffffff; }
 
   :focus-visible {
-    outline: 2px solid var(--color-verify);
+    outline: 3px solid var(--color-verify);
     outline-offset: 3px;
-    border-radius: 4px;
+    box-shadow: 0 0 0 2px var(--color-ink-850), 0 0 0 6px color-mix(in srgb, var(--color-verify) 42%, transparent);
   }
 
   ::-webkit-scrollbar { width: 11px; height: 11px; }
@@ -72,6 +69,33 @@
     background: var(--color-line-hi);
   }
   ::-webkit-scrollbar-thumb:hover { background: var(--color-fg-faint); }
+}
+
+@media (min-width: 1024px) {
+  .sidebar-monogram-button { position: relative; }
+  .sidebar-monogram-letter, .sidebar-monogram-icon { transition: opacity .15s ease-out, transform .18s ease-out; }
+  .sidebar-monogram-icon { position: absolute; opacity: 0; transform: scale(.82); }
+  .sidebar-monogram-button:hover .sidebar-monogram-letter,
+  .sidebar-monogram-button:focus-visible .sidebar-monogram-letter { opacity: 0; transform: scale(.82); }
+  .sidebar-monogram-button:hover .sidebar-monogram-icon,
+  .sidebar-monogram-button:focus-visible .sidebar-monogram-icon { opacity: 1; transform: scale(1); }
+
+  .sidebar-brand-copy { max-width: 176px; overflow: hidden; opacity: 1; transform: translateX(0); transition: max-width .18s ease-out .2s, opacity .14s ease-out .2s, transform .18s ease-out .2s; white-space: nowrap; }
+  .sidebar-brand-copy--collapsed { max-width: 0; opacity: 0; transform: translateX(-.25rem); transition-delay: 0s; }
+
+  .sidebar-nav-item { position: relative; display: block; }
+  .sidebar-nav-icon { position: absolute; top: 50%; left: .75rem; transform: translateY(-50%); transition: left .18s ease-out, transform .18s ease-out; }
+  .sidebar-nav-label { display: block; max-width: calc(100% - 1.75rem); margin-left: 1.8rem; overflow: hidden; opacity: 1; transform: translateX(0); transition: max-width .18s ease-out .2s, margin-left .18s ease-out .2s, opacity .14s ease-out .2s, transform .18s ease-out .2s; white-space: nowrap; }
+  .sidebar-nav-item--collapsed { padding-inline: 0; }
+  .sidebar-nav-item--collapsed .sidebar-nav-icon { left: 50%; transform: translate(-50%, -50%); transition-delay: .2s; }
+  .sidebar-nav-label--collapsed { max-width: 0; margin-left: 0; opacity: 0; transform: translateX(-.25rem); transition-delay: 0s; }
+
+  .sidebar-footer { display: block; overflow: hidden; max-height: 9rem; opacity: 1; transform: translateY(0); transition: max-height .18s ease-out .2s, padding-block .18s ease-out .2s, opacity .14s ease-out .2s, transform .18s ease-out .2s, border-color .14s ease-out .2s; }
+  .sidebar-footer--collapsed { max-height: 0; padding-block: 0; border-color: transparent; opacity: 0; transform: translateY(.5rem); transition-delay: 0s; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-monogram-letter, .sidebar-monogram-icon, .sidebar-brand-copy, .sidebar-nav-icon, .sidebar-nav-label, .sidebar-footer { transition: none; }
 }
 
 @layer utilities {
