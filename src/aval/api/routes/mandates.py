@@ -66,9 +66,9 @@ def unverified_claims(token: str) -> dict:
         encoded = token.split(".")[1]
         claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
     except (IndexError, ValueError, json.JSONDecodeError) as error:
-        raise ApiError(400, "revocation_malformed", "Token de revogação malformado.") from error
+        raise ApiError(400, "revocation_malformed", "Malformed revocation token.") from error
     if not isinstance(claims, dict):
-        raise ApiError(400, "revocation_malformed", "Token de revogação malformado.")
+        raise ApiError(400, "revocation_malformed", "Malformed revocation token.")
     return claims
 
 
@@ -79,20 +79,20 @@ def create_mandate(request: Request, body: CreateMandateRequest) -> CreateMandat
         raise ApiError(
             422,
             "mandate_creation_unsigned",
-            "A criação do mandato exige a assinatura do titular.",
+            "Creating a mandate requires the holder signature.",
         )
     # Validity is time-dependent, so it is checked here rather than in the domain: the
     # entity has no clock, and a mandate created already expired would be accepted and
     # then refuse everything, which reads as the system being broken rather than as the
     # mistake it is.
     if body.expires_at <= runtime.clock.now():
-        raise ApiError(422, "mandate_already_expired", "O mandato já nasceria expirado.")
+        raise ApiError(422, "mandate_already_expired", "The mandate would be born already expired.")
     mandate_id = f"mandate_{uuid4().hex}"
     revocation_id = f"rev_{uuid4().hex}"
     try:
         roles = [RevocationRole(authority.role) for authority in body.authorities]
     except ValueError as error:
-        raise ApiError(422, "unknown_revocation_role", "Papel de autoridade desconhecido.") from error
+        raise ApiError(422, "unknown_revocation_role", "Unknown authority role.") from error
 
     # A card that was vaulted somewhere else, named by its token. Nothing here reads
     # or tokenizes a number, because no number arrives: a mandate created with no
@@ -172,18 +172,18 @@ def revoke_everything(request: Request, principal_id: str, body: RevocationReque
         raise ApiError(
             400,
             "revocation_principal_mismatch",
-            "A revogação não corresponde a este titular.",
+            "The revocation does not match this holder.",
         )
     try:
         revoked = runtime.core.submit_principal_revocation(body.token)
     except ValueError as error:
         reason = REVOCATION_REASONS.get(str(error), "revocation_invalid")
-        raise ApiError(400, reason, "Revogação inválida.") from error
+        raise ApiError(400, reason, "Invalid revocation.") from error
     if not revoked:
         raise ApiError(
             403,
             "revocation_authority_unknown",
-            "Nenhum mandato deste titular aceita esta assinatura.",
+            "No mandate of this holder accepts that signature.",
         )
     return {"principal_id": principal_id, "revoked_mandate_ids": revoked}
 
@@ -195,7 +195,7 @@ def replace_limit(request: Request, mandate_id: str, body: ReplaceLimitRequest) 
         raise ApiError(
             403,
             "limit_change_unsigned",
-            "A mudança de limite exige autorização assinada pelo titular.",
+            "Changing the limit requires an authority signed by the holder.",
         )
     try:
         runtime.core.replace_live_limit(
@@ -204,7 +204,7 @@ def replace_limit(request: Request, mandate_id: str, body: ReplaceLimitRequest) 
     except ApprovalError as error:
         raise ApiError(error.status_code, error.reason_code, error.human_summary) from error
     except ValueError as error:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.") from error
+        raise ApiError(404, "mandate_not_found", "Mandate not found.") from error
     mandate = runtime.core.mandate(mandate_id)
     assert mandate is not None
     return ReplaceLimitResponse(
@@ -216,7 +216,7 @@ def replace_limit(request: Request, mandate_id: str, body: ReplaceLimitRequest) 
 # Where Stripe sends the person after they finish. It is a landing page and nothing
 # more — the card never comes back through it, and the bot learns what happened by
 # asking Stripe, not by being redirected.
-DEFAULT_RETURN_URL = "https://aval.local/cartao-cadastrado"
+DEFAULT_RETURN_URL = "https://aval.local/card-registered"
 
 
 def _card_registration(request: Request):
@@ -230,7 +230,7 @@ def _card_registration(request: Request):
         raise ApiError(
             409,
             "card_registration_unavailable",
-            "Cadastro de cartão exige um processador real (AVAL_PSP=stripe).",
+            "Registering a card requires a real processor (AVAL_PSP=stripe).",
         )
     return psp
 
@@ -255,7 +255,7 @@ def open_instrument_session(
     except ApprovalError as error:
         raise ApiError(error.status_code, error.reason_code, error.human_summary) from error
     except ValueError as error:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.") from error
+        raise ApiError(404, "mandate_not_found", "Mandate not found.") from error
     session = psp.create_setup_session(
         mandate_id, return_url=body.return_url or DEFAULT_RETURN_URL
     )
@@ -284,7 +284,7 @@ def read_instrument_session(
     except ApprovalError as error:
         raise ApiError(error.status_code, error.reason_code, error.human_summary) from error
     except ValueError as error:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.") from error
+        raise ApiError(404, "mandate_not_found", "Mandate not found.") from error
     card = psp.read_setup_session(session_id, mandate_id=mandate_id)
     if card is None:
         return InstrumentSessionStatusResponse(ready=False)
@@ -307,7 +307,7 @@ def bind_instrument(
         raise ApiError(
             403,
             "instrument_binding_unsigned",
-            "Cadastrar um meio de pagamento exige autorização assinada pelo titular.",
+            "Registering a payment method requires an authority signed by the holder.",
         )
     try:
         replaced = runtime.core.bind_instrument(
@@ -318,7 +318,7 @@ def bind_instrument(
     except ApprovalError as error:
         raise ApiError(error.status_code, error.reason_code, error.human_summary) from error
     except ValueError as error:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.") from error
+        raise ApiError(404, "mandate_not_found", "Mandate not found.") from error
     return BindInstrumentResponse(
         instrument_label=body.label,
         instrument_revocation_scope=f"instrument:{body.token}",
@@ -330,20 +330,20 @@ def bind_instrument(
 def revoke(request: Request, mandate_id: str, body: RevocationRequest) -> RevocationResponse:
     runtime = runtime_of(request)
     if runtime.core.mandate(mandate_id) is None:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
+        raise ApiError(404, "mandate_not_found", "Mandate not found.")
     # A token is authority over the mandate it names, never over the one in the URL.
     # Without this the same signed token could be walked onto a neighbouring mandate.
     if unverified_claims(body.token).get("mandate_id") != mandate_id:
         raise ApiError(
             400,
             "revocation_mandate_mismatch",
-            "A revogação não corresponde a este mandato.",
+            "The revocation does not match this mandate.",
         )
     try:
         runtime.core.submit_signed_revocation(body.token)
     except ValueError as error:
         reason = REVOCATION_REASONS.get(str(error), "revocation_invalid")
-        raise ApiError(400, reason, "Revogação inválida.") from error
+        raise ApiError(400, reason, "Invalid revocation.") from error
     mandate = runtime.core.mandate(mandate_id)
     assert mandate is not None
     _release_card_at_processor(runtime, unverified_claims(body.token).get("scope"))
@@ -369,4 +369,4 @@ def _release_card_at_processor(runtime, scope: object) -> None:
     try:
         psp.detach(scope.removeprefix("instrument:"))
     except Exception:  # noqa: BLE001 - the revocation stands whatever the processor says
-        logger.warning("o processador não confirmou a baixa do cartão")
+        logger.warning("the processor did not confirm the card was detached")

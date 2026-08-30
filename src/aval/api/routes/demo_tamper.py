@@ -65,7 +65,7 @@ def create_demo_tamper_router() -> APIRouter:
                 )
             ).mappings().one_or_none()
             if row is None or row["evidence_id"] is None:
-                raise ApiError(404, "audit_event_not_found", "Evento não encontrado na trilha.")
+                raise ApiError(404, "audit_event_not_found", "Event not found in the trail.")
             payload = connection.execute(
                 select(evidence.c.payload).where(evidence.c.id == row["evidence_id"])
             ).scalar_one()

@@ -227,11 +227,11 @@ export class AuthorizationGateway {
   }
 
   /**
-   * A assinatura de leitura viaja em cabeçalho, nunca na URL. Uma query string acaba em
-   * log de acesso, no histórico do navegador e no `Referer` que sai para terceiros — e
-   * um JWS do titular é prova portável de autoridade sobre o mandato: quem o lê de um
-   * log lê o registro daquela pessoa enquanto ele valer. GET não tem corpo, então sobra
-   * o cabeçalho, que nenhum dos três guarda.
+   * The read signature travels in a header, never in the URL. A query string ends up in
+   * access logs, in browser history and in the `Referer` that leaves for third parties —
+   * and a holder JWS is portable proof of authority over the mandate: whoever reads one
+   * out of a log reads that person's record for as long as it is valid. A GET has no
+   * body, so the header is what is left, and none of those three keep it.
    */
   #signed(authorizationJws: string | undefined | null): Record<string, string> {
     return authorizationJws ? { 'X-Aval-Authorization': authorizationJws } : {};
@@ -254,7 +254,7 @@ export class AuthorizationGateway {
       if (!this.#operatorSession) {
         throw new GatewayError(
           'operator_session_missing',
-          'Nenhuma sessão de operador aberta nesta aba.',
+          'No operator session is open in this tab.',
           0,
         );
       }
@@ -273,7 +273,7 @@ export class AuthorizationGateway {
       // a judge the mandate said no when the runtime never answered at all.
       throw new GatewayError(
         'runtime_unreachable',
-        'O runtime não respondeu. Nenhuma decisão foi tomada.',
+        'The runtime did not answer. No decision was made.',
         0,
       );
     }

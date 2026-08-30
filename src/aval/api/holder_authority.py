@@ -25,9 +25,9 @@ def require_holder_authority(
     authorization_jws: str | None,
     *,
     unsigned_code: str = "read_authorization_required",
-    unsigned_message: str = "Esta leitura exige autorização assinada pelo titular.",
+    unsigned_message: str = "This read requires an authority signed by the holder.",
     forbidden_code: str = "read_forbidden",
-    forbidden_message: str = "Esta chave não é autoridade sobre este mandato.",
+    forbidden_message: str = "This key is not an authority over this mandate.",
 ) -> str:
     """The kid whose signature was verified, or a refusal.
 
@@ -38,14 +38,14 @@ def require_holder_authority(
     core = runtime_of(request).core
     snapshot = core.snapshot(mandate_id)
     if snapshot is None:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
+        raise ApiError(404, "mandate_not_found", "Mandate not found.")
     if not authorization_jws:
         raise ApiError(403, unsigned_code, unsigned_message)
     try:
         readable = set(core.mandates_readable_by(authorization_jws, snapshot.mandate.principal.id))
     except ValueError as error:
         raise ApiError(
-            422, "read_authorization_malformed", "Autorização de leitura malformada."
+            422, "read_authorization_malformed", "Malformed read authority."
         ) from error
     if mandate_id not in readable:
         raise ApiError(403, forbidden_code, forbidden_message)

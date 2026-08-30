@@ -88,13 +88,13 @@ def list_mandates(
         raise ApiError(
             403,
             "read_authorization_required",
-            "Esta leitura exige autorização assinada pelo titular.",
+            "This read requires an authority signed by the holder.",
         )
     try:
         readable = set(core.mandates_readable_by(authorization_jws, principal_id))
     except ValueError as error:
         raise ApiError(
-            422, "read_authorization_malformed", "Autorização de leitura malformada."
+            422, "read_authorization_malformed", "Malformed read authority."
         ) from error
     return MandateListView(
         principal_id=principal_id,
@@ -122,7 +122,7 @@ def require_read_authority(request: Request, mandate_id: str, authorization_jws:
         request,
         mandate_id,
         authorization_jws,
-        unsigned_message="A leitura deste registro exige autorização assinada pelo titular.",
+        unsigned_message="Reading this record requires an authority signed by the holder.",
     )
     return runtime_of(request).core.snapshot(mandate_id)
 
@@ -152,7 +152,7 @@ def read_ledger(
             raise ApiError(
                 400,
                 "merchant_view_requires_merchant_id",
-                "A visão do merchant é consultada por merchant_id.",
+                "The merchant view is queried by merchant_id.",
             )
         entries = core.merchant_timeline(merchant_id)
         secret = runtime_of(request).pairwise_secret
@@ -172,10 +172,10 @@ def read_ledger(
         }
 
     if not mandate_id:
-        raise ApiError(400, "mandate_id_required", "Informe o mandate_id.")
+        raise ApiError(400, "mandate_id_required", "Give a mandate_id.")
     snapshot = core.snapshot(mandate_id)
     if snapshot is None:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
+        raise ApiError(404, "mandate_not_found", "Mandate not found.")
     entries = core.timeline_for(mandate_id)
 
     if view == "human":
@@ -202,6 +202,6 @@ def read_ledger(
 def verify_ledger(request: Request, mandate_id: str) -> dict[str, Any]:
     core = runtime_of(request).core
     if core.mandate(mandate_id) is None:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
+        raise ApiError(404, "mandate_not_found", "Mandate not found.")
     intact, broken_at, checked = core.verify_timeline(mandate_id)
     return {"intact": intact, "checked": checked, "broken_at": broken_at}

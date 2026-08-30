@@ -66,7 +66,7 @@ def agent_profile(request: Request) -> dict[str, Any]:
     runtime = runtime_of(request)
     identity = runtime.core.agent_for_kid(runtime.agent_kid)
     if identity is None:
-        raise ApiError(404, "key_not_found", "Agente de demonstração não registrado.")
+        raise ApiError(404, "key_not_found", "The demo agent is not registered.")
     return {
         "agent_id": identity.id,
         "kid": runtime.agent_kid,
@@ -80,7 +80,7 @@ def agent_profile(request: Request) -> dict[str, Any]:
 def purchase(request: Request, body: AgentPurchaseRequest) -> dict[str, Any]:
     runtime = runtime_of(request)
     if runtime.core.mandate(body.mandate_id) is None:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
+        raise ApiError(404, "mandate_not_found", "Mandate not found.")
     agent = PurchasingAgent(runtime, custody=runtime.agent_custody, kid=runtime.agent_kid)
     run = agent.run(mandate_id=body.mandate_id, instruction=body.instruction)
     return {
@@ -111,7 +111,7 @@ def register_watch(request: Request, body: RegisterWatchRequest) -> dict[str, An
             mandate_id=body.mandate_id, instruction=body.instruction
         )
     except ValueError as error:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.") from error
+        raise ApiError(404, "mandate_not_found", "Mandate not found.") from error
     return _watch_view(watch)
 
 
@@ -125,7 +125,7 @@ def tick_watches(request: Request, body: dict) -> dict[str, Any]:
     """Try every open watch once. This is where the agent acts with nobody watching."""
     mandate_id = str(body.get("mandate_id", ""))
     if not mandate_id:
-        raise ApiError(422, "mandate_id_required", "mandate_id é obrigatório.")
+        raise ApiError(422, "mandate_id_required", "mandate_id is required.")
     outcomes = _watches(request).tick(mandate_id)
     return {
         "fired": [

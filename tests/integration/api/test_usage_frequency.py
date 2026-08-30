@@ -101,7 +101,7 @@ def test_the_ladder_shows_the_usage_check_and_what_it_counted(harness: Harness) 
     assert trace[-1] == {
         "check": "within_usage_window",
         "passed": False,
-        "detail": "1 uso em 2592000s atinge o máximo de 1",
+        "detail": "1 use in 2592000s reaches the maximum of 1",
     }
 
 

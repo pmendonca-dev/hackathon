@@ -69,29 +69,29 @@ export function TrialByFireConsole() {
     <div className="page-shell">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Console trial-by-fire</p>
-          <h1>Mude o que quiser. O núcleo relê tudo na decisão seguinte.</h1>
+          <p className="eyebrow">Trial-by-fire console</p>
+          <h1>Change whatever you like. The core re-reads all of it on the next decision.</h1>
           <p>
-            Nenhum cache na frente de limite e revogação, e nenhum reinício necessário.
-            O efeito aparece na próxima compra que o agente tentar.
+            No cache sits in front of a limit or a revocation, and nothing needs
+            restarting. The effect shows up on the next purchase the agent attempts.
           </p>
         </div>
-        <Badge tone={selected ? 'allow' : 'neutral'}>{selected?.mandate_id ?? 'SEM MANDATO'}</Badge>
+        <Badge tone={selected ? 'allow' : 'neutral'}>{selected?.mandate_id ?? 'NO MANDATE'}</Badge>
       </header>
 
       <section className="grid gap-4 lg:grid-cols-2">
         <Panel
-          eyebrow="Provado pela chave do titular"
-          title="Autoridade de gasto"
+          eyebrow="Proved by the holder key"
+          title="Spending authority"
           action={<KeyRound size={18} className="text-allow" aria-hidden="true" />}
         >
           <p className="mb-4 text-[13px] leading-relaxed text-fg-mute">
-            Assinado nesta carteira, no navegador. Nenhum token de operador consegue
-            produzir estas assinaturas — é isso que impede quem opera a instância de
-            gastar o dinheiro dos outros.
+            Signed by this wallet, in the browser. No operator token can produce these
+            signatures — that is what stops whoever runs the instance from spending other
+            people's money.
           </p>
           <label className="block">
-            <span className="eyebrow">Novo orçamento (USD)</span>
+            <span className="eyebrow">New budget (USD)</span>
             <input className="form-control" value={newLimit} onChange={(event) => setNewLimit(event.target.value)} />
           </label>
           <div className="mt-3 space-y-2">
@@ -100,7 +100,7 @@ export function TrialByFireConsole() {
               disabled={busy || !selected || !walletReady}
               onClick={() => fire(() => changeLimit(Math.round(Number(newLimit) * 100)))}
             >
-              <Wallet size={13} aria-hidden="true" />Mudar limite (assinado)
+              <Wallet size={13} aria-hidden="true" />Change the limit (signed)
             </Button>
             <Button
               variant="danger"
@@ -108,7 +108,7 @@ export function TrialByFireConsole() {
               disabled={busy || !selected || !walletReady}
               onClick={() => fire(revokeSelected)}
             >
-              <ShieldOff size={13} aria-hidden="true" />Revogar mandato (assinado)
+              <ShieldOff size={13} aria-hidden="true" />Revoke the mandate (signed)
             </Button>
             <Button
               variant="danger"
@@ -116,14 +116,14 @@ export function TrialByFireConsole() {
               disabled={busy || !walletReady || mandates.length === 0}
               onClick={() => fire(revokeEverything)}
             >
-              <ShieldOff size={13} aria-hidden="true" />Revogar tudo (assinado)
+              <ShieldOff size={13} aria-hidden="true" />Revoke everything (signed)
             </Button>
           </div>
         </Panel>
 
         <Panel
-          eyebrow="Provado pelo token de operador"
-          title="Operação da instância"
+          eyebrow="Proved by the operator token"
+          title="Running the instance"
           action={<PlugZap size={18} className="text-hold" aria-hidden="true" />}
         >
           {!operatorAvailable ? (
@@ -132,11 +132,11 @@ export function TrialByFireConsole() {
                   built into the bundle, which published it: anyone who opened devtools
                   on this page kept the processor switch forever. */}
               <p className="mb-4 text-[13px] leading-relaxed text-fg-mute">
-                Nenhuma sessão de operador aberta nesta aba. Apresente o token uma vez — o
-                que fica na página é uma credencial curta, que expira sozinha.
+                No operator session is open in this tab. Present the token once — what
+                stays on the page is a short-lived credential that expires on its own.
               </p>
               <label className="block">
-                <span className="eyebrow">Token de operador</span>
+                <span className="eyebrow">Operator token</span>
                 <input
                   className="form-control"
                   type="password"
@@ -156,36 +156,37 @@ export function TrialByFireConsole() {
                   })
                 }
               >
-                <KeyRound size={13} aria-hidden="true" />Abrir sessão de operador
+                <KeyRound size={13} aria-hidden="true" />Open an operator session
               </Button>
               <p className="safe-note mt-4">
                 <ShieldOff size={15} aria-hidden="true" />
-                Nada aqui move dinheiro. Aumentar limite e aprovar escalação continuam
-                exigindo a chave do titular, que esta sessão não tem e não pode obter.
+                Nothing here moves money. Raising a limit and approving an escalation
+                still require the holder key, which this session does not have and cannot
+                obtain.
               </p>
             </>
           ) : (
             <>
               <p className="mb-2 text-[13px] leading-relaxed text-fg-mute">
-                Estas superfícies operam a instância e, de propósito, não mexem em
-                dinheiro nenhum.
+                These surfaces run the instance and, deliberately, touch no money at
+                all.
               </p>
               <p className="mb-4 flex flex-wrap items-center gap-2">
-                <Badge tone="hold">sessão até {operatorSessionExpiresAt ?? '—'}</Badge>
+                <Badge tone="hold">session until {operatorSessionExpiresAt ?? '—'}</Badge>
                 <Button variant="ghost" disabled={busy} onClick={() => fire(closeOperatorSession)}>
-                  <LogOut size={13} aria-hidden="true" />Encerrar sessão
+                  <LogOut size={13} aria-hidden="true" />End the session
                 </Button>
               </p>
               <div className="grid gap-2 sm:grid-cols-3">
-                <Button variant="ghost" disabled={busy} onClick={() => fire(() => setPspMode('offline'))}>Processador offline</Button>
-                <Button variant="ghost" disabled={busy} onClick={() => fire(() => setPspMode('decline'))}>Processador recusa</Button>
-                <Button variant="ghost" disabled={busy} onClick={() => fire(() => setPspMode('online'))}>Processador online</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => fire(() => setPspMode('offline'))}>Processor offline</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => fire(() => setPspMode('decline'))}>Processor declines</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => fire(() => setPspMode('online'))}>Processor online</Button>
               </div>
               <Button variant="ghost" className="mt-2 w-full" disabled={busy} onClick={() => fire(reconcile)}>
-                <RefreshCcw size={13} aria-hidden="true" />Reconciliar pendências
+                <RefreshCcw size={13} aria-hidden="true" />Reconcile what is pending
               </Button>
               <label className="mt-4 block">
-                <span className="eyebrow">Avançar relógio (horas)</span>
+                <span className="eyebrow">Advance the clock (hours)</span>
                 <input className="form-control" value={hours} onChange={(event) => setHours(event.target.value)} />
               </label>
               <Button
@@ -194,13 +195,13 @@ export function TrialByFireConsole() {
                 disabled={busy}
                 onClick={() => fire(() => advanceClock(Math.round(Number(hours) * 3600)))}
               >
-                <Clock size={13} aria-hidden="true" />Avançar e ver expirar
+                <Clock size={13} aria-hidden="true" />Advance it and watch things expire
               </Button>
               {/* The control that ends a standing order's waiting. It sits here, and
                   not with the holder commands, because moving a price authorizes
                   nothing: the watch it wakes faces the same mandate as ever. */}
               <label className="mt-4 block">
-                <span className="eyebrow">Derrubar preço de</span>
+                <span className="eyebrow">Drop the price of</span>
                 <select
                   className="form-control"
                   value={chosenSku}
@@ -215,7 +216,7 @@ export function TrialByFireConsole() {
                 </select>
               </label>
               <label className="mt-2 block">
-                <span className="eyebrow">Novo preço (USD)</span>
+                <span className="eyebrow">New price (USD)</span>
                 <input
                   className="form-control"
                   value={newPrice}
@@ -228,14 +229,14 @@ export function TrialByFireConsole() {
                 disabled={busy || !chosenSku}
                 onClick={() => fire(() => repriceOffer(chosenSku, Math.round(Number(newPrice) * 100)))}
               >
-                <TrendingDown size={13} aria-hidden="true" />O preço caiu — e agora?
+                <TrendingDown size={13} aria-hidden="true" />The price dropped — now what?
               </Button>
               {/* The agent that goes around AVAL entirely: it charges the card and
                   never asks the mandate. It is the only way to produce money this layer
                   cannot justify holding — and therefore the only way to watch the
                   verdict give it back. Mounted only with AVAL_DEMO_ROGUE. */}
               <label className="mt-4 block">
-                <span className="eyebrow">Cobrança por fora do núcleo (USD)</span>
+                <span className="eyebrow">Charge that bypasses the core (USD)</span>
                 <input
                   className="form-control"
                   value={rogueAmount}
@@ -248,7 +249,7 @@ export function TrialByFireConsole() {
                 disabled={busy || !selected}
                 onClick={() => fire(() => rogueCharge(Math.round(Number(rogueAmount) * 100)))}
               >
-                <Siren size={13} aria-hidden="true" />Cobrar sem passar pelo mandato
+                <Siren size={13} aria-hidden="true" />Charge without consulting the mandate
               </Button>
               <Button
                 variant="ghost"
@@ -256,12 +257,12 @@ export function TrialByFireConsole() {
                 disabled={busy}
                 onClick={() => fire(loadOperatorJournal)}
               >
-                <ScrollText size={13} aria-hidden="true" />Ler o diário do operador
+                <ScrollText size={13} aria-hidden="true" />Read the operator journal
               </Button>
               <p className="safe-note mt-4">
                 <Clock size={15} aria-hidden="true" />
-                O relógio só avança. Rebobinar reviveria um mandato expirado, e isso
-                seria um operador devolvendo autoridade de gasto.
+                The clock only moves forward. Rewinding it would revive an expired
+                mandate, and that would be an operator handing spending authority back.
               </p>
             </>
           )}
@@ -270,20 +271,20 @@ export function TrialByFireConsole() {
 
       {operatorJournal && (
         <Panel
-          eyebrow="O outro lado da simetria"
-          title={`Diário do operador — ${operatorJournal.entries.length} ato(s)`}
+          eyebrow="The other half of the symmetry"
+          title={`Operator journal — ${operatorJournal.entries.length} act(s)`}
           action={
             <Badge tone={operatorJournal.chain.intact ? 'verify' : 'deny'}>
               {operatorJournal.chain.intact
-                ? 'CADEIA ÍNTEGRA'
-                : `QUEBRADA EM ${operatorJournal.chain.broken_at}`}
+                ? 'CHAIN INTACT'
+                : `BROKEN AT ${operatorJournal.chain.broken_at}`}
             </Badge>
           }
         >
           {operatorJournal.entries.length === 0 ? (
             <EmptyNotice
-              title="Nada foi operado ainda"
-              body="Escritas entram aqui; leituras não, porque ler não é um ato de operação."
+              title="Nothing has been operated yet"
+              body="Writes land here; reads do not, because reading is not an act of operation."
             />
           ) : (
             <ul className="space-y-2">
@@ -308,18 +309,18 @@ export function TrialByFireConsole() {
           )}
           <p className="safe-note mt-4">
             <ScrollText size={15} aria-hidden="true" />
-            O titular assina para gastar; ninguém assina para operar. No lugar da
-            assinatura entra a cadeia: ela não prova quem digitou, e prova que nada foi
-            retirado depois.
+            The holder signs to spend; nobody signs to operate. The chain takes the
+            signature's place: it does not prove who typed, and it does prove nothing was
+            removed afterwards.
           </p>
         </Panel>
       )}
 
-      <Panel eyebrow="O que o runtime respondeu" title="Recibos desta sessão">
+      <Panel eyebrow="What the runtime answered" title="Receipts from this session">
         {receipts.length === 0 ? (
           <EmptyNotice
-            title="Nenhum comando ainda"
-            body="Cada comando registra aqui o que o runtime respondeu — inclusive quando não respondeu nada."
+            title="No commands yet"
+            body="Every command records here what the runtime answered — including when it answered nothing at all."
           />
         ) : (
           <ul className="space-y-2">
