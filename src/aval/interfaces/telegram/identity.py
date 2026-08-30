@@ -110,6 +110,22 @@ class IdentityStore:
                 return identity
         return None
 
+    def for_principal(self, principal_id: str) -> ChatIdentity | None:
+        """Which chat a core event belongs to.
+
+        The other computer knows a buyer only as a principal id — it has never heard of
+        a chat id, and it must not, because a Telegram id is the one identifier here
+        that points at a person outside this system. So the mapping back lives on this
+        side, in the file this bot already keeps, and an event naming a principal no
+        chat here holds is simply not deliverable.
+        """
+        if not principal_id:
+            return None
+        for identity in self._identities.values():
+            if identity.principal_id == principal_id:
+                return identity
+        return None
+
     def enrol(self, chat_id: int, display_name: str) -> ChatIdentity:
         """Mint a holder key for a chat that has never spoken before."""
         with self._lock:

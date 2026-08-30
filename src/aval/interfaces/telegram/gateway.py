@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from aval.security.edge_auth import EdgeSigner
 from aval.security.mandate_creation import mandate_creation_claims
 from aval.interfaces.telegram.identity import ChatIdentity, IdentityStore
 
@@ -90,6 +91,31 @@ class PurchaseView:
     settlement_reference: str | None
     proposed_by: str = "rules"
     rationale: str | None = None
+
+
+@dataclass(frozen=True)
+class EdgeEventView:
+    """One thing the core did while nobody was watching, as this bot reads it.
+
+    Everything here came across a machine boundary and is display data: a title, a link,
+    an amount, an outcome. There is no signature to check and nothing to verify, because
+    nothing in it grants anything — it is the news, not the authority.
+    """
+
+    id: int
+    principal_id: str
+    event_type: str
+    payload: Mapping[str, Any]
+
+    @classmethod
+    def from_payload(cls, entry: Mapping[str, Any]) -> "EdgeEventView":
+        payload = entry.get("payload")
+        return cls(
+            id=int(entry.get("id", 0)),
+            principal_id=str(entry.get("principal_id", "")),
+            event_type=str(entry.get("event_type", "")),
+            payload=payload if isinstance(payload, Mapping) else {},
+        )
 
 
 @dataclass(frozen=True)
@@ -176,6 +202,10 @@ class ReceiptView:
 
 # Paths as the running API exposes them; `GET /docs` on the instance is the live
 # reference. Change them here, never in a handler.
+# The core's private outbox. Not in ENDPOINTS: it is not part of the authorization
+# lane the rest of this gateway speaks, and it exists only in a two-machine deployment.
+EDGE_EVENTS = "/edge/v1/events"
+
 ENDPOINTS = {
     "health": "/health",
     "mandates": "/mandates",
@@ -210,11 +240,49 @@ class AvalGateway:
         identities: IdentityStore,
         timeout: int = 15,
         opener: Any | None = None,
+        edge_secret: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._identities = identities
         self._timeout = timeout
         self._opener = opener or urllib.request.urlopen
+        # Present only when the two halves are on different machines. It authenticates
+        # this process to the core's private outbox and can do nothing else: it creates
+        # no mandate, moves no money and signs for nobody. Spending authority stays the
+        # chat's own ES256 key, which never leaves this computer.
+        self._edge = (
+            None
+            if not edge_secret
+            else EdgeSigner(edge_secret, clock=lambda: datetime.now(UTC))
+        )
+
+
+    # ── the outbox on the other computer ───────────────────────────────────
+    def edge_events(self, after: int | None = None) -> Sequence["EdgeEventView"]:
+        """What the core has to tell this chat, and has not been told arrived.
+
+        Reading is not acknowledging. If Telegram refuses the message — rate limit,
+        network, a chat that blocked the bot — the event is still undelivered and comes
+        back on the next poll, which is the entire reason it lives in a table instead of
+        in a callback.
+        """
+        if self._edge is None:
+            return ()
+        path = EDGE_EVENTS if after is None else f"{EDGE_EVENTS}?after={after}"
+        payload = self._call("GET", path, headers=self._edge.sign("GET", path, b""))
+        raw = payload.get("events")
+        return tuple(
+            EdgeEventView.from_payload(entry)
+            for entry in (raw if isinstance(raw, list) else ())
+            if isinstance(entry, dict)
+        )
+
+    def ack_edge_event(self, event_id: int) -> None:
+        """Say it arrived, after Telegram has taken it and not before."""
+        if self._edge is None:
+            return
+        path = f"{EDGE_EVENTS}/{int(event_id)}/ack"
+        self._call("POST", path, headers=self._edge.sign("POST", path, b""))
 
     # ── reads ──────────────────────────────────────────────────────────────
     def health(self) -> str:

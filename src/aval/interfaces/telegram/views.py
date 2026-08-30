@@ -8,10 +8,11 @@ the core decided, it does not paraphrase it.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape
+from typing import Any
 import re
 import unicodedata
 
@@ -650,6 +651,105 @@ def watch_registered(watch: WatchView) -> View:
             ]
         )
     )
+
+
+# The one sentence this MVP may never stop saying. A signed offer plus a real charge
+# together read as "an order was placed", and no order was: AVAL found a public page and
+# charged the person's own test-mode card. Saying so every time is the difference between
+# a demonstration and a claim that is not true.
+NO_EXTERNAL_ORDER = (
+    "Não enviei pedido ao vendedor — a AVAL achou a página e cobrou o seu cartão de teste."
+)
+
+
+def shopping_preview(shopping: Any) -> View:
+    """What the agent will go looking for, shown before anything is signed.
+
+    Deliberately a second screen rather than more lines on the mandate card. The
+    mandate is authority — what may be spent — and this is a standing order to spend it
+    without asking again. Those are two decisions, and a person should have to read
+    them as two.
+
+    Everything needed to say no is here: what, up to how much, for how long, that the
+    charge happens with nobody at the keyboard, and that no seller receives an order.
+    """
+    cap = format_money(MoneyView(shopping.max_minor_units, shopping.currency, shopping.scale))
+    return View(
+        "\n".join(
+            [
+                "\U0001f50d <b>E vou ficar procurando isto:</b>",
+                "",
+                f"<i>{escape(shopping.query)}</i>",
+                f"Até <b>{cap}</b>, por <b>{shopping.watch_days} dia(s)</b>.",
+                "",
+                "Se eu achar algo que caiba, <b>compro sozinho</b> e te aviso aqui — "
+                "sem perguntar de novo. Se o mandato não permitir na hora, não compro "
+                "e te conto.",
+                f"<i>{NO_EXTERNAL_ORDER}</i>",
+            ]
+        )
+    )
+
+
+def shopping_armed(shopping: Any) -> View:
+    """Said after the watch exists, so "armed" is a fact rather than a promise."""
+    return View(
+        "\n".join(
+            [
+                "\U0001f440 <b>Vigilância ligada.</b>",
+                "",
+                f"<i>{escape(shopping.query)}</i>",
+                f"Por {shopping.watch_days} dia(s), ou até você revogar.",
+                "",
+                "Use /mandato para ver o que está armado e /revogar para desligar.",
+            ]
+        )
+    )
+
+
+def watch_event(payload: Mapping[str, Any]) -> View:
+    """What the core did, as the person reads it.
+
+    Everything here crossed a machine boundary as display data. Nothing in it is
+    verified or verifiable by this bot, and nothing in it grants anything — which is
+    exactly why it can be shown without ceremony.
+    """
+    outcome = str(payload.get("outcome") or "")
+    title = escape(str(payload.get("title") or "—"))
+    url = str(payload.get("source_url") or "")
+    seller = escape(str(payload.get("source_merchant") or "—"))
+    minor = payload.get("amount_minor_units")
+    price = ""
+    if isinstance(minor, int) and payload.get("currency"):
+        money = MoneyView(minor, str(payload["currency"]), int(payload.get("scale") or 2))
+        price = f" — <b>{format_money(money)}</b>"
+    # The link is the whole point of a real-offer watch: it lets the person check the
+    # claim instead of believing it.
+    link = f'\U0001f517 <a href="{escape(url)}">Ver a página</a>' if url else None
+
+    if outcome == "watch_expired":
+        return View("\U0001f440 <b>Parei de vigiar.</b>\n\nO prazo acabou e eu não comprei nada.")
+
+    if outcome == "settled":
+        lines = [
+            f"✅ <b>Comprei sozinho.</b>\n{title}{price}",
+            "",
+            f"Vendedor: {seller}",
+        ]
+        if link:
+            lines.append(link)
+        reference = payload.get("settlement_reference")
+        if reference:
+            lines.append(f"Referência: <code>{escape(str(reference))}</code>")
+        lines += ["", f"<i>{NO_EXTERNAL_ORDER}</i>"]
+        return View("\n".join(lines))
+
+    summary = escape(str(payload.get("human_summary") or "A compra não foi autorizada."))
+    lines = [f"\U0001f6d1 <b>Tentei e não comprei.</b>\n{title}{price}", "", summary]
+    if link:
+        lines.append(link)
+    lines.append(f"Motivo do núcleo: <code>{escape(outcome or '—')}</code>")
+    return View("\n".join(lines))
 
 
 def watch_fired(watch: WatchView) -> View:

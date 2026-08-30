@@ -25,7 +25,15 @@ import urllib.request
 
 from aval.interfaces.telegram import conversation, views
 from aval.interfaces.telegram.config import BotConfig
-from aval.interfaces.telegram.conversation import SpecTalker, Turn, build_talker
+from aval.discovery.models import ShoppingRequest, encode_shopping_request
+from aval.interfaces.telegram.conversation import (
+    ShoppingDraft,
+    SpecTalker,
+    Turn,
+    build_talker,
+)
+from aval.merchant.catalog import TEST_MARKETPLACE_ID
+from aval.merchant.discovered_offers import SHOPPING_CATEGORY
 from aval.interfaces.telegram.gateway import AvalGateway, GatewayError, MandateView, MoneyView
 from aval.interfaces.telegram.identity import ChatIdentity, IdentityStore
 from aval.interfaces.telegram.views import View
@@ -153,6 +161,10 @@ class Bot:
         # memory. A restart forgets it and the person types the sentence again —
         # which beats issuing a mandate from words the bot can no longer show them.
         self._pending_spec: dict[int, views.MandateSpec] = {}
+        # ponytail: the search described alongside that mandate, in memory and
+        # dropped on restart for the same reason — a watch armed from words the bot
+        # can no longer show would be a standing order nobody saw.
+        self._pending_shopping: dict[int, ShoppingDraft | None] = {}
         # ponytail: the card page each chat has open, in memory. A restart forgets it
         # and /cartao opens a new one — the card itself is safe at the processor either
         # way, so the worst a restart costs is one abandoned form.
@@ -236,7 +248,12 @@ class Bot:
         history.append(Turn("user", text))
         del history[:-conversation.HISTORY_LIMIT]
         try:
-            categories = sorted({offer.category for offer in self._gateway.catalogue()})
+            # `shopping` has no catalogue rows — every offer under it is minted from
+            # a page a search just found — so it has to be added by name or a person
+            # could never scope a mandate to the thing this MVP is for.
+            categories = sorted(
+                {offer.category for offer in self._gateway.catalogue()} | {SHOPPING_CATEGORY}
+            )
             draft = self._talker.respond(
                 history, categories=categories, defaults=self._config.mandate_defaults
             )
@@ -245,12 +262,17 @@ class Bot:
             if draft.spec is None:
                 return
             self._pending_spec[chat_id] = draft.spec
+            # Held next to the spec, never acted on here. The tap is still what grants,
+            # and the watch is registered only after the mandate exists.
+            self._pending_shopping[chat_id] = draft.shopping
             current = (
                 self._gateway.mandate(identity.mandate_id)
                 if identity.mandate_id is not None
                 else None
             )
             self._send(chat_id, views.new_mandate_preview(draft.spec, current))
+            if draft.shopping is not None:
+                self._send(chat_id, views.shopping_preview(draft.shopping))
         except GatewayError as error:
             self._send(chat_id, views.unavailable(str(error), error.reason_code))
 
@@ -487,9 +509,15 @@ class Bot:
             )
             screens.append(views.signed_note("Mandato anterior revogado", message))
         defaults = self._config.mandate_defaults
+        # A shopping mandate has to name the marketplace that re-issues discovered
+        # pages, or every offer a search finds is refused as out of scope. It is added,
+        # never substituted: the travel sellers stay exactly where they were.
+        merchants = defaults.merchants
+        if SHOPPING_CATEGORY in spec.categories:
+            merchants = (*merchants, TEST_MARKETPLACE_ID)
         mandate_id, instrument_scope = self._gateway.create_mandate(
             identity,
-            merchants=defaults.merchants,
+            merchants=merchants,
             categories=spec.categories,
             limit=spec.limit,
             ceiling=(
@@ -507,7 +535,34 @@ class Bot:
         mandate = self._gateway.mandate(mandate_id)
         if mandate is None:
             return (*screens, views.no_mandate())
-        return (*screens, views.mandate_card(mandate))
+        screens.append(views.mandate_card(mandate))
+        shopping = self._pending_shopping.pop(identity.chat_id, None)
+        if shopping is not None:
+            screens.append(self._start_shopping_watch(mandate_id, shopping))
+        return tuple(screens)
+
+    def _start_shopping_watch(self, mandate_id: str, shopping: ShoppingDraft) -> View:
+        """Arm the standing order the person just described.
+
+        Registering grants nothing: the core still evaluates every candidate against
+        this mandate when the watch fires, and a revocation between now and then is
+        honoured. What the card says is therefore a promise about *looking*, never
+        about being allowed to buy.
+        """
+        request = ShoppingRequest(
+            query=shopping.query,
+            category=shopping.category,
+            max_minor_units=shopping.max_minor_units,
+            currency=shopping.currency,
+            # The draft's own scale, so the number the person was shown on the
+            # confirmation card is the number the watch is registered with.
+            scale=shopping.scale,
+        )
+        try:
+            self._gateway.register_watch(mandate_id, encode_shopping_request(request))
+        except GatewayError as error:
+            return views.unavailable(str(error), error.reason_code)
+        return views.shopping_armed(shopping)
 
     def _replace_limit(self, identity: ChatIdentity, argument: str) -> View:
         assert identity.mandate_id is not None
@@ -691,31 +746,44 @@ class Bot:
         return sent
 
     def push_watch_results(self) -> int:
-        """Let every standing order try once, and report what it did.
+        """Report what the core did while nobody was at the keyboard.
 
-        This is the only place the system acts with nobody at the keyboard, which is
-        the case's actual premise. It reports refusals as loudly as purchases: an agent
-        that only announced its wins would hide the half the mandate exists for.
+        This bot no longer *drives* the watches. It used to call `/agent/watches/tick`,
+        which meant a standing order only fired while a chat client happened to be
+        polling — and, in the two-machine split, it would have meant the computer
+        holding the OpenAI key deciding when the computer holding the money should try
+        to spend it. The scheduler on the core owns that now.
+
+        What is left here is delivery, and it is deliberately the harder half. The core
+        writes what happened to a durable outbox; this reads it and acknowledges only
+        after Telegram has actually taken the message. A send that fails leaves the
+        event undelivered, so it comes back on the next poll instead of being lost —
+        the news being lost is "your money moved".
+
+        It reports refusals as loudly as purchases: an agent that only announced its
+        wins would hide the half the mandate exists for.
         """
+        try:
+            events = self._gateway.edge_events()
+        except GatewayError as error:
+            logger.warning("caixa de eventos do núcleo: %s", error)
+            return 0
         delivered = 0
-        for chat_id in self._identities.known_chats():
-            identity = self._identities.get(chat_id)
-            if identity is None or identity.mandate_id is None:
+        for event in events:
+            identity = self._identities.for_principal(event.principal_id)
+            if identity is None:
+                # An event for a buyer this bot does not know. Not acknowledged: another
+                # edge may hold that chat, and marking it delivered here would silence
+                # news meant for someone else.
                 continue
             try:
-                fired = self._gateway.tick_watches(identity.mandate_id)
-            except GatewayError as error:
-                if error.reason_code != "mandate_not_found":
-                    logger.warning("vigílias de %s: %s", chat_id, error)
+                self._send(identity.chat_id, views.watch_event(event.payload))
+            except TelegramError as error:
+                # Undelivered stays undelivered. The next poll tries again.
+                logger.warning("entrega do evento %s falhou: %s", event.id, error)
                 continue
-            for watch in fired:
-                if watch.id in self._watched:
-                    continue
-                self._send(chat_id, views.watch_fired(watch))
-                self._watched.add(watch.id)
-                if watch.purchase is not None and watch.purchase.reservation_id:
-                    self._identities.record_reservation(chat_id, watch.purchase.reservation_id)
-                delivered += 1
+            self._gateway.ack_edge_event(event.id)
+            delivered += 1
         return delivered
 
     # ── runtime ────────────────────────────────────────────────────────────
@@ -767,7 +835,12 @@ def build_bot(env: Mapping[str, str] | None = None) -> Bot:
     config = BotConfig.from_env(env if env is not None else os.environ)
     identities = IdentityStore(config.identity_path)
     gateway = AvalGateway(
-        config.api_base_url, identities=identities, timeout=config.request_timeout_seconds
+        config.api_base_url,
+        identities=identities,
+        timeout=config.request_timeout_seconds,
+        # None on a single machine, where the core mounts no edge routes at all and
+        # there is nothing to authenticate to.
+        edge_secret=None if config.edge is None else config.edge.edge_to_core_secret,
     )
     api = TelegramApi(config.token, timeout=config.request_timeout_seconds)
     return Bot(config, gateway, identities, api)

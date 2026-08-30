@@ -13,7 +13,9 @@ import pytest
 
 from aval.agent.intent import fold, parse_intent
 from aval.interfaces.telegram import conversation, views
-from aval.interfaces.telegram.bot import Bot, TelegramApi, _display_name
+from aval.discovery.models import decode_shopping_request
+from aval.interfaces.telegram.bot import Bot, TelegramApi, TelegramError, _display_name
+from aval.merchant.catalog import TEST_MARKETPLACE_ID
 from aval.interfaces.telegram.config import BotConfig, ConfigError
 from aval.interfaces.telegram.gateway import AvalGateway, GatewayError, MoneyView
 from aval.interfaces.telegram.identity import IdentityStore
@@ -47,6 +49,12 @@ class FakeAval:
         self.dispute_status = "MANDATE_HELD"
         self.chain_intact = True
         self.watches: dict[str, dict[str, Any]] = {}
+        # The core's durable outbox, and what the edge has confirmed arrived. The bot
+        # no longer drives watches; it reads this and acknowledges only after Telegram
+        # has taken the message.
+        self.events: list[dict[str, Any]] = []
+        self.acknowledged_event_ids: list[int] = []
+        self.edge_open = True
         # What Córdoba costs right now. The judge's price knob moves this.
         self.cordoba_price = 13000
         self.offline = False
@@ -218,7 +226,37 @@ class FakeAval:
             }
         if route == "/agent/watches/tick":
             return 200, {"fired": self._tick_watches(body["mandate_id"])}
+        if route == "/edge/v1/events" and method == "GET":
+            if not self.edge_open:
+                return 401, {"reason_code": "edge_unauthenticated"}
+            after = int(params.get("after", 0) or 0)
+            return 200, {
+                "events": [
+                    event
+                    for event in self.events
+                    if event["id"] > after and event["id"] not in self.acknowledged_event_ids
+                ]
+            }
+        if route.startswith("/edge/v1/events/") and route.endswith("/ack"):
+            if not self.edge_open:
+                return 401, {"reason_code": "edge_unauthenticated"}
+            self.acknowledged_event_ids.append(int(route.split("/")[4]))
+            return 204, {}
         return 404, {"reason_code": "not_found"}
+
+    def enqueue_watch_closed(self, *, principal_id: str, **payload: Any) -> int:
+        """What Computer B writes when a watch stops waiting."""
+        self._sequence += 1
+        event_id = self._sequence
+        self.events.append(
+            {
+                "id": event_id,
+                "principal_id": principal_id,
+                "event_type": "watch_closed",
+                "payload": {"principal_id": principal_id, **payload},
+            }
+        )
+        return event_id
 
     # behaviour ------------------------------------------------------------
     def _create_mandate(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -468,8 +506,13 @@ class FakeApi:
         self.sent: list[tuple[int, views.View]] = []
         self.edited: list[tuple[int, int, views.View]] = []
         self.answers: list[tuple[str, str]] = []
+        # Telegram refusing a message is the ordinary case the outbox exists for: a
+        # rate limit, a network blip, a chat that blocked the bot.
+        self.fail_next = False
 
     def send_message(self, chat_id: int, view: views.View) -> dict:
+        if self.fail_next:
+            raise TelegramError("telegram recusou")
         self.sent.append((chat_id, view))
         return {"message_id": len(self.sent)}
 
@@ -497,7 +540,12 @@ def _build(tmp_path: Path, aval: "FakeAval"):
         }
     )
     identities = IdentityStore(config.identity_path)
-    gateway = AvalGateway("http://127.0.0.1:9000", identities=identities, opener=aval.opener)
+    gateway = AvalGateway(
+        "http://127.0.0.1:9000",
+        identities=identities,
+        opener=aval.opener,
+        edge_secret="edge-to-core",
+    )
     api = FakeApi()
     return Bot(config, gateway, identities, api), api, aval, identities
 
@@ -1231,20 +1279,73 @@ def test_watching_is_registered_only_when_the_person_asks_for_it(world) -> None:
 
 
 def test_the_agent_reports_a_purchase_nobody_asked_it_to_make_now(world) -> None:
-    """The moment the case is actually about: the price falls, and the phone buzzes."""
+    """The moment the case is actually about: the price falls, and the phone buzzes.
+
+    The bot no longer drives this. The core decided and charged on its own schedule and
+    wrote what happened to its outbox; all this side does is read it and speak.
+    """
     bot, api, aval, identities = world
     bot.handle_update(message("/start"))
-    mandate_id = identities.get(MARTA).mandate_id
-    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
-    bot.handle_update(tap(f"{views.CALLBACK_WATCH}:{mandate_id}"))
+    principal_id = identities.get(MARTA).principal_id
     before = len(api.sent)
 
-    aval.cordoba_price = 7500  # o jurado derruba o preço
-    assert bot.push_watch_results() == 1
+    aval.enqueue_watch_closed(
+        principal_id=principal_id,
+        outcome="settled",
+        title="Notebook Acer Aspire 5",
+        source_merchant="shop.example",
+        source_url="https://shop.example/aspire-5",
+        amount_minor_units=7500,
+        currency="USD",
+        scale=2,
+        settlement_reference="pi_test_1",
+    )
 
+    assert bot.push_watch_results() == 1
     delivered = api.sent[before][1].text
     assert "sozinho" in delivered.lower(), "a mensagem tem de dizer que ninguém pediu"
     assert "US$ 75,00" in delivered
+
+
+def test_bot_sends_offer_link_then_acknowledges_event(world) -> None:
+    """The link is the deliverable, and the acknowledgement comes after the send."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    principal_id = identities.get(MARTA).principal_id
+    event_id = aval.enqueue_watch_closed(
+        principal_id=principal_id,
+        outcome="settled",
+        title="Notebook",
+        source_url="https://shop.example/item",
+        amount_minor_units=7500,
+        currency="USD",
+        scale=2,
+    )
+
+    bot.push_watch_results()
+
+    assert "shop.example/item" in api.sent[-1][1].text
+    assert aval.acknowledged_event_ids == [event_id]
+
+
+def test_the_message_never_claims_an_order_reached_the_seller(world) -> None:
+    """A signed offer and a real charge together read as "an order was placed", and no
+    order was. The copy has to say so, every time."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    aval.enqueue_watch_closed(
+        principal_id=identities.get(MARTA).principal_id,
+        outcome="settled",
+        title="Notebook",
+        source_url="https://shop.example/item",
+        amount_minor_units=7500,
+        currency="USD",
+        scale=2,
+    )
+
+    bot.push_watch_results()
+
+    assert "Não enviei pedido ao vendedor" in api.sent[-1][1].text
 
 
 def test_a_revoked_mandate_makes_the_agent_report_the_attempt_not_the_purchase(world) -> None:
@@ -1252,16 +1353,20 @@ def test_a_revoked_mandate_makes_the_agent_report_the_attempt_not_the_purchase(w
     authority did not."""
     bot, api, aval, identities = world
     bot.handle_update(message("/start"))
-    mandate_id = identities.get(MARTA).mandate_id
-    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
-    bot.handle_update(tap(f"{views.CALLBACK_WATCH}:{mandate_id}"))
-
-    aval.mandates[mandate_id]["status"] = "REVOKED"
-    aval.cordoba_price = 7500
     before = len(api.sent)
 
-    assert bot.push_watch_results() == 1
+    aval.enqueue_watch_closed(
+        principal_id=identities.get(MARTA).principal_id,
+        outcome="mandate_revoked",
+        title="Notebook Acer Aspire 5",
+        source_url="https://shop.example/aspire-5",
+        amount_minor_units=7500,
+        currency="USD",
+        scale=2,
+        human_summary="O mandato foi revogado.",
+    )
 
+    assert bot.push_watch_results() == 1
     delivered = api.sent[before][1].text
     assert "mandate_revoked" in delivered
     assert "não comprei" in delivered.lower()
@@ -1271,12 +1376,53 @@ def test_a_fired_watch_is_reported_once(world) -> None:
     """Nobody wants the same autonomous purchase announced twice."""
     bot, api, aval, identities = world
     bot.handle_update(message("/start"))
-    mandate_id = identities.get(MARTA).mandate_id
-    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
-    bot.handle_update(tap(f"{views.CALLBACK_WATCH}:{mandate_id}"))
-    aval.cordoba_price = 7500
+    aval.enqueue_watch_closed(
+        principal_id=identities.get(MARTA).principal_id,
+        outcome="settled",
+        title="Notebook",
+        source_url="https://shop.example/item",
+        amount_minor_units=7500,
+        currency="USD",
+        scale=2,
+    )
 
     assert bot.push_watch_results() == 1
+    assert bot.push_watch_results() == 0
+
+
+def test_an_event_that_telegram_refuses_is_not_acknowledged(world) -> None:
+    """The whole reason the outbox exists. A send that failed must come back."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    aval.enqueue_watch_closed(
+        principal_id=identities.get(MARTA).principal_id, outcome="settled", title="Notebook"
+    )
+    api.fail_next = True
+
+    assert bot.push_watch_results() == 0
+    assert aval.acknowledged_event_ids == []
+
+    api.fail_next = False
+    assert bot.push_watch_results() == 1
+
+
+def test_an_event_for_a_buyer_this_bot_does_not_know_is_left_alone(world) -> None:
+    """Another edge may hold that chat. Acknowledging here would silence news meant
+    for someone else."""
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+    aval.enqueue_watch_closed(principal_id="usr_someone_else", outcome="settled")
+
+    assert bot.push_watch_results() == 0
+    assert aval.acknowledged_event_ids == []
+
+
+def test_an_unreachable_core_outbox_is_not_a_crash(world) -> None:
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    aval.enqueue_watch_closed(principal_id=identities.get(MARTA).principal_id, outcome="settled")
+    aval.edge_open = False
+
     assert bot.push_watch_results() == 0
 
 
@@ -1614,3 +1760,108 @@ def test_free_text_is_answered_in_chat_until_the_mandate_is_complete(tmp_path) -
     assert second != first
     assert aval.mandates[first]["status"] == "REVOKED"
     assert aval.mandates[second]["limit"]["minor_units"] == 30_000
+
+
+# ── the shopping watch, end to end on the edge ──────────────────────────────
+def _shopping_draft(days: int = 30):
+    return conversation.Draft(
+        "Entendi: vou acompanhar um notebook.",
+        views.MandateSpec(("shopping",), MoneyView(200_000, "USD", 2), 30, 1),
+        conversation.ShoppingDraft(
+            query="notebook para faculdade",
+            category="shopping",
+            max_minor_units=200_000,
+            currency="USD",
+            watch_days=days,
+        ),
+    )
+
+
+def test_the_search_is_previewed_as_its_own_decision(tmp_path) -> None:
+    """Authority and a standing order are two things, and the person reads them as two.
+
+    The mandate card says what may be spent. This says the agent will spend it without
+    asking again — which is the part somebody might want to say no to on its own.
+    """
+    bot, api, aval, identities = _build(tmp_path, FakeAval())
+    bot._talker = ScriptedTalker(_shopping_draft())
+    bot.handle_update(message("/start"))
+    api.sent.clear()
+
+    bot.handle_update(message("acompanhe um notebook até 2000 por 30 dias"))
+
+    preview = api.sent[-1][1].text
+    assert "notebook para faculdade" in preview
+    assert "US$ 2.000,00" in preview
+    assert "30 dia" in preview
+    assert "compro sozinho" in preview
+    assert "Não enviei pedido ao vendedor" in preview
+
+
+def test_confirming_arms_the_watch_with_a_structured_request(tmp_path) -> None:
+    """The tap is what grants. Only after it does a watch exist at all."""
+    bot, api, aval, identities = _build(tmp_path, FakeAval())
+    bot._talker = ScriptedTalker(_shopping_draft())
+    bot.handle_update(message("/start"))
+    first = identities.get(MARTA).mandate_id
+    bot.handle_update(message("acompanhe um notebook até 2000 por 30 dias"))
+
+    assert aval.watches == {}, "nada é vigiado antes da confirmação"
+
+    bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
+
+    watch = next(iter(aval.watches.values()))
+    request = decode_shopping_request(watch["instruction"])
+    assert request is not None, "a vigília guarda um pedido estruturado, não uma frase"
+    assert request.query == "notebook para faculdade"
+    assert request.max_minor_units == 200_000
+    assert request.currency == "USD"
+    assert "Vigilância ligada" in api.sent[-1][1].text
+
+
+def test_a_shopping_mandate_names_the_marketplace_that_signs_discovered_pages(tmp_path) -> None:
+    """Without it every page a search finds is refused as an out-of-scope merchant —
+    and the travel sellers have to survive, not be replaced."""
+    bot, api, aval, identities = _build(tmp_path, FakeAval())
+    bot._talker = ScriptedTalker(_shopping_draft())
+    bot.handle_update(message("/start"))
+    first = identities.get(MARTA).mandate_id
+    bot.handle_update(message("acompanhe um notebook até 2000 por 30 dias"))
+
+    bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
+
+    merchants = aval.mandates[identities.get(MARTA).mandate_id]["allowed_merchant_ids"]
+    assert TEST_MARKETPLACE_ID in merchants
+    assert "vuelaya" in merchants
+
+
+def test_a_mandate_without_a_search_arms_nothing(tmp_path) -> None:
+    """Describing only authority is a perfectly good thing to do."""
+    bot, api, aval, identities = _build(tmp_path, FakeAval())
+    bot._talker = ScriptedTalker(
+        conversation.Draft(
+            "Hotel até 300 dólares, por 7 dias.",
+            views.MandateSpec(("lodging",), MoneyView(30_000, "USD", 2), 7, 2),
+        )
+    )
+    bot.handle_update(message("/start"))
+    first = identities.get(MARTA).mandate_id
+    bot.handle_update(message("hotel até 300 por 7 dias"))
+
+    bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
+
+    assert aval.watches == {}
+
+
+def test_shopping_is_offered_even_though_no_catalogue_row_carries_it(tmp_path) -> None:
+    """Every `shopping` offer is minted from a page a search just found, so the
+    category would never appear from the catalogue alone — and a person could then
+    never scope a mandate to the thing this MVP is for."""
+    bot, api, aval, identities = _build(tmp_path, FakeAval())
+    talker = ScriptedTalker(_shopping_draft())
+    bot._talker = talker
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(message("acompanhe um notebook"))
+
+    assert "shopping" in talker.categories
