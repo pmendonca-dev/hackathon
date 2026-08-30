@@ -1,79 +1,81 @@
-import { CheckCircle2, Clock3, ShieldCheck, WalletCards } from 'lucide-react';
+import { FileCheck2, ShieldCheck, WalletCards } from 'lucide-react';
 
-import type { HumanViewProjection, Tone } from '../contracts/avalGateway.ts';
-import { AuthorityRail } from '../components/AuthorityRail.tsx';
-import { Badge, Field, Panel } from '../components/ui.tsx';
-import { formatDateTime, formatMoney, shortHash } from '../utils/format.ts';
+import type {
+  UiAuditProjection,
+  UiDisputeProjection,
+  UiWorkspaceProjection,
+} from '../contracts/avalGateway.ts';
+import { Badge, EmptyNotice, Field, Panel } from '../components/ui.tsx';
+import { formatDateTime } from '../utils/format.ts';
 import { safeDisplayText } from '../utils/safePresentation.ts';
 
-const decisionTone: Record<HumanViewProjection['latestDecision']['status'], Tone> = {
-  authorized: 'allow',
-  awaiting_human: 'escalate',
-  rejected: 'deny',
-};
-
-export function HumanView({ data }: { data: HumanViewProjection }) {
-  const { mandate, latestDecision } = data;
+export function HumanView({
+  workspace,
+  audit,
+  dispute,
+}: {
+  workspace: UiWorkspaceProjection;
+  audit: UiAuditProjection | null;
+  dispute: UiDisputeProjection | null;
+}) {
+  const mandate = workspace.mandates[0];
   return (
     <div className="page-shell">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Visão do titular</p>
-          <h1>{safeDisplayText(data.principalName)}, esta é a autoridade que está viva agora.</h1>
-          <p>Veja o que seu agente pode fazer e como cada compra foi explicada pelo AVAL.</p>
+          <p className="eyebrow">Visão do titular · BFF</p>
+          <h1>Mandato, timeline e disputa na projeção autorizada.</h1>
+          <p>Os valores são fatos devolvidos pelo Core através do BFF; o browser não recalcula autoridade.</p>
         </div>
-        <Badge tone={mandate.status === 'active' ? 'allow' : 'deny'}>{mandate.status}</Badge>
+        <Badge tone={mandate?.status === 'active' ? 'allow' : 'deny'}>
+          {mandate ? safeDisplayText(mandate.status) : 'sem mandato'}
+        </Badge>
       </header>
 
-      <section className="grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">
-        <Panel eyebrow="Mandato ativo" title={safeDisplayText(mandate.purpose)} action={<span className="mono text-[10px] text-fg-mute">{safeDisplayText(mandate.id)}</span>}>
-          <AuthorityRail projection={mandate.authorityRail} moneyTemplate={mandate.ceiling} />
-          <dl className="mt-5 grid gap-x-6 sm:grid-cols-2">
-            <Field label="Agente" mono={false}>{safeDisplayText(mandate.agentName)}</Field>
-            <Field label="Allowance viva">{formatMoney(mandate.liveAllowance)}</Field>
-            <Field label="Limite por compra">{formatMoney(mandate.perTransactionLimit)}</Field>
-            <Field label="Teto do mandato">{formatMoney(mandate.ceiling)}</Field>
-            <Field label="Revogação">epoch {mandate.revocation.epoch} · {mandate.revocation.state}</Field>
-          </dl>
-          <div className="mt-4 flex flex-wrap gap-2" aria-label="Escopos permitidos">
-            {mandate.scopes.map((scope) => <Badge key={scope}>{safeDisplayText(scope)}</Badge>)}
-          </div>
-        </Panel>
+      {!mandate ? (
+        <EmptyNotice title="Nenhum mandato disponível" body="A sessão do titular não recebeu mandatos autorizados." />
+      ) : (
+        <section className="grid gap-4 lg:grid-cols-2">
+          <Panel eyebrow="Mandato" title={safeDisplayText(mandate.mandate_id)} action={<ShieldCheck size={18} className="text-verify" aria-hidden="true" />}>
+            <dl>
+              <Field label="Status">{safeDisplayText(mandate.status)}</Field>
+              <Field label="Disponível">{mandate.available_amount ?? 'não publicado'} {mandate.currency ? safeDisplayText(mandate.currency) : ''}</Field>
+              <Field label="Unidade">minor units</Field>
+            </dl>
+          </Panel>
+          <Panel eyebrow="Disputa" title={dispute ? safeDisplayText(dispute.reason_code) : 'Sem projeção'} action={<FileCheck2 size={18} className="text-escalate" aria-hidden="true" />}>
+            <p className="text-sm leading-relaxed text-fg-dim">
+              {dispute ? safeDisplayText(dispute.human_summary) : 'Nenhuma disputa foi devolvida para este mandato.'}
+            </p>
+            {dispute?.post_commit_note && (
+              <p className="mt-4 rounded-xl border border-escalate/30 bg-escalate/7 p-4 text-[13px] leading-relaxed text-escalate">
+                {safeDisplayText(dispute.post_commit_note)}
+              </p>
+            )}
+          </Panel>
+        </section>
+      )}
 
-        <Panel eyebrow="Última decisão" title="O que o core decidiu" action={<Badge tone={decisionTone[latestDecision.status]}>{latestDecision.status}</Badge>}>
-          <div className="rounded-xl border border-allow/25 bg-allow/6 p-4">
-            <CheckCircle2 className="text-allow" size={20} aria-hidden="true" />
-            <p className="mt-3 text-sm leading-relaxed">{safeDisplayText(latestDecision.humanSummary)}</p>
-          </div>
-          <dl className="mt-3">
-            <Field label="Motivo">{safeDisplayText(latestDecision.reasonCode)}</Field>
-            <Field label="Reserva">{latestDecision.reservationState}</Field>
-            <Field label="Política">{safeDisplayText(latestDecision.policyVersion)}</Field>
-            <Field label="Evidência">registrada no runtime</Field>
-          </dl>
-        </Panel>
-      </section>
-
-      <Panel eyebrow="Recibos" title="Compras e decisões recentes" action={<WalletCards size={17} className="text-verify" aria-hidden="true" />}>
-        <ul className="divide-y divide-line" aria-label="Recibos recentes">
-          {data.receipts.map((receipt) => (
-            <li key={receipt.id} className="grid gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto] sm:items-center">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-display text-sm font-semibold">{safeDisplayText(receipt.merchant)}</h3>
-                  <Badge tone={receipt.status === 'settled' ? 'allow' : receipt.status === 'awaiting_human' ? 'escalate' : 'deny'}>{receipt.status}</Badge>
-                </div>
-                <p className="mt-1 text-[13px] text-fg-dim">{safeDisplayText(receipt.item)}</p>
-                <p className="mt-2 text-[12px] leading-relaxed text-fg-mute">{safeDisplayText(receipt.humanSummary)}</p>
-                <span className="mono mt-2 flex items-center gap-1.5 text-[10px] text-fg-mute"><Clock3 size={11} aria-hidden="true" />{formatDateTime(receipt.occurredAt)} · {shortHash(receipt.receiptHash)}</span>
-              </div>
-              <strong className="mono text-base text-fg">{formatMoney(receipt.amount)}</strong>
-            </li>
-          ))}
-        </ul>
+      <Panel eyebrow="Audit" title="Timeline autorizada" action={<WalletCards size={18} className="text-verify" aria-hidden="true" />}>
+        {!audit || audit.timeline.length === 0 ? (
+          <EmptyNotice title="Sem eventos" body="O BFF não devolveu eventos para o mandato selecionado." />
+        ) : (
+          <ol className="audit-timeline" aria-label="Timeline do titular">
+            {audit.timeline.map((event, index) => (
+              <li key={`${event.sequence ?? index}-${event.occurred_at}`} className="audit-event">
+                <div className="audit-sequence" aria-hidden="true">{event.sequence ?? index + 1}</div>
+                <article className="min-w-0 rounded-xl border border-line bg-ink-800/50 p-4">
+                  <p className="eyebrow">{safeDisplayText(event.event_type)}</p>
+                  <h3 className="mt-1 text-sm font-semibold">{safeDisplayText(event.human_summary)}</h3>
+                  <p className="mono mt-2 text-[10px] text-fg-mute">{formatDateTime(event.occurred_at)}</p>
+                </article>
+              </li>
+            ))}
+          </ol>
+        )}
       </Panel>
 
-      <p className="safe-note"><ShieldCheck size={15} aria-hidden="true" />Allowance e estados são projeções recebidas. Esta tela não recalcula saldo, regra, revogação ou captura.</p>
+      <p className="safe-note"><ShieldCheck size={15} aria-hidden="true" />Esta visão não recebe evidência bruta, credenciais de pagamento ou material de assinatura.</p>
     </div>
   );
 }

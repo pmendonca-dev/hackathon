@@ -48,6 +48,25 @@ test('every published runtime error has clear Portuguese guidance', () => {
   }
 });
 
+test('browser BFF session, role, audit, and idempotency failures have safe guidance', () => {
+  const expectedCopy = {
+    ui_login_invalid: /credencial local.*inválida/i,
+    ui_session_required: /sessão.*necessária/i,
+    csrf_invalid: /proteção da sessão.*inválida/i,
+    ui_role_not_authorized: /papel.*não possui acesso/i,
+    idempotency_unavailable: /idempotência.*indisponível/i,
+    audit_unavailable: /trilha de auditoria.*indisponível/i,
+  };
+
+  for (const [code, copy] of Object.entries(expectedCopy)) {
+    const presentation = presentAvalError({
+      status: code.endsWith('unavailable') ? 503 : code === 'ui_login_invalid' || code === 'ui_session_required' ? 401 : 403,
+      code,
+    });
+    assert.match(`${presentation.title} ${presentation.message} ${presentation.recovery}`, copy);
+  }
+});
+
 test('503, 409, and 422 prescribe safe and distinct next actions', () => {
   const unavailable = presentAvalError({ status: 503, code: 'revocation_unavailable' });
   assert.equal(unavailable.action, 'check-availability');

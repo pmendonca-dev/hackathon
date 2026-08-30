@@ -21,7 +21,7 @@ function walk(path) {
   });
 }
 
-test('the emitted production artifact excludes every development mock value', () => {
+test('the emitted production artifact contains no mock, agent endpoint, or signing material', () => {
   const outputDirectory = mkdtempSync(join(tmpdir(), 'aval-web-production-'));
 
   try {
@@ -49,8 +49,14 @@ test('the emitted production artifact excludes every development mock value', ()
       .filter((path) => /\.(?:css|html|js|json)$/.test(path));
     const prohibited = [
       { label: 'mockAvalGateway module', pattern: /mockAvalGateway/ },
+      { label: 'development mock workspace', pattern: /DevelopmentMockWorkspace|DADOS DE DEMONSTRAÇÃO \/ MOCK|mock_request_/i },
       { label: 'synthetic vault token', pattern: /\bvt_[A-Za-z0-9._~-]+\b/ },
       { label: 'synthetic authorization proof', pattern: /\bproof_[A-Za-z0-9._~-]+\b/i },
+      { label: 'private key material', pattern: /BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|privateKey/i },
+      { label: 'signed revocation field', pattern: /signed_revocation/i },
+      { label: 'browser signing implementation', pattern: /subtle\.sign|createSign\(|Signature-Input|Content-Digest|\bJWS\b/i },
+      { label: 'agent endpoint', pattern: /\/agentic_commerce\/|\/payment-captures|\/checkout-sessions|\/audit\/mandates/i },
+      { label: 'persistent browser storage', pattern: /localStorage|sessionStorage|indexedDB|caches\.open/i },
     ];
     const violations = searchableFiles.flatMap((path) => {
       const artifact = readFileSync(path, 'utf8');

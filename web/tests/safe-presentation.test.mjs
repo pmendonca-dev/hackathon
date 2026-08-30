@@ -40,9 +40,6 @@ test('role pages do not bind sensitive credential or proof fields to the DOM', (
     'src/pages/HumanView.tsx',
     'src/pages/MerchantView.tsx',
     'src/pages/AuditorView.tsx',
-    'src/pages/LiveHumanView.tsx',
-    'src/pages/LiveMerchantView.tsx',
-    'src/pages/LiveAuditorView.tsx',
   ].map((path) => readFileSync(join(root, path), 'utf8')).join('\n');
 
   for (const forbiddenBinding of [
@@ -57,12 +54,15 @@ test('role pages do not bind sensitive credential or proof fields to the DOM', (
   assert.match(roleSources, /safeDisplayText/);
 });
 
-test('the trial console masks and clears signed administrative evidence', () => {
+test('the trial console accepts intent only and clears every retained command input', () => {
   const trialSource = readFileSync(join(root, 'src/pages/TrialConsole.tsx'), 'utf8');
 
-  assert.match(trialSource, /type="password"/);
   assert.match(trialSource, /autoComplete="off"/);
-  assert.match(trialSource, /setRequestedValue\(''\)/);
+  assert.match(trialSource, /setTargetId\(''\)/);
+  assert.match(trialSource, /setIdempotencyKey\(''\)/);
+  assert.equal(trialSource.includes('type="password"'), false);
+  assert.equal(trialSource.includes('signed_revocation'), false);
+  assert.equal(trialSource.includes('requestedValue'), false);
   assert.equal(trialSource.includes('console.'), false);
 });
 

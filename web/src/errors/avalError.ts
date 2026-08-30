@@ -20,6 +20,42 @@ interface ErrorCopy {
 }
 
 const ERROR_COPY: Record<string, ErrorCopy> = {
+  ui_login_invalid: {
+    title: 'Acesso negado',
+    message: 'A credencial local é inválida ou este papel não está habilitado.',
+    recovery: 'Confirme o papel e digite novamente a credencial local.',
+    tone: 'deny',
+  },
+  ui_session_required: {
+    title: 'Sessão necessária',
+    message: 'Uma sessão válida é necessária para acessar esta projeção.',
+    recovery: 'Entre novamente; nenhuma operação foi presumida pelo browser.',
+    tone: 'deny',
+  },
+  csrf_invalid: {
+    title: 'Mutação bloqueada',
+    message: 'A proteção da sessão é inválida e a ação não foi executada.',
+    recovery: 'Encerre a sessão e entre novamente antes de outra ação.',
+    tone: 'deny',
+  },
+  ui_role_not_authorized: {
+    title: 'Projeção não autorizada',
+    message: 'Este papel não possui acesso à projeção ou ação solicitada.',
+    recovery: 'Use somente a visão atribuída à sessão atual.',
+    tone: 'deny',
+  },
+  idempotency_unavailable: {
+    title: 'Bloqueio seguro ativo',
+    message: 'A idempotência durável está indisponível e a ação foi bloqueada.',
+    recovery: 'Verifique a disponibilidade; não repita automaticamente a mutação.',
+    tone: 'deny',
+  },
+  audit_unavailable: {
+    title: 'Auditoria indisponível',
+    message: 'A trilha de auditoria durável está indisponível.',
+    recovery: 'Verifique a disponibilidade antes de tomar uma decisão baseada nesta leitura.',
+    tone: 'deny',
+  },
   mandate_revoked: {
     title: 'Mandato revogado',
     message: 'Este mandato foi revogado e não autoriza uma nova compra.',
@@ -143,9 +179,7 @@ export function presentAvalError(error: { status: number; code: string }): AvalE
         : safeBlock
           ? 'Bloqueio seguro ativo'
           : known.title,
-      message: safeBlock && error.code !== 'revocation_unavailable'
-        ? 'O runtime não confirmou uma decisão segura; nenhum pagamento foi iniciado.'
-        : known.message,
+      message: known.message,
       recovery: operationPreserved
         ? 'Consulte o status e o recibo da operação original antes de qualquer nova ação.'
         : safeBlock

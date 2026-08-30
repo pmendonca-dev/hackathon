@@ -5,11 +5,11 @@ import type { DataSource, TrialCommandKind, TrialCommandReceipt } from '../contr
 import { Badge, Button, Field, Panel } from '../components/ui.tsx';
 import { safeDisplayText } from '../utils/safePresentation.ts';
 
-const commands: Array<{ kind: TrialCommandKind; label: string; hint: string; placeholder: string }> = [
-  { kind: 'lower-limit', label: 'Reduzir limite', hint: 'API administrativa não publicada.', placeholder: 'indisponível' },
-  { kind: 'change-scope', label: 'Alterar escopo', hint: 'API administrativa não publicada.', placeholder: 'indisponível' },
-  { kind: 'budget-zero', label: 'Zerar orçamento', hint: 'API administrativa não publicada.', placeholder: 'indisponível' },
-  { kind: 'revoke-mandate', label: 'Revogar mandato', hint: 'Enviar uma revogação assinada pela autoridade registrada.', placeholder: 'Cole a revogação assinada' },
+const commands: Array<{ kind: TrialCommandKind; label: string; hint: string }> = [
+  { kind: 'lower-limit', label: 'Reduzir limite', hint: 'API administrativa não publicada.' },
+  { kind: 'change-scope', label: 'Alterar escopo', hint: 'API administrativa não publicada.' },
+  { kind: 'budget-zero', label: 'Zerar orçamento', hint: 'API administrativa não publicada.' },
+  { kind: 'revoke-mandate', label: 'Revogar mandato', hint: 'O BFF autentica e assina a intenção no servidor; o browser não manipula material criptográfico.' },
 ];
 
 export function TrialConsole({
@@ -21,11 +21,11 @@ export function TrialConsole({
   mandateId: string;
   dataSource: DataSource;
   receipt: TrialCommandReceipt | null;
-  onSubmit(command: { kind: TrialCommandKind; targetId: string; requestedValue: string }): Promise<void>;
+  onSubmit(command: { kind: TrialCommandKind; targetId: string; idempotencyKey: string }): Promise<void>;
 }) {
   const [kind, setKind] = useState<TrialCommandKind>('revoke-mandate');
   const [targetId, setTargetId] = useState(mandateId);
-  const [requestedValue, setRequestedValue] = useState('');
+  const [idempotencyKey, setIdempotencyKey] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const selected = commands.find((command) => command.kind === kind) ?? commands[0];
   const commandAvailable = dataSource === 'api' && kind === 'revoke-mandate';
@@ -35,9 +35,10 @@ export function TrialConsole({
     if (!commandAvailable) return;
     setSubmitting(true);
     try {
-      await onSubmit({ kind, targetId, requestedValue });
+      await onSubmit({ kind, targetId, idempotencyKey });
     } finally {
-      setRequestedValue('');
+      setTargetId('');
+      setIdempotencyKey('');
       setSubmitting(false);
     }
   }
@@ -48,7 +49,7 @@ export function TrialConsole({
         <div>
           <p className="eyebrow">Console trial-by-fire</p>
           <h1>Formule a intervenção. O core decide o efeito.</h1>
-          <p>Somente a revogação assinada possui API publicada. Os demais comandos permanecem indisponíveis e não geram mudança local.</p>
+          <p>Somente a intenção de revogação possui API BFF publicada. Os demais comandos permanecem indisponíveis e não geram mudança local.</p>
         </div>
         <Badge tone={dataSource === 'api' ? 'verify' : 'escalate'}>{dataSource === 'api' ? 'API REAL' : 'INDISPONÍVEL'}</Badge>
       </header>
@@ -57,7 +58,7 @@ export function TrialConsole({
         <AlertTriangle className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
         <p className="text-[13px] leading-relaxed">
           {dataSource === 'api'
-            ? <><strong>Efeito real.</strong> O JWS é enviado com autenticação de sessão e idempotência; depois da resposta, a tela recarrega o estado canônico.</>
+            ? <><strong>Efeito real.</strong> A intenção usa sessão same-origin, CSRF em memória e Idempotency-Key; a assinatura permanece no servidor.</>
             : <><strong>Dados mock.</strong> Comandos administrativos estão indisponíveis e nenhum sucesso será simulado.</>}
         </p>
       </div>
@@ -71,7 +72,7 @@ export function TrialConsole({
                 type="button"
                 onClick={() => {
                   setKind(command.kind);
-                  setRequestedValue('');
+                  setIdempotencyKey('');
                 }}
                 className={`w-full rounded-xl border p-3.5 text-left transition-colors ${kind === command.kind ? 'border-allow/50 bg-allow/8' : 'border-line bg-ink-800/50 hover:border-line-hi'}`}
               >
@@ -94,24 +95,24 @@ export function TrialConsole({
               <input className="form-control" value={targetId} onChange={(event) => setTargetId(event.target.value)} required disabled={!commandAvailable} />
             </label>
             <label className="block">
-              <span className="eyebrow">Revogação assinada (JWS)</span>
+              <span className="eyebrow">Idempotency-Key</span>
               <input
                 className="form-control"
-                type="password"
+                type="text"
                 autoComplete="off"
                 spellCheck={false}
-                value={requestedValue}
-                onChange={(event) => setRequestedValue(event.target.value)}
-                placeholder={selected.placeholder}
+                value={idempotencyKey}
+                onChange={(event) => setIdempotencyKey(event.target.value)}
+                placeholder="ex.: trial-revoke-01"
                 required
                 disabled={!commandAvailable}
               />
             </label>
             <div className="rounded-xl border border-line bg-ink-800/60 p-3.5">
               <p className="eyebrow">Endpoint publicado</p>
-              <code className="mono mt-2 block break-all text-[11px] leading-relaxed text-fg-dim">{commandAvailable ? `POST /mandates/${targetId}/revocations` : 'API administrativa não publicada para este comando'}</code>
+              <code className="mono mt-2 block break-all text-[11px] leading-relaxed text-fg-dim">{commandAvailable ? `POST /ui-api/v1/mandates/${targetId}/revocations` : 'API administrativa não publicada para este comando'}</code>
             </div>
-            <Button type="submit" disabled={!commandAvailable || submitting || !requestedValue.trim()} className="w-full sm:w-auto">
+            <Button type="submit" disabled={!commandAvailable || submitting || !targetId.trim() || !idempotencyKey.trim()} className="w-full sm:w-auto">
               <RadioTower size={14} aria-hidden="true" />{submitting ? 'Enviando revogação' : commandAvailable ? 'Revogar no runtime' : 'Comando indisponível'}
             </Button>
           </form>

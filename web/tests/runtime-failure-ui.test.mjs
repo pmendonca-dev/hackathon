@@ -10,7 +10,7 @@ test('provider stores safe structured failures instead of raw exception messages
   const source = readFileSync(join(root, 'src/state/AvalProvider.tsx'), 'utf8');
 
   assert.match(source, /AvalErrorPresentation/);
-  assert.match(source, /error instanceof AvalHttpError/);
+  assert.match(source, /error instanceof UiBffHttpError/);
   assert.match(source, /error\.presentation/);
   assert.match(source, /presentUnavailable/);
   assert.equal(source.includes('error instanceof Error ? error.message'), false);
