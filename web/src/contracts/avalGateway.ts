@@ -1,3 +1,9 @@
+import type {
+  AuditVerdictProjection,
+  PaymentCaptureProjection,
+  PaymentReceiptsProjection,
+} from './paymentRuntimeApi.ts';
+
 export type DataSource = 'mock' | 'api';
 export type Tone = 'allow' | 'escalate' | 'deny' | 'verify' | 'hold' | 'neutral';
 
@@ -62,6 +68,7 @@ export interface HumanViewProjection {
     liveAllowance: Money;
     allowanceCheckedAt: string;
     scopes: string[];
+    vaultToken: `vt_${string}`;
     revocation: {
       state: 'clear' | 'revoked' | 'unavailable';
       checkedAt: string;
@@ -75,6 +82,7 @@ export interface HumanViewProjection {
     humanSummary: string;
     reservationState: 'pending' | 'committed' | 'settled' | 'released';
     policyVersion: string;
+    evidenceRef: string;
   };
   receipts: ReceiptProjection[];
 }
@@ -86,6 +94,7 @@ export interface MerchantViewProjection {
     transactionRef: string;
     amount: Money;
     status: 'settled';
+    paymentToken: `vt_${string}`;
     itemSummary: string;
     occurredAt: string;
   };
@@ -98,6 +107,7 @@ export interface MerchantViewProjection {
     ap2Version: 'v0.2';
     checkoutReceiptHash: string;
     paymentReceiptHash: string;
+    authorizationProofRef: string;
   };
 }
 
@@ -111,6 +121,7 @@ export interface AuditEventProjection {
   reasonCode: string;
   humanSummary: string;
   reservationState: 'pending' | 'committed' | 'settled' | 'released';
+  evidenceRef: string;
   integrityHash: string;
 }
 
@@ -125,6 +136,7 @@ export interface AuditorViewProjection {
     amount: Money;
     claim: string;
     verdictSummary: string;
+    evidenceRefs: string[];
   };
 }
 
@@ -135,73 +147,21 @@ export interface MockAvalSnapshot {
   auditor: AuditorViewProjection;
 }
 
-export type AvalSnapshot = MockAvalSnapshot;
-
-export type UiRole = 'merchant' | 'holder' | 'auditor' | 'operator';
-
-export interface UiLoginRequest {
-  role: UiRole;
-  credential: string;
+export interface LiveWorkspaceProjection {
+  mandateId: string;
+  captureId: string | null;
+  capture: PaymentCaptureProjection | null;
+  receipts: PaymentReceiptsProjection | null;
+  audit: AuditVerdictProjection;
+  dispute: AuditVerdictProjection;
 }
 
-export interface UiSessionMaterial {
-  role: UiRole;
-  csrfToken: string;
-  expiresAt: string;
+export interface LiveAvalSnapshot {
+  meta: Extract<SnapshotMeta, { dataSource: 'api' }>;
+  live: LiveWorkspaceProjection;
 }
 
-export interface UiMandateProjection {
-  mandate_id: string;
-  status: 'active' | 'revoked' | 'expired' | string;
-  merchant_id?: string;
-  available_amount?: number;
-  currency?: string;
-}
-
-export interface UiWorkspaceProjection {
-  role: UiRole;
-  mandates: UiMandateProjection[];
-}
-
-export type UiAuditDetailValue = string | number | boolean | null;
-
-export interface UiAuditEventProjection {
-  sequence?: number;
-  event_type: string;
-  human_summary: string;
-  occurred_at: string;
-  detail: Record<string, UiAuditDetailValue>;
-}
-
-export interface UiAuditProjection {
-  mandate_id: string;
-  timeline: UiAuditEventProjection[];
-}
-
-export interface UiDisputeProjection extends UiAuditProjection {
-  status: string;
-  reason_code: string;
-  human_summary: string;
-  post_commit_note: string | null;
-}
-
-export interface UiRevocationProjection {
-  mandate_id: string;
-  status: 'revoked';
-}
-
-export interface UiBffGatewayContract {
-  login(request: UiLoginRequest): Promise<UiSessionMaterial>;
-  logout(csrfToken: string): Promise<void>;
-  loadWorkspace(): Promise<UiWorkspaceProjection>;
-  loadAudit(mandateId: string): Promise<UiAuditProjection>;
-  loadDispute(mandateId: string): Promise<UiDisputeProjection>;
-  revokeMandate(
-    mandateId: string,
-    idempotencyKey: string,
-    csrfToken: string,
-  ): Promise<UiRevocationProjection>;
-}
+export type AvalSnapshot = MockAvalSnapshot | LiveAvalSnapshot;
 
 export type TrialCommandKind =
   | 'lower-limit'
@@ -212,7 +172,7 @@ export type TrialCommandKind =
 export interface TrialCommand {
   kind: TrialCommandKind;
   targetId: string;
-  idempotencyKey: string;
+  requestedValue: string;
 }
 
 export interface TrialCommandReceipt {

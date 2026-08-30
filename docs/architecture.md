@@ -1,8 +1,22 @@
 # Arquitetura do AVAL
 
-Entregável do Mission Control. Para exportar em PDF/PNG (< 25 MB), abra este arquivo em
-qualquer visualizador que renderize Mermaid e imprima em PDF, ou cole os blocos em
-<https://mermaid.live>.
+Entregável do Mission Control, em três formas do **mesmo** conteúdo:
+
+| arquivo | para quem |
+| --- | --- |
+| [`architecture.pdf`](architecture.pdf) | o upload do formulário — 9 páginas A3, diagramas em vetor |
+| [`architecture.html`](architecture.html) | a fonte do PDF: a página desenhada, aberta direto no navegador |
+| este arquivo | leitura no GitHub, com os blocos Mermaid renderizados na página |
+
+O PDF sai da página, não deste arquivo — os diagramas dela são SVG desenhado à mão, e
+não o layout automático do Mermaid:
+
+```bash
+uv run python scripts/export_architecture.py
+```
+
+> Os dois primeiros andam juntos: uma mudança de arquitetura entra em
+> `architecture.html`, o comando acima regenera o PDF, e este arquivo acompanha.
 
 ---
 
@@ -90,9 +104,11 @@ flowchart TD
     E2 --> E3{não revogado?}
     E3 -->|não| R3[/rejected<br/>mandate_revoked/]
     E3 --> E4{merchant não revogado?}
-    E4 -->|não| R4[/rejected/]
-    E4 --> E5{orçamento não zerado?}
-    E5 -->|não| H1[/awaiting_human/]
+    E4 -->|não| R4[/rejected<br/>merchant_revoked/]
+    E4 --> E4B{instrumento não revogado?}
+    E4B -->|não| R4B[/rejected<br/>instrument_revoked/]
+    E4B --> E5{orçamento não zerado?}
+    E5 -->|não| H1[/awaiting_human<br/>budget_revoked/]
     E5 --> E6{dentro da validade?}
     E6 -->|não| R6[/rejected<br/>mandate_expired/]
 
@@ -100,13 +116,17 @@ flowchart TD
     E7 -->|não| H2[/awaiting_human/]
     E7 --> E8{categoria no escopo?}
     E8 -->|não| H3[/awaiting_human/]
-    E8 --> E9{moeda e escala?}
+    E8 --> E8B{é o cartão do mandato?<br/><i>só na captura</i>}
+    E8B -->|não| R8B[/rejected<br/>instrument_not_in_mandate/]
+    E8B --> E9{moeda e escala?}
     E9 -->|não| R9[/rejected/]
     E9 --> E10{valor positivo?}
     E10 -->|não| R10[/rejected/]
     E10 --> E11{abaixo do TETO?}
     E11 -->|não| R11[/rejected<br/>mandate_ceiling<br/><b>sem botão de aprovar</b>/]
-    E11 --> E12{dentro da frequência?}
+    E11 --> E11B{há vaga de reserva?}
+    E11B -->|não| R11B[/rejected<br/>reservation_limit<br/><b>sem botão de aprovar</b>/]
+    E11B --> E12{dentro da frequência?}
     E12 -->|não| H4[/awaiting_human/]
     E12 --> E13{dentro do ORÇAMENTO?}
     E13 -->|não| H5[/awaiting_human/]
@@ -114,9 +134,17 @@ flowchart TD
 
     classDef authority fill:#0D2229,stroke:#4ED8F2,color:#4ED8F2
     classDef money fill:#2A2010,stroke:#F5B942,color:#F5B942
-    class E1,E2,E3,E4,E5,E6 authority
-    class E9,E10,E11,E12,E13 money
+    class E1,E2,E3,E4,E4B,E5,E6,E7,E8,E8B authority
+    class E9,E10,E11,E11B,E12,E13 money
 ```
+
+Dezesseis degraus, e a lista acima é a ordem literal de `_evaluate_with()`. Três deles
+respondem perguntas que só existem porque o mandato nomeia um cartão e porque um agente
+pode travar o orçamento sem gastar nada: **o cartão foi cancelado** (`instrument_revoked`),
+**é o cartão certo** (`instrument_not_in_mandate`, checado só na captura, que é onde a
+pergunta é real) e **sobrou vaga de reserva** (`reservation_limit`). Este último recusa em
+vez de escalar de propósito: apertar aprovar não solta dinheiro que já está preso — quem
+solta é `POST /reconcile`.
 
 Em azul, autoridade. Em amarelo, dinheiro. **Autoridade sempre primeiro.** Cada decisão
 devolve `evaluation_trace` com exatamente os degraus percorridos, e o front-end desenha

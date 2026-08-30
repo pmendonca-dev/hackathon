@@ -15,7 +15,15 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-import httpx
+# The project depends on httpx2 — the 2.x line, published under its own name, and what
+# both `anthropic` and Starlette's TestClient pull in. This script asked for `httpx` and
+# so could not run at all on a clean clone, which is the worst place for that to happen:
+# it is the rehearsal for the trial by fire. The fallback keeps a clone that installed
+# the 0.x line working, and only `Client` is used, which both provide.
+try:
+    import httpx2 as httpx
+except ModuleNotFoundError:  # pragma: no cover - depends on what the clone installed
+    import httpx
 
 from aval.security.jws import sign_compact_jws
 from aval.security.key_custody import KeyCustodyService

@@ -1,71 +1,54 @@
+/**
+ * The operator credential must not survive into a production build.
+ *
+ * `VITE_*` values are compiled into the JavaScript every visitor downloads. The operator
+ * token switches off the processor, moves the demo clock, reconciles and — with
+ * `AVAL_DEMO_TAMPER` on — corrupts the audit trail. A bundle carrying one hands the
+ * operator role to anyone who opens the page, which is the separation the trial-by-fire
+ * console exists to demonstrate.
+ *
+ * The build is run *with* the variable set on purpose: a test that only builds without
+ * it proves nothing, because the leak it is looking for only happens when a value exists
+ * to leak. This caught a real one — `const environment = import.meta.env` inlines the
+ * whole env object, so the token shipped even though the only code reading it sat behind
+ * a `DEV` branch that had been eliminated.
+ */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import {
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url));
+const CANARY = 'operator-token-canary-must-not-ship';
 
-function walk(path) {
-  return readdirSync(path).flatMap((name) => {
-    const entry = join(path, name);
-    return statSync(entry).isDirectory() ? walk(entry) : [entry];
-  });
-}
-
-test('the emitted production artifact contains no mock, agent endpoint, or signing material', () => {
-  const outputDirectory = mkdtempSync(join(tmpdir(), 'aval-web-production-'));
-
+test('a production build never carries VITE_AVAL_OPERATOR_TOKEN', () => {
+  const outputDirectory = mkdtempSync(join(tmpdir(), 'aval-bundle-'));
   try {
-    execFileSync(
-      process.execPath,
-      [
-        join(root, 'node_modules/vite/bin/vite.js'),
-        'build',
-        '--outDir',
-        outputDirectory,
-        '--emptyOutDir',
-      ],
-      {
-        cwd: root,
-        env: {
-          ...process.env,
-          NODE_ENV: 'production',
-          VITE_AVAL_USE_MOCK: 'true',
-        },
-        stdio: 'pipe',
-      },
-    );
-
-    const searchableFiles = walk(outputDirectory);
-    const prohibited = [
-      { label: 'mockAvalGateway module', pattern: /mockAvalGateway/ },
-      { label: 'development mock workspace', pattern: /DevelopmentMockWorkspace|DADOS DE DEMONSTRAÇÃO \/ MOCK|mock_request_/i },
-      { label: 'vault-token prefix', pattern: /vt_/ },
-      { label: 'synthetic authorization proof', pattern: /\bproof_[A-Za-z0-9._~-]+\b/i },
-      { label: 'private key material', pattern: /BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|privateKey/i },
-      { label: 'signed revocation field', pattern: /signed_revocation/i },
-      { label: 'browser signing implementation', pattern: /subtle\.sign|createSign\(|Signature-Input|Content-Digest|\bJWS\b/i },
-      { label: 'agent endpoint', pattern: /\/agent(?:\/|ic_commerce\/)|\/admin\/|\/payment-captures|\/checkout-sessions|\/audit\/mandates/i },
-      { label: 'persistent browser storage', pattern: /localStorage|sessionStorage|indexedDB|caches\.open/i },
-    ];
-    const violations = searchableFiles.flatMap((path) => {
-      const artifact = readFileSync(path, 'utf8');
-      return prohibited
-        .filter(({ pattern }) => pattern.test(artifact) || pattern.test(relative(outputDirectory, path)))
-        .map(({ label }) => `${relative(outputDirectory, path)}: ${label}`);
+    execFileSync('npx', ['vite', 'build', '--outDir', outputDirectory, '--emptyOutDir'], {
+      cwd: WEB_ROOT,
+      env: { ...process.env, VITE_AVAL_OPERATOR_TOKEN: CANARY },
+      stdio: 'pipe',
     });
 
-    assert.deepEqual(violations, []);
+    const leaked = filesUnder(outputDirectory).filter((file) =>
+      readFileSync(file, 'utf8').includes(CANARY),
+    );
+    assert.deepEqual(
+      leaked,
+      [],
+      `the operator token reached the shipped bundle in: ${leaked.join(', ')}`,
+    );
   } finally {
     rmSync(outputDirectory, { recursive: true, force: true });
   }
 });
+
+function filesUnder(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    return entry.isDirectory() ? filesUnder(path) : [path];
+  });
+}

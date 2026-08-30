@@ -1,0 +1,1218 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>AVAL — Arquitetura</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ---------------------------------------------------------------------------
+   The palette is the product's own, remapped for ink on paper. The semantics
+   travel with it: a reader who learns the two colors on page 2 reads every
+   later page faster, which is the only reason a color is allowed in here.
+   --------------------------------------------------------------------------- */
+:root {
+  --ink:        #0E1319;
+  --ink-2:      #38424E;
+  --ink-3:      #6B7683;
+  --rule:       #DCE2E9;
+  --rule-soft:  #EDF1F5;
+  --paper:      #FFFFFF;
+  --paper-2:    #F6F8FB;
+
+  --authority:    #1D4ED8;   /* quem pode — a pergunta de autoridade   */
+  --authority-bg: #EDF3FF;
+  --money:        #A85A06;   /* quanto — a pergunta de dinheiro        */
+  --money-bg:     #FDF4E7;
+  --allow:        #15803D;   /* authorized                              */
+  --allow-bg:     #EDF7F0;
+  --deny:         #B4181C;   /* rejected — sem caminho de volta         */
+  --deny-bg:      #FDF0F0;
+  --hold:         #4F46C7;   /* operador — opera, não gasta             */
+  --hold-bg:      #F0EFFC;
+
+  --cover:      #0B0F14;
+  --cover-2:    #161C24;
+  --lime:       #C6F24E;
+
+  --sans:    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --display: "Inter Tight", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --mono:    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@page { size: A3 landscape; margin: 0; }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--paper); color: var(--ink);
+  font-family: var(--sans); font-size: 19.5px; line-height: 1.5;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  -webkit-font-smoothing: antialiased;
+}
+code, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+code { font-size: 0.88em; background: var(--rule-soft); padding: 1.3px 6.5px; border-radius: 4px; }
+b, strong { font-weight: 600; }
+em { font-style: normal; color: var(--ink-3); }
+
+/* --- page frame ---------------------------------------------------------- */
+.page {
+  position: relative; width: 420mm; height: 297mm;
+  padding: 17mm 20mm 14mm; overflow: hidden;
+  page-break-after: always; break-after: page;
+  display: flex; flex-direction: column;
+}
+.page:last-child { page-break-after: auto; break-after: auto; }
+
+.head { display: flex; align-items: baseline; gap: 20.8px; border-bottom: 2px solid var(--ink); padding-bottom: 11.7px; }
+.head .num {
+  font-family: var(--mono); font-size: 16.9px; font-weight: 500; color: var(--ink-3);
+  letter-spacing: 0.06em;
+}
+.head h2 { font-family: var(--display); font-size: 39.0px; font-weight: 650; letter-spacing: -0.02em; margin: 0; }
+.head .asks { margin-left: auto; font-size: 18.2px; color: var(--ink-3); text-align: right; max-width: 62ch; }
+.head .asks b { color: var(--ink-2); font-weight: 600; }
+
+.foot {
+  margin-top: auto; padding-top: 11.7px; border-top: 1px solid var(--rule);
+  display: flex; gap: 18.2px; align-items: baseline;
+  font-size: 16.2px; color: var(--ink-3);
+}
+.foot .tag { font-family: var(--mono); font-size: 14.3px; letter-spacing: 0.05em; text-transform: uppercase; }
+.foot .pg { margin-left: auto; font-family: var(--mono); }
+
+.lede { font-size: 22.1px; line-height: 1.5; color: var(--ink-2); max-width: 120ch; margin: 16.9px 0 0; }
+.lede b { color: var(--ink); }
+
+/* --- cover --------------------------------------------------------------- */
+.cover::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--cover);
+}
+.cover > * { position: relative; }
+.cover {
+  background: var(--cover); color: #EAF0F6; padding: 34mm 30mm;
+  justify-content: space-between;
+}
+.cover .kicker {
+  font-family: var(--mono); font-size: 16.9px; letter-spacing: 0.24em;
+  text-transform: uppercase; color: #7E8B99;
+}
+.cover h1 {
+  font-family: var(--display); font-size: 166.4px; line-height: 0.9; margin: 0;
+  letter-spacing: -0.055em; font-weight: 700;
+}
+.cover .sub { font-size: 35.1px; color: #97A4B2; margin-top: 18.2px; letter-spacing: -0.01em; }
+.cover .thesis {
+  font-family: var(--display); font-size: 54.6px; line-height: 1.24; font-weight: 600;
+  letter-spacing: -0.025em; max-width: 30ch; margin: 0;
+}
+.cover .thesis .dim { color: #8593A2; font-weight: 500; }
+.cover .thesis .hi { color: var(--lime); }
+.cover .rule { height: 1.3px; background: #262E38; margin: 0 0 28.6px; }
+.cover .grid { display: grid; grid-template-columns: repeat(3, 27ch); gap: 40px;
+  font-size: 17px; color: #8593A2; align-items: start; }
+.cover .grid div b { display: block; color: #EAF0F6; font-weight: 600; font-size: 19.5px; margin-bottom: 3px; }
+.cover .flag { display: flex; gap: 11px; align-items: baseline; }
+.cover .flag i {
+  width: 9px; height: 11.7px; border-radius: 50%; background: var(--lime); display: block;
+}
+
+
+.cover .motif { position: absolute; right: 30mm; top: 44mm; width: 118mm; }
+.cover .motif .cap {
+  font-family: var(--mono); font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: #6E7C8A; margin-bottom: 14px;
+}
+.cover .motif svg { display: block; width: 100%; height: auto; }
+.cover .motif .cap2 { font-size: 15px; color: #8593A2; margin-top: 16px; line-height: 1.45; }
+.cover .motif .cap2 b { color: #EAF0F6; font-weight: 600; }
+
+/* --- legend page --------------------------------------------------------- */
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 33.8px; margin-top: 23.4px; }
+.three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 23.4px; margin-top: 23.4px; }
+.card { border: 1px solid var(--rule); border-radius: 10px; padding: 20.8px 23.4px; background: var(--paper); }
+.card h3 {
+  font-family: var(--display); font-size: 23.4px; margin: 0 0 9.1px; font-weight: 620; letter-spacing: -0.01em;
+}
+.card p { margin: 0; font-size: 18.9px; color: var(--ink-2); line-height: 1.48; }
+.card p + p { margin-top: 10.4px; }
+
+.swatch { display: flex; gap: 16.9px; align-items: flex-start; padding: 16.9px 0; border-top: 1px solid var(--rule-soft); }
+.swatch:first-child { border-top: 0; padding-top: 5.2px; }
+.swatch .chipbox { flex: 0 0 150.8px; }
+.swatch .txt { font-size: 18.9px; color: var(--ink-2); line-height: 1.45; }
+.swatch .txt b { color: var(--ink); }
+
+.chip {
+  display: inline-block; font-family: var(--mono); font-size: 15.6px; font-weight: 500;
+  padding: 3.9px 11.7px; border-radius: 999px; border: 1px solid; white-space: nowrap;
+}
+.chip.authority { color: var(--authority); background: var(--authority-bg); border-color: #C2D5FB; }
+.chip.money     { color: var(--money);     background: var(--money-bg);     border-color: #F0D8B2; }
+.chip.allow     { color: var(--allow);     background: var(--allow-bg);     border-color: #B9DDC6; }
+.chip.deny      { color: var(--deny);      background: var(--deny-bg);      border-color: #F1C2C2; }
+.chip.hold      { color: var(--hold);      background: var(--hold-bg);      border-color: #CFCBF3; }
+.chip.grey      { color: var(--ink-3);     background: var(--paper-2);      border-color: var(--rule); }
+
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20.8px; margin-top: 26.0px; }
+.stat { border-top: 3px solid var(--ink); padding-top: 14.3px; }
+.stat .n {
+  font-family: var(--display); font-size: 59.8px; line-height: 1; font-weight: 680; letter-spacing: -0.035em;
+}
+.stat .l { font-size: 17.6px; color: var(--ink-3); margin-top: 9.1px; line-height: 1.35; }
+
+table { border-collapse: collapse; width: 100%; margin-top: 5.2px; font-size: 18.9px; }
+th, td { text-align: left; padding: 11.7px 15.6px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th {
+  font-family: var(--mono); font-size: 15.0px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--ink-3); font-weight: 500; border-bottom: 1.5px solid var(--ink);
+}
+td em { color: var(--ink-3); }
+
+figure { margin: 0; }
+figure svg { display: block; width: 100%; height: auto; }
+figure.fit svg { width: auto; height: 192mm; margin: 0 auto; }
+figcaption { font-size: 18.2px; color: var(--ink-3); margin-top: 11.7px; }
+
+.note {
+  border-left: 3px solid var(--ink); padding: 3.9px 0 3.9px 19.5px; margin-top: 20.8px;
+  font-size: 19.5px; color: var(--ink-2); line-height: 1.5; max-width: 118ch;
+}
+.note b { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<!-- ====================== 1 · CAPA ====================== -->
+<section class="page cover">
+  <div>
+    <div class="kicker">NextWave Hackathon 2026 &nbsp;·&nbsp; Desafio 01 — The Buyer Who Isn&rsquo;t Human</div>
+    <h1>AVAL</h1>
+    <div class="sub">Pagamento agêntico com mandato verificável</div>
+  </div>
+
+  <p class="thesis">
+    O LLM propõe.<br>
+    O núcleo determinístico dispõe.<br>
+    <span class="dim">O modelo nunca está no</span><br><span class="hi">caminho de confiança.</span>
+  </p>
+
+
+  <div class="motif">
+    <div class="cap">A escada de avaliação</div>
+    <svg viewBox="-4 -6 410 550" role="img" aria-label="Dezesseis degraus: a avaliação de um mandato revogado responde sim aos dois primeiros, para no terceiro com mandate_revoked, e os treze seguintes nunca são consultados.">
+      <rect x="32" y="0" width="3" height="333" rx="1.5" fill="#2E5CB8" opacity="0.55"/>
+      <rect x="32" y="340" width="3" height="197" rx="1.5" fill="#A87A2A" opacity="0.55"/>
+      <rect x="42" y="0" width="356" height="27" rx="5" fill="#16263F" stroke="#2E5CB8" stroke-width="1.4"/>
+      <text x="26" y="18" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#6E9BEA">1</text>
+      <text x="56" y="18" font-family="Inter, sans-serif" font-size="12.5" fill="#BFD5F7">mandato existe?</text>
+      <text x="386" y="18" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#6E9BEA">sim</text>
+      <rect x="42" y="34" width="356" height="27" rx="5" fill="#16263F" stroke="#2E5CB8" stroke-width="1.4"/>
+      <text x="26" y="52" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#6E9BEA">2</text>
+      <text x="56" y="52" font-family="Inter, sans-serif" font-size="12.5" fill="#BFD5F7">revogação legível?</text>
+      <text x="386" y="52" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#6E9BEA">sim</text>
+      <rect x="42" y="68" width="356" height="27" rx="5" fill="#2A1315" stroke="#FF5C5C" stroke-width="1.4"/>
+      <text x="26" y="86" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#FF8A8A">3</text>
+      <text x="56" y="86" font-family="Inter, sans-serif" font-size="12.5" fill="#FFCFCF">não revogado?</text>
+      <text x="386" y="86" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#FF8A8A">mandate_revoked</text>
+      <rect x="42" y="102" width="356" height="27" rx="5" fill="none" stroke="#2C3D51" stroke-width="1.4"/>
+      <text x="26" y="120" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#4B5C71">4</text>
+      <text x="56" y="120" font-family="Inter, sans-serif" font-size="12.5" fill="#72829A">merchant não revogado?</text>
+      <text x="386" y="120" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#4B5C71">—</text>
+      <rect x="42" y="136" width="356" height="27" rx="5" fill="none" stroke="#2C3D51" stroke-width="1.4"/>
+      <text x="26" y="154" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#4B5C71">5</text>
+      <text x="56" y="154" font-family="Inter, sans-serif" font-size="12.5" fill="#72829A">instrumento não revogado?</text>
+      <text x="386" y="154" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#4B5C71">—</text>
+      <rect x="42" y="170" width="356" height="27" rx="5" fill="none" stroke="#2C3D51" stroke-width="1.4"/>
+      <text x="26" y="188" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#4B5C71">6</text>
+      <text x="56" y="188" font-family="Inter, sans-serif" font-size="12.5" fill="#72829A">orçamento não zerado?</text>
+      <text x="386" y="188" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#4B5C71">—</text>
+      <rect x="42" y="204" width="356" height="27" rx="5" fill="none" stroke="#2C3D51" stroke-width="1.4"/>
+      <text x="26" y="222" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#4B5C71">7</text>
+      <text x="56" y="222" font-family="Inter, sans-serif" font-size="12.5" fill="#72829A">dentro da validade?</text>
+      <text x="386" y="222" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#4B5C71">—</text>
+      <rect x="42" y="238" width="356" height="27" rx="5" fill="none" stroke="#2C3D51" stroke-width="1.4"/>
+      <text x="26" y="256" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#4B5C71">8</text>
+      <text x="56" y="256" font-family="Inter, sans-serif" font-size="12.5" fill="#72829A">merchant no escopo?</text>
+      <text x="386" y="256" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#4B5C71">—</text>
+      <rect x="42" y="272" width="356" height="27" rx="5" fill="none" stroke="#2C3D51" stroke-width="1.4"/>
+      <text x="26" y="290" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#4B5C71">9</text>
+      <text x="56" y="290" font-family="Inter, sans-serif" font-size="12.5" fill="#72829A">categoria no escopo?</text>
+      <text x="386" y="290" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#4B5C71">—</text>
+      <rect x="42" y="306" width="356" height="27" rx="5" fill="none" stroke="#2C3D51" stroke-width="1.4"/>
+      <text x="26" y="324" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#4B5C71">10</text>
+      <text x="56" y="324" font-family="Inter, sans-serif" font-size="12.5" fill="#72829A">é o cartão do mandato?</text>
+      <text x="386" y="324" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#4B5C71">—</text>
+      <rect x="42" y="340" width="356" height="27" rx="5" fill="none" stroke="#3D3726" stroke-width="1.4"/>
+      <text x="26" y="358" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#5E5540">11</text>
+      <text x="56" y="358" font-family="Inter, sans-serif" font-size="12.5" fill="#87795A">moeda e escala conferem?</text>
+      <text x="386" y="358" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#5E5540">—</text>
+      <rect x="42" y="374" width="356" height="27" rx="5" fill="none" stroke="#3D3726" stroke-width="1.4"/>
+      <text x="26" y="392" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#5E5540">12</text>
+      <text x="56" y="392" font-family="Inter, sans-serif" font-size="12.5" fill="#87795A">valor positivo?</text>
+      <text x="386" y="392" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#5E5540">—</text>
+      <rect x="42" y="408" width="356" height="27" rx="5" fill="none" stroke="#3D3726" stroke-width="1.4"/>
+      <text x="26" y="426" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#5E5540">13</text>
+      <text x="56" y="426" font-family="Inter, sans-serif" font-size="12.5" fill="#87795A">abaixo do teto?</text>
+      <text x="386" y="426" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#5E5540">—</text>
+      <rect x="42" y="442" width="356" height="27" rx="5" fill="none" stroke="#3D3726" stroke-width="1.4"/>
+      <text x="26" y="460" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#5E5540">14</text>
+      <text x="56" y="460" font-family="Inter, sans-serif" font-size="12.5" fill="#87795A">há vaga de reserva?</text>
+      <text x="386" y="460" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#5E5540">—</text>
+      <rect x="42" y="476" width="356" height="27" rx="5" fill="none" stroke="#3D3726" stroke-width="1.4"/>
+      <text x="26" y="494" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#5E5540">15</text>
+      <text x="56" y="494" font-family="Inter, sans-serif" font-size="12.5" fill="#87795A">dentro da frequência?</text>
+      <text x="386" y="494" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#5E5540">—</text>
+      <rect x="42" y="510" width="356" height="27" rx="5" fill="none" stroke="#3D3726" stroke-width="1.4"/>
+      <text x="26" y="528" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#5E5540">16</text>
+      <text x="56" y="528" font-family="Inter, sans-serif" font-size="12.5" fill="#87795A">dentro do orçamento?</text>
+      <text x="386" y="528" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#5E5540">—</text>
+    </svg>
+    <div class="cap2">Treze degraus <b>nunca consultados</b> — e é a ausência deles que prova que uma revogação não pode ser contornada por uma compra pequena o bastante.</div>
+  </div>
+
+  <div>
+    <div class="rule"></div>
+    <div class="grid">
+      <div><b>O documento</b>Seis diagramas, nove páginas</div>
+      <div><b>O núcleo</b><code style="background:#161C24;color:#B8C4D0">AuthorizationCore</code></div>
+      <div><b>A invariante</b>Autoridade antes de dinheiro</div>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== 2 · COMO LER ====================== -->
+<section class="page">
+  <div class="head">
+    <span class="num">01</span>
+    <h2>Como ler este documento</h2>
+    <div class="asks">Duas cores atravessam todos os diagramas. <b>Azul é autoridade: quem pode.</b>
+      <b>Âmbar é dinheiro: quanto.</b> A ordem entre elas é a tese inteira.</div>
+  </div>
+
+  <div class="two">
+    <div>
+      <div class="card" style="border:0;padding:0">
+        <h3>As cores carregam significado, não decoração</h3>
+      </div>
+      <div style="margin-top:10px">
+        <div class="swatch">
+          <div class="chipbox"><span class="chip authority">autoridade</span></div>
+          <div class="txt"><b>Quem pode.</b> O mandato existe, não foi revogado, não expirou, o
+            merchant e a categoria estão no escopo, o cartão é o que ele nomeia.</div>
+        </div>
+        <div class="swatch">
+          <div class="chipbox"><span class="chip money">dinheiro</span></div>
+          <div class="txt"><b>Quanto.</b> Moeda e escala conferem, o valor é positivo, está abaixo do
+            teto, há vaga de reserva, cabe na frequência e no orçamento.</div>
+        </div>
+        <div class="swatch">
+          <div class="chipbox"><span class="chip allow">authorized</span></div>
+          <div class="txt">Dentro do mandato. A compra segue para captura.</div>
+        </div>
+        <div class="swatch">
+          <div class="chipbox"><span class="chip hold">awaiting_human</span></div>
+          <div class="txt"><b>Fora do mandato, mas aprovável.</b> Vira escalação com handle assinável.
+            Não é falha: é o gatilho da decisão humana — e ela volta assinada.</div>
+        </div>
+        <div class="swatch">
+          <div class="chipbox"><span class="chip deny">rejected</span></div>
+          <div class="txt"><b>Fora do mandato e não aprovável.</b> Teto, revogação, expiração. Não há
+            botão de aprovar, porque não há o que aprovar.</div>
+        </div>
+        <div class="swatch">
+          <div class="chipbox"><span class="chip grey">nunca consultado</span></div>
+          <div class="txt">O degrau que a avaliação não alcançou. <b>A ausência é a evidência:</b> uma
+            revogação não pode ser contornada por uma compra pequena o bastante.</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card" style="border:0;padding:0">
+        <h3>Quatro perguntas, quatro provas — e elas não se substituem</h3>
+      </div>
+      <table style="margin-top:12px">
+        <tr><th style="width:29%">pergunta</th><th style="width:33%">prova</th><th>quem detém</th></tr>
+        <tr>
+          <td><em>quem está chamando?</em></td>
+          <td>assinatura RFC 9421</td>
+          <td>o agente <em>— chave própria</em></td>
+        </tr>
+        <tr>
+          <td><em>esta compra pode acontecer?</em></td>
+          <td>avaliação do mandato</td>
+          <td><b>ninguém: é determinística</b></td>
+        </tr>
+        <tr>
+          <td><em>quem muda a autoridade de gasto?</em></td>
+          <td>JWS ES256</td>
+          <td>o titular <em>— chave no navegador</em></td>
+        </tr>
+        <tr>
+          <td><em>quem opera a instância?</em></td>
+          <td>token de operador</td>
+          <td>o time <em>— e não move dinheiro</em></td>
+        </tr>
+      </table>
+
+      <div class="note" style="margin-top:18px">
+        Autenticar não é autorizar. A borda HTTP responde a primeira pergunta e <b>não tem um único
+        <code>if</code> sobre limite</b>: se a regra existisse em dois lugares, divergiria sob pressão.
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="n">16</div><div class="l">degraus na escada,<br>em ordem fixa</div></div>
+        <div class="stat"><div class="n">3</div><div class="l">resultados possíveis,<br>não dois</div></div>
+        <div class="stat"><div class="n">4</div><div class="l">autoridades separadas,<br>quatro provas</div></div>
+        <div class="stat"><div class="n">0</div><div class="l">cartões no sistema:<br>o PAN nunca existe</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="tag">AVAL · Arquitetura</span>
+    <span>Desafio 01 — The Buyer Who Isn&rsquo;t Human</span>
+    <span class="pg">02</span>
+  </div>
+</section>
+
+<!-- ====================== 3 · VISÃO GERAL ====================== -->
+<section class="page">
+  <div class="head">
+    <span class="num">02</span>
+    <h2>Visão geral</h2>
+    <div class="asks">Quatro atores, uma borda que só autentica, um núcleo que só decide.
+      <b>Repare nas duas setas que saem do titular.</b></div>
+  </div>
+
+  <figure style="margin-top:14px">
+  <svg viewBox="0 0 1440 700" role="img"
+       aria-label="Mapa do sistema: titular, agente, merchant e auditor entram por uma borda HTTP que apenas autentica; o AuthorizationCore é o único que decide autoridade e é o único que escreve na persistência; uma segunda via, tracejada, leva o token de operador direto às alavancas de demonstração sem passar pelo núcleo.">
+    <defs>
+      <marker id="aInk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#38424E"/>
+      </marker>
+      <marker id="aAuth" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/>
+      </marker>
+      <marker id="aHold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#4F46C7"/>
+      </marker>
+    </defs>
+
+    <!-- ---------- atores ---------- -->
+    <text x="20" y="14" font-family="JetBrains Mono, monospace" font-size="12.5" letter-spacing="1.6" fill="#6B7683">QUEM AGE</text>
+    <g font-family="Inter, sans-serif">
+      <rect x="20"  y="26" width="258" height="72" rx="9" fill="#FFFFFF" stroke="#38424E" stroke-width="1.6"/>
+      <text x="38"  y="55" font-size="17" font-weight="600" fill="#0E1319">Titular</text>
+      <text x="38"  y="78" font-size="13.5" fill="#6B7683">navegador · Telegram</text>
+
+      <rect x="308" y="26" width="258" height="72" rx="9" fill="#FFFFFF" stroke="#38424E" stroke-width="1.6"/>
+      <text x="326" y="55" font-size="17" font-weight="600" fill="#0E1319">Agente comprador</text>
+      <text x="326" y="78" font-size="13.5" fill="#6B7683">propõe · chave própria</text>
+
+      <rect x="596" y="26" width="248" height="72" rx="9" fill="#FFFFFF" stroke="#38424E" stroke-width="1.6"/>
+      <text x="614" y="55" font-size="17" font-weight="600" fill="#0E1319">Merchant VuelaYa</text>
+      <text x="614" y="78" font-size="13.5" fill="#6B7683">verifica antes de aceitar</text>
+
+      <rect x="874" y="26" width="196" height="72" rx="9" fill="#FFFFFF" stroke="#38424E" stroke-width="1.6"/>
+      <text x="892" y="55" font-size="17" font-weight="600" fill="#0E1319">Auditor</text>
+      <text x="892" y="78" font-size="13.5" fill="#6B7683">lê a trilha inteira</text>
+    </g>
+
+    <!-- ---------- setas dos atores para a borda ---------- -->
+    <g stroke-width="2.4" fill="none">
+      <line x1="120" y1="98" x2="120" y2="212" stroke="#1D4ED8" marker-end="url(#aAuth)"/>
+      <line x1="437" y1="98" x2="437" y2="212" stroke="#1D4ED8" marker-end="url(#aAuth)"/>
+      <line x1="720" y1="98" x2="720" y2="212" stroke="#38424E" marker-end="url(#aInk)"/>
+      <line x1="972" y1="98" x2="972" y2="212" stroke="#38424E" marker-end="url(#aInk)"/>
+    </g>
+    <g font-family="Inter, sans-serif" font-size="12.5">
+      <text x="130" y="132" fill="#1D4ED8" font-weight="600">JWS ES256, assinado</text>
+      <text x="130" y="149" fill="#1D4ED8" font-weight="600">no próprio navegador</text>
+      <text x="447" y="132" fill="#1D4ED8" font-weight="600">assinatura sobre método,</text>
+      <text x="447" y="149" fill="#1D4ED8" font-weight="600">caminho e content-digest</text>
+      <text x="730" y="140" fill="#6B7683">prova de autorização</text>
+      <text x="982" y="140" fill="#6B7683">leitura da trilha</text>
+    </g>
+
+    <!-- ---------- a segunda via do titular: o token de operador ---------- -->
+    <path d="M120,26 L120,10 L1160,10 L1160,206" fill="none" stroke="#4F46C7" stroke-width="2.2"
+          stroke-dasharray="7 5" marker-end="url(#aHold)"/>
+    <text x="1180" y="34" font-family="Inter, sans-serif" font-size="12.5"
+          font-weight="600" fill="#4F46C7">token de operador —</text>
+    <text x="1180" y="53" font-family="Inter, sans-serif" font-size="12.5"
+          font-weight="600" fill="#4F46C7">não passa pelo núcleo</text>
+
+    <!-- ---------- borda ---------- -->
+    <rect x="20" y="212" width="1050" height="112" rx="11" fill="#F6F8FB" stroke="#DCE2E9" stroke-width="1.4"/>
+    <text x="38" y="238" font-family="JetBrains Mono, monospace" font-size="12.5" letter-spacing="1.4" fill="#6B7683">
+      BORDA HTTP — AUTENTICA, NUNCA AUTORIZA</text>
+    <g font-family="Inter, sans-serif">
+      <rect x="38"  y="250" width="300" height="56" rx="8" fill="#EDF3FF" stroke="#C2D5FB" stroke-width="1.4"/>
+      <text x="56"  y="273" font-size="15" font-weight="600" fill="#1D4ED8">RFC 9421</text>
+      <text x="56"  y="293" font-size="12.5" fill="#4E6BAF">quem está chamando?</text>
+
+      <rect x="356" y="250" width="300" height="56" rx="8" fill="#EDF3FF" stroke="#C2D5FB" stroke-width="1.4"/>
+      <text x="374" y="273" font-size="15" font-weight="600" fill="#1D4ED8">Validação de forma</text>
+      <text x="374" y="293" font-size="12.5" fill="#4E6BAF">Pydantic — forma, não autoridade</text>
+
+      <rect x="674" y="250" width="378" height="56" rx="8" fill="#FFFFFF" stroke="#DCE2E9" stroke-width="1.4"/>
+      <text x="692" y="273" font-size="15" font-weight="600" fill="#38424E">Nenhum <tspan font-family="JetBrains Mono, monospace" font-size="13.5">if</tspan> sobre limite mora aqui</text>
+      <text x="692" y="293" font-size="12.5" fill="#6B7683">a regra em dois lugares divergiria sob pressão</text>
+    </g>
+
+    <!-- ---------- borda -> núcleo ---------- -->
+    <line x1="545" y1="324" x2="545" y2="392" stroke="#38424E" stroke-width="3" marker-end="url(#aInk)"/>
+    <text x="558" y="364" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="#38424E">autenticado ≠ autorizado</text>
+
+    <!-- ---------- núcleo ---------- -->
+    <rect x="20" y="392" width="1050" height="126" rx="11" fill="#EDF3FF" stroke="#1D4ED8" stroke-width="2.2"/>
+    <text x="38" y="419" font-family="JetBrains Mono, monospace" font-size="12.5" letter-spacing="1.4" fill="#1D4ED8">
+      AUTHORIZATIONCORE — O ÚNICO QUE DECIDE AUTORIDADE</text>
+    <g font-family="Inter, sans-serif">
+      <rect x="38"  y="432" width="474" height="68" rx="8" fill="#FFFFFF" stroke="#1D4ED8" stroke-width="1.6"/>
+      <text x="58"  y="459" font-size="16" font-weight="640" fill="#0E1319">Escada de avaliação</text>
+      <text x="58"  y="481" font-size="13" fill="#38424E">16 degraus, ordem fixa — para no primeiro “não”</text>
+
+      <rect x="530" y="432" width="522" height="68" rx="8" fill="#FFFFFF" stroke="#4F46C7" stroke-width="1.6"/>
+      <text x="550" y="459" font-size="16" font-weight="640" fill="#0E1319">Escalação</text>
+      <text x="550" y="481" font-size="13" fill="#38424E">fora do mandato mas aprovável — handle que o titular assina</text>
+    </g>
+
+    <!-- ---------- núcleo -> persistência ---------- -->
+    <g stroke="#38424E" stroke-width="2.4" fill="none">
+      <line x1="270" y1="518" x2="270" y2="586" marker-end="url(#aInk)"/>
+      <line x1="800" y1="518" x2="800" y2="586" marker-end="url(#aInk)"/>
+    </g>
+    <text x="283" y="558" font-family="Inter, sans-serif" font-size="13" fill="#6B7683">lê o estado vivo</text>
+    <text x="813" y="558" font-family="Inter, sans-serif" font-size="13" fill="#6B7683">grava todo evento</text>
+
+    <!-- ---------- persistência ---------- -->
+    <rect x="20" y="586" width="1050" height="98" rx="11" fill="#F6F8FB" stroke="#DCE2E9" stroke-width="1.4"/>
+    <text x="38" y="611" font-family="JetBrains Mono, monospace" font-size="12.5" letter-spacing="1.4" fill="#6B7683">
+      PERSISTÊNCIA — SQLITE WAL, ESCRITOR ÚNICO</text>
+    <g font-family="Inter, sans-serif" font-size="14">
+      <rect x="38"  y="622" width="238" height="46" rx="7" fill="#FFFFFF" stroke="#DCE2E9"/>
+      <text x="157" y="650" text-anchor="middle" fill="#38424E">mandatos + autoridades</text>
+      <rect x="292" y="622" width="238" height="46" rx="7" fill="#FFFFFF" stroke="#DCE2E9"/>
+      <text x="411" y="650" text-anchor="middle" fill="#38424E">reservas + commit stamp</text>
+      <rect x="546" y="622" width="200" height="46" rx="7" fill="#FFFFFF" stroke="#DCE2E9"/>
+      <text x="646" y="650" text-anchor="middle" fill="#38424E">revogações</text>
+      <rect x="762" y="622" width="290" height="46" rx="7" fill="#FFFFFF" stroke="#0E1319" stroke-width="1.8"/>
+      <text x="907" y="650" text-anchor="middle" fill="#0E1319" font-weight="600">trilha — cadeia de hash</text>
+    </g>
+
+    <!-- ---------- coluna do operador ---------- -->
+    <rect x="1100" y="206" width="320" height="118" rx="11" fill="#F0EFFC" stroke="#4F46C7" stroke-width="1.8"/>
+    <text x="1118" y="232" font-family="JetBrains Mono, monospace" font-size="12.5" letter-spacing="1.4" fill="#4F46C7">TOKEN DE OPERADOR</text>
+    <g font-family="Inter, sans-serif" font-size="13.5" fill="#38424E">
+      <text x="1118" y="258">registrar agente · reconciliar</text>
+      <text x="1118" y="280">avançar o relógio (só para frente)</text>
+      <text x="1118" y="302">derrubar o PSP · adulterar a trilha</text>
+    </g>
+
+    <line x1="1260" y1="324" x2="1260" y2="392" stroke="#4F46C7" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#aHold)"/>
+
+    <rect x="1100" y="392" width="320" height="126" rx="11" fill="#FFFFFF" stroke="#38424E" stroke-width="1.6"/>
+    <text x="1118" y="419" font-family="JetBrains Mono, monospace" font-size="12.5" letter-spacing="1.4" fill="#6B7683">PSP SIMULADO</text>
+    <text x="1118" y="447" font-family="Inter, sans-serif" font-size="15" font-weight="600" fill="#0E1319">online · offline · decline</text>
+    <text x="1118" y="470" font-family="Inter, sans-serif" font-size="13" fill="#6B7683">lido a cada chamada, para que a</text>
+    <text x="1118" y="489" font-family="Inter, sans-serif" font-size="13" fill="#6B7683">história de falha seja demonstrada</text>
+    <text x="1118" y="508" font-family="Inter, sans-serif" font-size="13" fill="#6B7683">e não narrada</text>
+
+    <line x1="1070" y1="455" x2="1094" y2="455" stroke="#38424E" stroke-width="2.4" marker-end="url(#aInk)"/>
+
+    <!-- ---------- a afirmação ---------- -->
+    <rect x="1100" y="586" width="320" height="98" rx="11" fill="#FFFFFF" stroke="#4F46C7" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <text x="1118" y="614" font-family="Inter, sans-serif" font-size="14.5" font-weight="640" fill="#4F46C7">A via tracejada</text>
+    <text x="1118" y="638" font-family="Inter, sans-serif" font-size="13" fill="#38424E">opera a instância e, de propósito,</text>
+    <text x="1118" y="657" font-family="Inter, sans-serif" font-size="13" fill="#38424E"><tspan font-weight="640" fill="#0E1319">não move dinheiro nenhum.</tspan></text>
+    <text x="1118" y="676" font-family="Inter, sans-serif" font-size="13" fill="#38424E">A sólida move.</text>
+  </svg>
+  </figure>
+
+  <div class="note">
+    A separação que mais importa está nas duas setas que saem do titular: uma leva uma
+    <b>assinatura</b>, a outra leva um <b>token de operador</b>. A primeira move dinheiro; a segunda
+    opera a instância — e nunca toca no núcleo. É por isso que um jurado pode derrubar o processador,
+    avançar o relógio e adulterar a trilha <b>sem nunca conseguir aprovar uma compra.</b>
+  </div>
+
+  <div class="foot">
+    <span class="tag">AVAL · Arquitetura</span>
+    <span>A borda autentica · o núcleo decide · a trilha registra</span>
+    <span class="pg">03</span>
+  </div>
+</section>
+
+<style>
+/* ---- a escada: a ordem é a regra, então a ordem é o desenho ---- */
+.ladder { display: grid; grid-template-columns: 1fr 1px 1fr; gap: 0 39.0px; margin-top: 20.8px; }
+.ladder .band-h { display: flex; align-items: baseline; gap: 14.3px; padding-bottom: 10.4px; border-bottom: 2px solid; }
+.ladder .band-h .t { font-family: var(--display); font-size: 24.7px; font-weight: 650; letter-spacing: -0.01em; }
+.ladder .band-h .q { font-size: 18.2px; color: var(--ink-3); }
+.ladder .band-h .c { margin-left: auto; font-family: var(--mono); font-size: 15.6px; color: var(--ink-3); }
+.ladder .authority .band-h { border-color: var(--authority); }
+.ladder .authority .band-h .t { color: var(--authority); }
+.ladder .money .band-h { border-color: var(--money); }
+.ladder .money .band-h .t { color: var(--money); }
+
+.rung { display: flex; align-items: center; gap: 14.3px; padding: 8.5px 0; border-bottom: 1px solid var(--rule-soft); }
+.rung .n {
+  flex: 0 0 33.8px; height: 28.6px; line-height: 27.3px; text-align: center; border-radius: 5px;
+  font-family: var(--mono); font-size: 15.6px; font-weight: 500; border: 1px solid;
+}
+.authority .rung .n { color: var(--authority); background: var(--authority-bg); border-color: #C2D5FB; }
+.money     .rung .n { color: var(--money);     background: var(--money-bg);     border-color: #F0D8B2; }
+.rung .q { font-size: 19.5px; font-weight: 500; }
+.rung .q em { font-size: 16.9px; }
+.rung .out { margin-left: auto; display: flex; align-items: center; gap: 9.1px; }
+.rung .out .code { font-family: var(--mono); font-size: 15.0px; color: var(--ink-3); }
+.rung .out .hard { font-family: var(--mono); font-size: 14.3px; color: var(--deny); font-weight: 500; }
+
+.ladder .divider { background: var(--rule); position: relative; }
+.ladder .divider span {
+  position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%) rotate(-90deg);
+  white-space: nowrap; background: var(--paper); padding: 9.1px 5.2px;
+  font-family: var(--mono); font-size: 15.0px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ink-2); font-weight: 500;
+}
+.terminal {
+  display: flex; align-items: center; gap: 14.3px; margin-top: 14.3px;
+  border: 1.6px solid var(--allow); background: var(--allow-bg); border-radius: 8px; padding: 11.7px 18.2px;
+}
+.terminal .n { flex: 0 0 33.8px; text-align: center; font-family: var(--mono); font-size: 15.6px; color: var(--allow); }
+.terminal .t { font-family: var(--mono); font-size: 19.5px; font-weight: 500; color: var(--allow); }
+.terminal .d { font-size: 18.2px; color: var(--ink-2); margin-left: auto; }
+
+/* ---- a tira: o que acontece com um mandato revogado ---- */
+.strip { margin-top: 23.4px; border: 1px solid var(--rule); border-radius: 10px; padding: 18.2px 23.4px 20.8px; background: var(--paper-2); }
+.strip .lbl { margin-bottom: 15px; max-width: 150ch; }
+.strip .lbl > b { display: block; margin-bottom: 5px; }
+.strip .lbl b { font-family: var(--display); font-size: 22.1px; font-weight: 640; }
+.strip .lbl span { font-size: 18.2px; color: var(--ink-2); }
+.cells { display: grid; grid-template-columns: repeat(16, 1fr); gap: 7.8px; }
+.cell {
+  height: 57.2px; border-radius: 6px; border: 1px solid var(--rule); background: var(--paper);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2.6px;
+}
+.cell .n { font-family: var(--mono); font-size: 15.6px; font-weight: 500; color: var(--ink-3); }
+.cell .s { font-size: 13.0px; color: var(--ink-3); }
+.cell.pass { border-color: #B9DDC6; background: var(--allow-bg); }
+.cell.pass .n, .cell.pass .s { color: var(--allow); }
+.cell.stop { border-color: var(--deny); background: var(--deny-bg); border-width: 1.8px; }
+.cell.stop .n, .cell.stop .s { color: var(--deny); font-weight: 600; }
+.cell.never { border-style: dashed; background: transparent; }
+.cell.never .n, .cell.never .s { color: #B4BCC5; }
+</style>
+
+<!-- ====================== 4 · A ESCADA ====================== -->
+<section class="page">
+  <div class="head">
+    <span class="num">03</span>
+    <h2>A escada de avaliação</h2>
+    <div class="asks">A ordem <b>é</b> a regra. O núcleo para no primeiro degrau que falha, e os
+      degraus abaixo <b>nunca são consultados</b>.</div>
+  </div>
+
+  <div class="ladder">
+    <div class="authority">
+      <div class="band-h"><span class="t">Autoridade</span><span class="q">quem pode</span><span class="c">degraus 1–10</span></div>
+      <div class="rung"><span class="n">1</span><span class="q">mandato existe?</span><span class="out"><span class="code">mandate_not_found</span><span class="chip deny">rejected</span></span></div>
+      <div class="rung"><span class="n">2</span><span class="q">revogação legível?</span><span class="out"><span class="code">revocation_unavailable</span><span class="chip deny">rejected</span></span></div>
+      <div class="rung"><span class="n">3</span><span class="q">não revogado?</span><span class="out"><span class="code">mandate_revoked</span><span class="chip deny">rejected</span></span></div>
+      <div class="rung"><span class="n">4</span><span class="q">merchant não revogado?</span><span class="out"><span class="code">merchant_revoked</span><span class="chip deny">rejected</span></span></div>
+      <div class="rung"><span class="n">5</span><span class="q">instrumento não revogado?</span><span class="out"><span class="code">instrument_revoked</span><span class="chip deny">rejected</span></span></div>
+      <div class="rung"><span class="n">6</span><span class="q">orçamento não zerado?</span><span class="out"><span class="code">budget_revoked</span><span class="chip hold">awaiting_human</span></span></div>
+      <div class="rung"><span class="n">7</span><span class="q">dentro da validade?</span><span class="out"><span class="code">mandate_expired</span><span class="chip deny">rejected</span></span></div>
+      <div class="rung"><span class="n">8</span><span class="q">merchant no escopo?</span><span class="out"><span class="code">merchant_not_allowed</span><span class="chip hold">awaiting_human</span></span></div>
+      <div class="rung"><span class="n">9</span><span class="q">categoria no escopo?</span><span class="out"><span class="code">category_not_allowed</span><span class="chip hold">awaiting_human</span></span></div>
+      <div class="rung"><span class="n">10</span><span class="q">é o cartão do mandato? <em>— só na captura</em></span><span class="out"><span class="code">instrument_not_in_mandate</span><span class="chip deny">rejected</span></span></div>
+    </div>
+
+    <div class="divider"><span>autoridade primeiro</span></div>
+
+    <div class="money">
+      <div class="band-h"><span class="t">Dinheiro</span><span class="q">quanto</span><span class="c">degraus 11–16</span></div>
+      <div class="rung"><span class="n">11</span><span class="q">moeda e escala conferem?</span><span class="out"><span class="chip deny">rejected</span></span></div>
+      <div class="rung"><span class="n">12</span><span class="q">valor positivo?</span><span class="out"><span class="chip deny">rejected</span></span></div>
+      <div class="rung"><span class="n">13</span><span class="q">abaixo do <b>teto</b>?</span><span class="out"><span class="hard">sem botão de aprovar</span><span class="chip deny">rejected</span></span></div>
+      <div class="rung"><span class="n">14</span><span class="q">há vaga de reserva?</span><span class="out"><span class="hard">sem botão de aprovar</span><span class="chip deny">rejected</span></span></div>
+      <div class="rung"><span class="n">15</span><span class="q">dentro da frequência?</span><span class="out"><span class="code">usage_limit</span><span class="chip hold">awaiting_human</span></span></div>
+      <div class="rung"><span class="n">16</span><span class="q">dentro do <b>orçamento</b>?</span><span class="out"><span class="code">budget_exceeded</span><span class="chip hold">awaiting_human</span></span></div>
+
+      <div class="terminal">
+        <span class="n">→</span><span class="t">authorized</span>
+        <span class="d">os dezesseis responderam sim; a compra segue para captura</span>
+      </div>
+
+      <div class="note" style="margin-top:16px">
+        O <b>teto</b> e a <b>vaga de reserva</b> recusam em vez de escalar, de propósito: apertar
+        aprovar não solta dinheiro que já está preso — quem solta é <code>POST /reconcile</code>.
+      </div>
+    </div>
+  </div>
+
+  <div class="strip">
+    <div class="lbl">
+      <b>Um mandato revogado, avaliado degrau a degrau</b>
+      <span>A avaliação para no 3. Os treze seguintes <b>nunca são consultados</b> — e é a ausência
+        deles que prova que uma revogação não pode ser contornada por uma compra pequena o bastante.</span>
+    </div>
+    <div class="cells">
+      <div class="cell pass"><span class="n">1</span><span class="s">sim</span></div>
+      <div class="cell pass"><span class="n">2</span><span class="s">sim</span></div>
+      <div class="cell stop"><span class="n">3</span><span class="s">não</span></div>
+      <div class="cell never"><span class="n">4</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">5</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">6</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">7</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">8</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">9</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">10</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">11</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">12</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">13</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">14</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">15</span><span class="s">—</span></div>
+      <div class="cell never"><span class="n">16</span><span class="s">—</span></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="tag">AVAL · Arquitetura</span>
+    <span>A lista é a ordem literal de <code>_evaluate_with()</code> · cada decisão devolve
+      <code>evaluation_trace</code> com exatamente os degraus percorridos</span>
+    <span class="pg">04</span>
+  </div>
+</section>
+
+<!-- ====================== 5 · AS DUAS CHAVES ====================== -->
+<section class="page">
+  <div class="head">
+    <span class="num">04</span>
+    <h2>As duas chaves</h2>
+    <div class="asks">Um jurado opera o sistema com as duas. <b>Só uma delas chega ao dinheiro</b> — e
+      isso é estrutural, não uma promessa de operação.</div>
+  </div>
+
+  <figure style="margin-top:16px">
+  <svg viewBox="0 0 1440 430" role="img"
+       aria-label="A chave do titular alcança limite, escalação e revogação e move dinheiro; o token de operador alcança agente, PSP, reconciliação, relógio e adulteração da trilha, e sua via até o dinheiro está fisicamente bloqueada.">
+    <defs>
+      <marker id="bAuth" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/>
+      </marker>
+    </defs>
+
+    <!-- titular -->
+    <rect x="20" y="20" width="540" height="330" rx="12" fill="#EDF3FF" stroke="#1D4ED8" stroke-width="2.2"/>
+    <text x="42" y="50" font-family="JetBrains Mono, monospace" font-size="12.5" letter-spacing="1.4" fill="#1D4ED8">CHAVE DO TITULAR</text>
+    <text x="42" y="74" font-family="Inter, sans-serif" font-size="14.5" fill="#4E6BAF">WebCrypto P-256 · <tspan font-family="JetBrains Mono, monospace" font-size="13.5">extractable: false</tspan> · IndexedDB</text>
+    <g font-family="Inter, sans-serif" font-size="16" font-weight="500">
+      <rect x="42" y="96"  width="496" height="52" rx="8" fill="#FFFFFF" stroke="#C2D5FB" stroke-width="1.4"/>
+      <text x="62" y="128" fill="#0E1319">mudar o limite</text>
+      <rect x="42" y="158" width="496" height="52" rx="8" fill="#FFFFFF" stroke="#C2D5FB" stroke-width="1.4"/>
+      <text x="62" y="190" fill="#0E1319">aprovar ou negar uma escalação</text>
+      <rect x="42" y="220" width="496" height="52" rx="8" fill="#FFFFFF" stroke="#C2D5FB" stroke-width="1.4"/>
+      <text x="62" y="252" fill="#0E1319">revogar o mandato</text>
+      <rect x="42" y="282" width="496" height="52" rx="8" fill="#FFFFFF" stroke="#C2D5FB" stroke-width="1.4"/>
+      <text x="62" y="314" fill="#0E1319">revogar tudo o que esta chave sustenta</text>
+    </g>
+
+    <!-- operador -->
+    <rect x="880" y="20" width="540" height="330" rx="12" fill="#F0EFFC" stroke="#4F46C7" stroke-width="2.2"/>
+    <text x="902" y="50" font-family="JetBrains Mono, monospace" font-size="12.5" letter-spacing="1.4" fill="#4F46C7">TOKEN DE OPERADOR</text>
+    <text x="902" y="74" font-family="Inter, sans-serif" font-size="14.5" fill="#6A63CE">ausente = superfícies desligadas · a instância nasce fechada</text>
+    <g font-family="Inter, sans-serif" font-size="15.5" font-weight="500">
+      <rect x="902" y="92"  width="496" height="44" rx="8" fill="#FFFFFF" stroke="#CFCBF3" stroke-width="1.4"/>
+      <text x="922" y="120" fill="#0E1319">registrar um agente confiável</text>
+      <rect x="902" y="144" width="496" height="44" rx="8" fill="#FFFFFF" stroke="#CFCBF3" stroke-width="1.4"/>
+      <text x="922" y="172" fill="#0E1319">derrubar e religar o processador</text>
+      <rect x="902" y="196" width="496" height="44" rx="8" fill="#FFFFFF" stroke="#CFCBF3" stroke-width="1.4"/>
+      <text x="922" y="224" fill="#0E1319">reconciliar uma captura em dúvida</text>
+      <rect x="902" y="248" width="496" height="44" rx="8" fill="#FFFFFF" stroke="#CFCBF3" stroke-width="1.4"/>
+      <text x="922" y="276" fill="#0E1319">avançar o relógio <tspan font-size="13.5" fill="#6B7683">— só para frente</tspan></text>
+      <rect x="902" y="300" width="496" height="44" rx="8" fill="#FFFFFF" stroke="#CFCBF3" stroke-width="1.4"/>
+      <text x="922" y="328" fill="#0E1319">adulterar a trilha <tspan font-size="13.5" fill="#6B7683">— só com AVAL_DEMO_TAMPER</tspan></text>
+    </g>
+
+    <!-- o dinheiro -->
+    <rect x="620" y="140" width="200" height="98" rx="12" fill="#FDF4E7" stroke="#A85A06" stroke-width="2.4"/>
+    <text x="720" y="176" text-anchor="middle" font-family="Inter Tight, sans-serif" font-size="22" font-weight="680" fill="#A85A06">DINHEIRO</text>
+    <text x="720" y="200" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" fill="#8A5312">orçamento · reserva</text>
+    <text x="720" y="219" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" fill="#8A5312">captura · liquidação</text>
+
+    <!-- titular -> dinheiro : passa -->
+    <line x1="566" y1="189" x2="612" y2="189" stroke="#1D4ED8" stroke-width="4" marker-end="url(#bAuth)"/>
+    <text x="589" y="172" text-anchor="middle" font-family="Inter, sans-serif" font-size="13.5" font-weight="640" fill="#1D4ED8">move</text>
+
+    <!-- operador -> dinheiro : bloqueado -->
+    <line x1="874" y1="189" x2="856" y2="189" stroke="#4F46C7" stroke-width="2.6" stroke-dasharray="7 5"/>
+    <circle cx="843" cy="189" r="17" fill="#FFFFFF" stroke="#B4181C" stroke-width="2.8"/>
+    <line x1="832" y1="200" x2="854" y2="178" stroke="#B4181C" stroke-width="2.8"/>
+    <text x="843" y="234" text-anchor="middle" font-family="Inter, sans-serif" font-size="13.5" font-weight="640" fill="#B4181C">nunca</text>
+    <text x="843" y="252" text-anchor="middle" font-family="Inter, sans-serif" font-size="13.5" font-weight="640" fill="#B4181C">move</text>
+  </svg>
+  </figure>
+
+  <div class="three" style="margin-top:20px">
+    <div class="card">
+      <h3>O relógio só avança</h3>
+      <p>Rebobiná-lo reviveria um mandato expirado — e isso seria um operador <b>devolvendo autoridade
+        de gasto</b>. A alavanca existe para o jurado ver o mandato morrer na frente dele, não para
+        ressuscitá-lo.</p>
+    </div>
+    <div class="card">
+      <h3>A aprovação é evidência, não atalho</h3>
+      <p>O JWS do titular nomeia <code>decision_handle</code>, <code>mandate_id</code>,
+        <code>decision</code> e <code>amount</code>, os quatro conferidos contra a escalação congelada,
+        e é guardado <b>inteiro</b> na trilha. Sem isso, uma aprovação poderia ser levantada de uma
+        compra e aplicada a outra maior.</p>
+    </div>
+    <div class="card">
+      <h3>E a aprovação não ressuscita nada</h3>
+      <p>Tudo é reavaliado no momento da retomada: uma revogação que chegou <b>enquanto a pessoa
+        decidia</b> ainda recusa a compra. O caminho de volta existe; ele apenas não passa por cima
+        da escada.</p>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="tag">AVAL · Arquitetura</span>
+    <span>Autoridade de gasto é do dono do mandato · operar a instância é do time · e as duas provas não se substituem</span>
+    <span class="pg">05</span>
+  </div>
+</section>
+
+<!-- ====================== 6 · O CIRCUITO ====================== -->
+<section class="page">
+  <div class="head">
+    <span class="num">05</span>
+    <h2>O circuito completo de uma compra</h2>
+    <div class="asks">Mandato, compra, verificação e revogação — em quatro tempos, com a trilha
+      recebendo cada um deles.</div>
+  </div>
+
+  <figure class="fit" style="margin-top:12px">
+  <svg viewBox="0 0 1480 856" role="img"
+       aria-label="Sequência em quatro fases: o titular cria o mandato pelo navegador que gera o próprio par de chaves; o agente descobre ofertas, autoriza, captura e liquida; o merchant verifica sem receber o mandato nem o comprador; e a revogação assinada faz a tentativa seguinte parar no terceiro degrau.">
+    <defs>
+      <marker id="sInk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#38424E"/></marker>
+      <marker id="sAuth" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+      <marker id="sMute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8A94A0"/></marker>
+      <marker id="sOk"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+      <marker id="sNo"   viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B4181C"/></marker>
+    </defs>
+
+    <!-- faixas de fase -->
+    <g>
+      <rect x="14" y="56"  width="1452" height="146" rx="9" fill="#F6F8FB"/>
+      <rect x="14" y="212" width="1452" height="310" rx="9" fill="#FFFFFF" stroke="#EDF1F5"/>
+      <rect x="14" y="532" width="1452" height="100" rx="9" fill="#F6F8FB"/>
+      <rect x="14" y="642" width="1452" height="196" rx="9" fill="#FFFFFF" stroke="#EDF1F5"/>
+    </g>
+    <g font-family="JetBrains Mono, monospace" font-size="13.5" letter-spacing="1.3" fill="#8A94A0">
+      <text x="28" y="76">1 · O MANDATO NASCE</text>
+      <text x="28" y="232">2 · O AGENTE DESCOBRE, DECIDE E PAGA</text>
+      <text x="28" y="552">3 · O MERCHANT VERIFICA</text>
+      <text x="28" y="662">4 · A REVOGAÇÃO AO VIVO</text>
+    </g>
+
+    <!-- lifelines -->
+    <g stroke="#DCE2E9" stroke-width="1.4" stroke-dasharray="4 5">
+      <line x1="85"   y1="46" x2="85"   y2="846"/>
+      <line x1="275"  y1="46" x2="275"  y2="846"/>
+      <line x1="470"  y1="46" x2="470"  y2="846"/>
+      <line x1="730"  y1="46" x2="730"  y2="846"/>
+      <line x1="985"  y1="46" x2="985"  y2="846"/>
+      <line x1="1185" y1="46" x2="1185" y2="846"/>
+      <line x1="1385" y1="46" x2="1385" y2="846"/>
+    </g>
+
+    <!-- cabeçalhos -->
+    <g font-family="Inter, sans-serif" font-size="16.5" font-weight="600" text-anchor="middle">
+      <rect x="15"   y="0" width="140" height="42" rx="8" fill="#FFFFFF" stroke="#38424E" stroke-width="1.5"/><text x="85"   y="27" fill="#0E1319">Titular</text>
+      <rect x="205"  y="0" width="140" height="42" rx="8" fill="#EDF3FF" stroke="#1D4ED8" stroke-width="1.5"/><text x="275"  y="27" fill="#1D4ED8">Navegador</text>
+      <rect x="400"  y="0" width="140" height="42" rx="8" fill="#FFFFFF" stroke="#38424E" stroke-width="1.5"/><text x="470"  y="27" fill="#0E1319">Agente</text>
+      <rect x="628"  y="0" width="204" height="42" rx="8" fill="#EDF3FF" stroke="#1D4ED8" stroke-width="2.2"/><text x="730"  y="27" fill="#1D4ED8">AuthorizationCore</text>
+      <rect x="915"  y="0" width="140" height="42" rx="8" fill="#FFFFFF" stroke="#38424E" stroke-width="1.5"/><text x="985"  y="27" fill="#0E1319">VuelaYa</text>
+      <rect x="1115" y="0" width="140" height="42" rx="8" fill="#FFFFFF" stroke="#38424E" stroke-width="1.5"/><text x="1185" y="27" fill="#0E1319">PSP</text>
+      <rect x="1315" y="0" width="140" height="42" rx="8" fill="#FFFFFF" stroke="#0E1319" stroke-width="1.8"/><text x="1385" y="27" fill="#0E1319">Trilha</text>
+    </g>
+
+    <g font-family="Inter, sans-serif" font-size="15.5" text-anchor="middle">
+      <!-- ---- fase 1 ---- -->
+      <line x1="85" y1="104" x2="268" y2="104" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
+      <text x="176" y="92" fill="#38424E">cria o mandato</text>
+
+      <path d="M275,124 C315,124 315,152 275,152" fill="none" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
+      <text x="330" y="138" text-anchor="start" fill="#1D4ED8" font-weight="600">gera o par P-256 — a metade privada nunca sai do navegador</text>
+
+      <line x1="275" y1="176" x2="723" y2="176" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
+      <text x="499" y="164" fill="#1D4ED8" font-weight="600">POST /mandates + JWK público</text>
+
+      <line x1="730" y1="196" x2="1378" y2="196" stroke="#8A94A0" stroke-width="1.6" marker-end="url(#sMute)"/>
+      <text x="1054" y="184" fill="#8A94A0" font-family="JetBrains Mono, monospace" font-size="14">mandate.registered</text>
+
+      <!-- ---- fase 2 ---- -->
+      <line x1="85" y1="258" x2="463" y2="258" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
+      <text x="274" y="246" fill="#38424E">“compre um voo para Córdoba abaixo de $150”</text>
+
+      <line x1="470" y1="286" x2="978" y2="286" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
+      <text x="724" y="274" fill="#38424E" font-family="JetBrains Mono, monospace" font-size="14">GET /merchant/offers</text>
+
+      <line x1="985" y1="312" x2="477" y2="312" stroke="#8A94A0" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#sMute)"/>
+      <text x="731" y="300" fill="#8A94A0">ofertas assinadas pelo vendedor — JWS + nonce próprio</text>
+
+      <line x1="470" y1="342" x2="723" y2="342" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
+      <text x="596" y="330" fill="#1D4ED8" font-weight="600">POST /authorize · assinado RFC 9421</text>
+
+      <path d="M730,362 C772,362 772,392 730,392" fill="none" stroke="#1D4ED8" stroke-width="2.4" marker-end="url(#sAuth)"/>
+      <text x="788" y="378" text-anchor="start" fill="#1D4ED8" font-weight="600">escada de avaliação — dezesseis degraus, autoridade antes de dinheiro</text>
+
+      <line x1="730" y1="416" x2="477" y2="416" stroke="#15803D" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#sOk)"/>
+      <text x="603" y="404" fill="#15803D" font-weight="600">authorized + evaluation_trace</text>
+
+      <line x1="470" y1="444" x2="723" y2="444" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
+      <text x="596" y="432" fill="#1D4ED8" font-weight="600">POST /capture</text>
+
+      <line x1="730" y1="470" x2="1178" y2="470" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
+      <text x="954" y="458" fill="#38424E">autorizar a cobrança</text>
+
+      <line x1="1185" y1="494" x2="737" y2="494" stroke="#8A94A0" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#sMute)"/>
+      <text x="961" y="482" fill="#8A94A0">liquidado</text>
+
+      <line x1="730" y1="514" x2="1378" y2="514" stroke="#8A94A0" stroke-width="1.6" marker-end="url(#sMute)"/>
+      <text x="1054" y="502" fill="#8A94A0" font-family="JetBrains Mono, monospace" font-size="14">capture.committed</text>
+
+      <!-- ---- fase 3 ---- -->
+      <line x1="470" y1="578" x2="978" y2="578" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
+      <text x="724" y="566" fill="#38424E">entrega a prova de autorização</text>
+
+      <line x1="985" y1="602" x2="737" y2="602" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
+      <text x="861" y="590" fill="#38424E" font-family="JetBrains Mono, monospace" font-size="14">POST /merchant/verify</text>
+
+      <line x1="730" y1="624" x2="978" y2="624" stroke="#15803D" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#sOk)"/>
+      <text x="854" y="612" fill="#15803D" font-weight="600">accepted — sem mandate_id, sem principal_id</text>
+
+      <!-- ---- fase 4 ---- -->
+      <line x1="85" y1="690" x2="268" y2="690" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
+      <text x="176" y="678" fill="#38424E">revogar</text>
+
+      <path d="M275,710 C315,710 315,738 275,738" fill="none" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
+      <text x="330" y="724" text-anchor="start" fill="#1D4ED8" font-weight="600">assina o JWS com a chave local — o servidor nunca assina no lugar dela</text>
+
+      <line x1="275" y1="762" x2="723" y2="762" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
+      <text x="499" y="750" fill="#1D4ED8" font-weight="600">POST /mandates/{id}/revocation</text>
+
+      <line x1="730" y1="788" x2="1378" y2="788" stroke="#8A94A0" stroke-width="1.6" marker-end="url(#sMute)"/>
+      <text x="1054" y="776" fill="#8A94A0" font-family="JetBrains Mono, monospace" font-size="14">revocation.holder</text>
+
+      <line x1="470" y1="812" x2="723" y2="812" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
+      <text x="596" y="800" fill="#38424E">tenta comprar de novo</text>
+
+      <line x1="730" y1="836" x2="477" y2="836" stroke="#B4181C" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#sNo)"/>
+      <text x="603" y="824" fill="#B4181C" font-weight="640">mandate_revoked — parou no 3º degrau</text>
+    </g>
+  </svg>
+  </figure>
+
+  <div class="two" style="margin-top:14px">
+    <div class="note" style="margin-top:0">
+      <b>O merchant verifica sem saber quem comprou.</b> A prova vincula <code>checkout_id</code>,
+      <code>merchant_id</code>, valor, moeda e <code>terms_hash</code> — e <b>omite</b>
+      <code>mandate_id</code> e <code>principal_id</code>. Um recibo que vazasse o orçamento da
+      compradora vazaria a compradora.
+    </div>
+    <div class="note" style="margin-top:0">
+      <b>O agente em processo não tem privilégio.</b> Ele assina e passa pela mesma verificação da
+      borda HTTP. Rodar dentro do processo não compra confiança nenhuma — e é o que torna a defesa
+      contra um agente impostor honesta em vez de acidental.
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="tag">AVAL · Arquitetura</span>
+    <span>Quatro tempos · uma trilha · nenhuma decisão fora do núcleo</span>
+    <span class="pg">06</span>
+  </div>
+</section>
+
+<!-- ====================== 7 · A TRILHA ====================== -->
+<section class="page">
+  <div class="head">
+    <span class="num">06</span>
+    <h2>A trilha que se defende</h2>
+    <div class="asks">Não é um log que o operador promete não editar. É um log que o auditor
+      <b>confere sem confiar no operador</b>.</div>
+  </div>
+
+  <figure style="margin-top:20px">
+  <svg viewBox="0 0 1440 400" role="img"
+       aria-label="Cadeia de hash: cada evento encadeia o digest do anterior; editar o evento 2 quebra o próprio digest dele e todos os elos seguintes, e ledger/verify aponta a posição exata.">
+    <defs>
+      <marker id="cInk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#38424E"/></marker>
+      <marker id="cNo"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B4181C"/></marker>
+    </defs>
+
+    <!-- a edição -->
+    <rect x="524" y="34" width="252" height="52" rx="8" fill="#FDF0F0" stroke="#B4181C" stroke-width="1.8"/>
+    <text x="650" y="58" text-anchor="middle" font-family="Inter, sans-serif" font-size="14.5" font-weight="640" fill="#B4181C">alguém edita este evento</text>
+    <text x="650" y="76" text-anchor="middle" font-family="Inter, sans-serif" font-size="12.5" fill="#B4181C">direto no banco, por fora da API</text>
+    <line x1="650" y1="86" x2="650" y2="124" stroke="#B4181C" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#cNo)"/>
+
+    <!-- blocos -->
+    <g font-family="Inter, sans-serif">
+      <rect x="40"   y="130" width="210" height="112" rx="10" fill="#EDF7F0" stroke="#15803D" stroke-width="1.8"/>
+      <text x="60"   y="160" font-size="16" font-weight="640" fill="#15803D">genesis</text>
+      <text x="60"   y="186" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#38424E">prev  000…000</text>
+      <text x="60"   y="207" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#38424E">digest 7a41…</text>
+      <text x="60"   y="230" font-size="12.5" fill="#15803D">confere</text>
+
+      <rect x="292"  y="130" width="210" height="112" rx="10" fill="#EDF7F0" stroke="#15803D" stroke-width="1.8"/>
+      <text x="312"  y="160" font-size="16" font-weight="640" fill="#15803D">evento 1</text>
+      <text x="312"  y="186" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#38424E">prev  7a41…</text>
+      <text x="312"  y="207" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#38424E">digest c9e0…</text>
+      <text x="312"  y="230" font-size="12.5" fill="#15803D">confere</text>
+
+      <rect x="544"  y="130" width="210" height="112" rx="10" fill="#FDF0F0" stroke="#B4181C" stroke-width="2.4"/>
+      <text x="564"  y="160" font-size="16" font-weight="640" fill="#B4181C">evento 2</text>
+      <text x="564"  y="186" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#38424E">prev  c9e0…</text>
+      <text x="564"  y="207" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#B4181C">digest ✗ não bate</text>
+      <text x="564"  y="230" font-size="12.5" font-weight="600" fill="#B4181C">o próprio digest o acusa</text>
+
+      <rect x="796"  y="130" width="210" height="112" rx="10" fill="#FFFFFF" stroke="#B4181C" stroke-width="1.6" stroke-dasharray="6 4"/>
+      <text x="816"  y="160" font-size="16" font-weight="640" fill="#0E1319">evento 3</text>
+      <text x="816"  y="186" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#8A94A0">prev  4c1b…</text>
+      <text x="816"  y="207" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#8A94A0">digest 2f88…</text>
+      <text x="816"  y="230" font-size="12.5" fill="#B4181C">herda a quebra</text>
+
+      <rect x="1048" y="130" width="210" height="112" rx="10" fill="#FFFFFF" stroke="#B4181C" stroke-width="1.6" stroke-dasharray="6 4"/>
+      <text x="1068" y="160" font-size="16" font-weight="640" fill="#0E1319">evento 4</text>
+      <text x="1068" y="186" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#8A94A0">prev  2f88…</text>
+      <text x="1068" y="207" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#8A94A0">digest b013…</text>
+      <text x="1068" y="230" font-size="12.5" fill="#B4181C">herda a quebra</text>
+    </g>
+
+    <!-- elos -->
+    <g stroke="#38424E" stroke-width="2.2">
+      <line x1="250"  y1="186" x2="285"  y2="186" marker-end="url(#cInk)"/>
+      <line x1="502"  y1="186" x2="537"  y2="186" marker-end="url(#cInk)"/>
+    </g>
+    <g stroke="#B4181C" stroke-width="2.2">
+      <line x1="754"  y1="186" x2="789"  y2="186" marker-end="url(#cNo)"/>
+      <line x1="1006" y1="186" x2="1041" y2="186" marker-end="url(#cNo)"/>
+    </g>
+    <line x1="1258" y1="186" x2="1300" y2="186" stroke="#8A94A0" stroke-width="2.2" stroke-dasharray="5 5"/>
+    <text x="1316" y="192" font-family="Inter, sans-serif" font-size="15" fill="#8A94A0">…</text>
+
+    <text x="376" y="118" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="12" fill="#6B7683">sha256( canônico ‖ prev )</text>
+
+    <!-- a quebra herdada -->
+    <path d="M544,262 L544,278 L1258,278 L1258,262" fill="none" stroke="#B4181C" stroke-width="1.8"/>
+    <text x="901" y="302" text-anchor="middle" font-family="Inter, sans-serif" font-size="14.5" font-weight="600" fill="#B4181C">
+      todo elo seguinte herda a quebra — não existe rota que conserte a cadeia</text>
+
+    <!-- o veredito -->
+    <rect x="40" y="292" width="470" height="94" rx="10" fill="#0B0F14"/>
+    <text x="62" y="320" font-family="JetBrains Mono, monospace" font-size="13" fill="#7E8B99">GET /ledger/verify</text>
+    <text x="62" y="348" font-family="JetBrains Mono, monospace" font-size="15" fill="#EAF0F6">intact: <tspan fill="#FF6B6B">false</tspan></text>
+    <text x="62" y="372" font-family="JetBrains Mono, monospace" font-size="15" fill="#EAF0F6">broken_at: <tspan fill="#FF6B6B">2</tspan></text>
+  </svg>
+  </figure>
+
+  <div class="three" style="margin-top:22px">
+    <div class="card">
+      <h3>Canonicalização, não formatação</h3>
+      <p>Cada evento canonicaliza a si mesmo por <b>RFC 8785</b> antes de entrar no digest. Sem isso,
+        reordenar chaves de um JSON mudaria o hash sem mudar o fato — e a cadeia acusaria fraude onde
+        houve só serialização.</p>
+    </div>
+    <div class="card">
+      <h3>O jurado quebra o elo, ao vivo</h3>
+      <p>Com <code>AVAL_DEMO_TAMPER=1</code> existe uma rota que adultera um evento. Sem a variável ela
+        <b>não é montada</b> — 404 de verdade, ausente até do OpenAPI. A instância nasce sem a alavanca
+        destrutiva.</p>
+    </div>
+    <div class="card">
+      <h3>Três projeções, uma verdade</h3>
+      <p>Titular, merchant e auditor leem a <b>mesma</b> cadeia. A visão do merchant é montada por
+        <b>lista branca</b> de eventos e de campos: uma lista negra esquece; uma lista branca não pode
+        vazar o campo que ninguém lembrou de esconder.</p>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="tag">AVAL · Arquitetura</span>
+    <span>O case pede uma trilha legível · esta é verificável</span>
+    <span class="pg">07</span>
+  </div>
+</section>
+
+<style>
+.layers { display: grid; gap: 0; margin-top: 23.4px; }
+.lrow { display: grid; gap: 20.8px; }
+.lbox { border: 1.6px solid var(--rule); border-radius: 10px; padding: 16.9px 23.4px; background: var(--paper); }
+.lbox .name { font-family: var(--mono); font-size: 19.5px; font-weight: 500; color: var(--ink); }
+.lbox .desc { font-size: 18.2px; color: var(--ink-3); margin-top: 6.5px; line-height: 1.42; }
+.lbox.core { border-color: var(--authority); border-width: 2.4px; background: var(--authority-bg); }
+.lbox.core .name { color: var(--authority); font-weight: 600; }
+.lbox.core .desc { color: #4E6BAF; }
+.chev { text-align: center; color: #C3CAD3; font-size: 24.7px; line-height: 1; padding: 11.7px 0; }
+</style>
+
+<!-- ====================== 8 · CAMADAS ====================== -->
+<section class="page">
+  <div class="head">
+    <span class="num">07</span>
+    <h2>Camadas do código</h2>
+    <div class="asks">As dependências apontam para dentro. <b>O núcleo não sabe o que foi comprado</b>
+      — e é isso que permite trocar o merchant sem tocar em uma linha de regra.</div>
+  </div>
+
+  <div class="two" style="align-items:start">
+    <div class="layers">
+      <div class="lrow" style="grid-template-columns:1fr 1fr">
+        <div class="lbox">
+          <div class="name">web/ — navegador</div>
+          <div class="desc"><code>wallet/</code> chave nunca exportável · <code>gateways/</code>
+            transporte, não decide · <code>pages/</code> titular · merchant · auditor · trial</div>
+        </div>
+        <div class="lbox">
+          <div class="name">interfaces/telegram/</div>
+          <div class="desc"><code>gateway.py</code> — o único seam com o AVAL. A superfície de bolso do
+            titular não decide nada.</div>
+        </div>
+      </div>
+      <div class="chev">▼</div>
+      <div class="lrow">
+        <div class="lbox">
+          <div class="name">api/ — casca HTTP fina</div>
+          <div class="desc"><code>routes/</code> · <code>routers/</code> · <code>agent_auth</code> ·
+            <code>operator_auth</code> — valida forma e autenticidade, e nada mais</div>
+        </div>
+      </div>
+      <div class="chev">▼</div>
+      <div class="lrow">
+        <div class="lbox core">
+          <div class="name">application/ — AuthorizationCore</div>
+          <div class="desc"><b>O único que decide autoridade.</b> <code>ledger_views</code> serve as
+            três projeções da mesma cadeia.</div>
+        </div>
+      </div>
+      <div class="chev">▼</div>
+      <div class="lrow" style="grid-template-columns:1fr 1fr">
+        <div class="lbox">
+          <div class="name">domain/</div>
+          <div class="desc">entidades e invariantes — sem I/O, sem framework</div>
+        </div>
+        <div class="lbox">
+          <div class="name">infrastructure/ · security/</div>
+          <div class="desc">SQLite WAL · JWS · RFC 9421 · RFC 8785</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h3>O núcleo recebe <code>checkout_id</code> como string opaca</h3>
+        <p>Produto, oferta e liquidação vivem fora dele. Se o núcleo soubesse o que é um voo, trocar o
+          merchant seria mexer em regra de autorização — e a regra mudaria por um motivo que não tem
+          nada a ver com autoridade.</p>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h3>Por que o catálogo é local e assinado</h3>
+        <p>Preço raspado da web <b>não é oferta</b>: sem chave do vendedor não há <code>terms_hash</code>
+          para a autorização vincular nem nada para o <code>/merchant/verify</code> verificar. Integração
+          real é trocar <code>merchant/catalog.py</code> por um cliente HTTP — e o resto do sistema não
+          percebe.</p>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h3>Onde o LLM entra, e onde não entra</h3>
+        <p>O modelo vive em <code>agent/proposer.py</code>, na metade que <b>propõe</b>: recebe um
+          shortlist de ofertas assinadas e escolhe uma. <b>Ele nunca é informado do limite, do teto ou do
+          saldo</b> — então um modelo com prompt injetado não tem número privado para repetir, e tampouco
+          consegue se autocensurar para dentro do mandato, que é o que mantém a recusa demonstrável.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span class="tag">AVAL · Arquitetura</span>
+    <span>Dependências para dentro · o núcleo no centro · nenhuma regra de dinheiro fora dele</span>
+    <span class="pg">08</span>
+  </div>
+</section>
+
+<!-- ====================== 9 · FRONTEIRAS ====================== -->
+<section class="page">
+  <div class="head">
+    <span class="num">08</span>
+    <h2>Fronteiras assumidas</h2>
+    <div class="asks">Escolhas de demonstração, e defensáveis como tal — <b>com a porta de saída já
+      desenhada</b>.</div>
+  </div>
+
+  <div class="three" style="margin-top:20px">
+    <div class="card">
+      <h3>SQLite, com WAL e <code>BEGIN IMMEDIATE</code></h3>
+      <p>Escritor único e transação imediata, porque a corrida que importa — capturar enquanto alguém
+        revoga — precisa de uma ordem, não de otimismo.</p>
+      <p><b>A saída:</b> os repositórios estão atrás de portas. Trocar por Postgres não toca no núcleo.</p>
+    </div>
+    <div class="card">
+      <h3>Custódia de chave em memória, no servidor</h3>
+      <p>Em produção seria HSM ou KMS, e a interface <code>KeyCustodyService</code> já é exatamente a que
+        um HSM implementaria: chaves não cruzam a fronteira do serviço.</p>
+      <p><b>E a que mais importa já saiu:</b> a chave do <b>titular</b> não vive no servidor — ela é do
+        navegador, e nunca foi serializável.</p>
+    </div>
+    <div class="card">
+      <h3>PSP simulado, e controlável de propósito</h3>
+      <p>Um processador que só funciona não demonstra nada. Este liga, cai e recusa sob comando, para que
+        o <b>terceiro estado do pagamento</b> — em dúvida, com o orçamento retido — seja mostrado em vez
+        de narrado. Timeout não é recusa, e não é sucesso.</p>
+    </div>
+    <div class="card">
+      <h3>Sem PAN em lugar nenhum</h3>
+      <p>Não é que o cartão esteja bem guardado: <b>ele nunca existe no sistema.</b> O número é lido num
+        único ponto, tokenizado na borda e descartado; o mandato guarda um token e quatro dígitos, e
+        nenhum dos dois reconstrói um cartão.</p>
+    </div>
+    <div class="card">
+      <h3>Nonces em processo, idempotência no banco</h3>
+      <p>O <code>ReplayGuard</code> é a camada barata na frente; a proteção <b>durável</b> contra
+        cobrança dupla é a idempotência persistida, com janela de retenção e purga explícita.</p>
+      <p>Um nonce é queimado <b>por último</b>, depois de a assinatura verificar — senão um atacante
+        gastaria nonces alheios com lixo assinado por ninguém.</p>
+    </div>
+    <div class="card">
+      <h3>O agente decide por regras, e opcionalmente por modelo</h3>
+      <p>Sem chave de API, um clone limpo roda o case inteiro. Com chave, quem escolhe a oferta é um
+        LLM — e <b>nada mais no sistema muda</b>: sem chave, com timeout, com JSON inválido ou com um
+        SKU inventado, as regras assumem sozinhas.</p>
+      <p>É isso que torna a alucinação <b>demonstrável</b> em vez de narrada, e a demo independente de
+        rede.</p>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:26px;border-left-width:4px">
+    Nenhuma dessas fronteiras está no caminho de confiança. Todas podem ser trocadas sem que uma única
+    regra sobre <b>quem pode gastar quanto</b> mude de lugar — que é a única propriedade que este desenho
+    existe para proteger.
+  </div>
+
+  <div class="foot">
+    <span class="tag">AVAL · Arquitetura</span>
+    <span>NextWave Hackathon 2026 · Desafio 01 — The Buyer Who Isn&rsquo;t Human</span>
+    <span class="pg">09</span>
+  </div>
+</section>
+
+</body>
+</html>

@@ -31,9 +31,19 @@ def _system_path_without_global_python_scripts() -> str:
 
 
 def _run_in_clean_project_environment(arguments: list[str], environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    """Run uv against a disposable environment, excluding globally installed tools."""
+    """Run uv against a disposable environment, excluding globally installed tools.
+
+    `uv` is invoked by absolute path on purpose. The trimmed `PATH` in `environment` is
+    there to keep *globally installed Python scripts* out of the child's reach, and it
+    resolves the executable too — so a bare "uv" is looked up in `/usr/bin:/bin` and is
+    not found on any machine that installed uv anywhere else, which is every machine
+    using Homebrew or uv's own installer. Locating the tool here and restricting the
+    child there keeps the two concerns apart.
+    """
+    executable = shutil.which("uv")
+    assert executable is not None, "guarded by requires_uv"
     return subprocess.run(
-        ["uv", *arguments],
+        [executable, *arguments],
         capture_output=True,
         check=False,
         cwd=PROJECT_ROOT,

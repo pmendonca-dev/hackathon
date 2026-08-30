@@ -75,11 +75,16 @@ def token(core: AuthorizationCore, mandate_id: str, scope: str) -> str:
     )
 
 
-def test_cancelling_the_card_is_accepted_and_leaves_the_mandate_active(client, core) -> None:
-    response = client.post(
-        "/mandates/m1/revocations",
-        json={"signed_revocation": token(core, "m1", "instrument:vt_1")},
+def revoke(client, mandate_id: str, signed: str, *, key: str = "idem-1"):
+    return client.post(
+        f"/mandates/{mandate_id}/revocations",
+        json={"signed_revocation": signed},
+        headers={"Idempotency-Key": key},
     )
+
+
+def test_cancelling_the_card_is_accepted_and_leaves_the_mandate_active(client, core) -> None:
+    response = revoke(client, "m1", token(core, "m1", "instrument:vt_1"))
 
     assert response.status_code == 202, response.text
     assert response.json() == {"mandate_id": "m1", "status": "scope_revoked"}
@@ -87,22 +92,64 @@ def test_cancelling_the_card_is_accepted_and_leaves_the_mandate_active(client, c
 
 
 def test_revoking_the_mandate_still_reports_it_revoked(client, core) -> None:
-    response = client.post(
-        "/mandates/m1/revocations", json={"signed_revocation": token(core, "m1", "mandate")}
-    )
+    response = revoke(client, "m1", token(core, "m1", "mandate"))
 
     assert response.status_code == 202, response.text
     assert response.json() == {"mandate_id": "m1", "status": "revoked"}
     assert core.mandate("m1").status.value == "REVOKED"
 
 
-def test_a_token_aimed_at_another_mandate_is_still_refused(client, core) -> None:
+def test_a_token_aimed_at_another_mandate_is_refused_without_revoking_either(client, core) -> None:
     """The guard that mattered has to survive the fix: authority over m2 is not
-    authority over m1, whatever the URL says."""
-    response = client.post(
-        "/mandates/m1/revocations", json={"signed_revocation": token(core, "m2", "mandate")}
-    )
+    authority over m1, whatever the URL says.
+
+    And the refusal has to come *before* anything is applied. The router used to submit
+    the token first and compare afterwards, which revoked m2 — irreversibly — on the way
+    to telling the caller their request was refused. A caller who is answered 403 must
+    be able to believe nothing happened.
+    """
+    response = revoke(client, "m1", token(core, "m2", "mandate"))
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "revocation_mandate_mismatch"
     assert core.mandate("m1").status.value == "ACTIVE"
+    assert core.mandate("m2").status.value == "ACTIVE"
+
+
+def test_a_replayed_key_returns_the_first_answer_rather_than_revoking_twice(client, core) -> None:
+    """The same key and the same bytes replay; they do not revoke a second time.
+
+    The token is signed once and sent twice on purpose. ECDSA draws a fresh nonce per
+    signature, so re-signing identical claims produces different bytes — and different
+    bytes under one idempotency key are a *mismatch*, which is a refusal rather than a
+    replay. That is correct, and it is why a caller retrying has to resend what it sent.
+    """
+    signed = token(core, "m1", "mandate")
+
+    first = revoke(client, "m1", signed, key="same-key")
+    second = revoke(client, "m1", signed, key="same-key")
+
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    assert second.headers.get("Idempotent-Replayed") == "true"
+    assert second.json() == first.json()
+
+
+def test_the_running_application_serves_exactly_one_revocations_route() -> None:
+    """Two modules once defined this same path and only one of them was mounted, so the
+    suite green-lit a router the server never ran.
+
+    Asserted through `openapi()` rather than `app.routes`: FastAPI keeps included
+    routers as wrapper objects, and the OpenAPI document is the stable flattened view —
+    the same reason `browser_delivery` reads its reserved prefixes from there.
+    """
+    import importlib.util
+
+    from aval.main import create_app
+
+    paths = create_app(database_path=None).openapi()["paths"]
+
+    assert "post" in paths.get("/mandates/{mandate_id}/revocations", {})
+    # The singular twin is gone rather than merely unmounted: a second module defining
+    # this path is what let a test pass against code the server never ran.
+    assert importlib.util.find_spec("aval.api.routers.revocation") is None

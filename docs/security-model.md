@@ -144,8 +144,19 @@ Fronteiras de demonstração, assumidas conscientemente:
 - **Sem TLS.** A demo roda em `localhost`. Em rede real, tudo aqui pressupõe TLS: as
   assinaturas provam integridade e autoria, não confidencialidade.
 - **Token de operador único**, sem rotação nem escopo. Se não houver
-  `AVAL_OPERATOR_TOKEN`, um é sorteado por processo — a instância nasce fechada, não
-  aberta.
+  `AVAL_OPERATOR_TOKEN`, **nenhum token existe** e as superfícies de operador ficam
+  inalcançáveis: `resolve_operator_token()` devolve string vazia, e uma credencial
+  apresentada contra ela nunca confere (`403 operator_token_invalid`). A instância nasce
+  fechada, não aberta — e nada é sorteado nem impresso. Uma credencial gerada e escrita
+  na saída de subida viraria segredo em log de processo, e há dois testes de bootstrap
+  que falham se um token aparecer em `stdout`.
+- **Dois valores de política vivem em constante, não em configuração.**
+  `ESCALATION_WINDOW = 1h` decide por quanto tempo uma escalação pode ser assinada, e
+  `AuthorizationCore(max_live_reservations=3)` é o que produz `reservation_limit` — a
+  recusa que aparece quando um agente segura o orçamento com capturas sem resposta.
+  Nenhum dos dois é lido do ambiente, então mudá-los é mudar código. Ficam registrados
+  aqui porque um número que altera comportamento visível e não está escrito em lugar
+  nenhum é uma surpresa esperando um jurado.
 - **Sem limitação de taxa.** Fora do escopo do case e irrelevante para as invariantes:
   nenhuma quantidade de tentativas produz uma compra que o mandato não permitia.
 - **Leitura por `mandate_id` é uma capability, não uma sessão.** `GET /mandates/{id}`,

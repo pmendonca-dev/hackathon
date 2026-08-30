@@ -12,60 +12,116 @@ falta é o **mandato** — a autorização verificável que uma pessoa dá ao se
 
 ---
 
-## Executando o candidato de entrega
+## Rodando em 2 minutos
 
-O procedimento completo, incluindo ambiente limpo, migration e inspeção do browser,
+Requer Python 3.12 ou 3.13.
+
+O ensaio formal em ambiente limpo — clone do zero, migration e inspeção do browser —
 fica em [clean-environment-rehearsal](docs/verification/clean-environment-rehearsal.md).
-Ele é pré-gate: os comandos devem ser executados no commit candidato antes de qualquer
-declaração de entrega concluída.
+Ele é o gate antes da entrega; o que vem abaixo é o caminho curto para rodar.
 
-Requer Python 3.13, `uv` e Node.js com npm.
-
-```powershell
-uv sync
-uv run alembic upgrade head
-npm --prefix web ci
-npm --prefix web run build
-uv run uvicorn aval.main:app --host 127.0.0.1 --port 8000
-```
-
-Em diretórios sincronizados por OneDrive, use `uv sync --link-mode=copy` se o modo de
-hardlink falhar. O fallback não muda o ambiente resolvido.
-
-### Segurança de configuração
-
-O Browser BFF exige credenciais locais explícitas para merchant, holder, auditor e
-operator, além de `AVAL_OPERATOR_AUTHORITY_SEED` para a revogação de operador. Forneça
-essas variáveis somente pelo ambiente local ou por um cofre local; não as escreva em
-arquivos, comandos compartilhados, logs, telas ou no bundle web.
-
-`AVAL_OPERATOR_TOKEN` protege as superfícies de operador (`/agents`, `/admin/psp`,
-`/reconcile`). Sem ele um token aleatório é sorteado e impresso na subida — a instância
-nasce fechada, não aberta.
-
-### O modelo é opcional
-
-Sem chave, o agente decide por regras e tudo funciona; um clone limpo roda o case
-inteiro sem conta e sem rede. Com chave, quem escolhe a oferta é um LLM — e nada mais
-no sistema muda. São **duas** variáveis e as duas são necessárias: uma diz que o time
-quer o modelo, a outra diz que existe um alcançável. Só uma delas, e as regras assumem.
+O caminho curto usa [uv](https://docs.astral.sh/uv/), que é o que o
+[roteiro da demo](docs/demo-runbook.md) também usa:
 
 ```bash
-uv sync --extra llm
-export AVAL_LLM_AGENT=1                 # liga o modelo na metade que PROPÕE
-export ANTHROPIC_API_KEY=sk-ant-...     # ou ANTHROPIC_AUTH_TOKEN
-export AVAL_LLM_MODEL=claude-opus-5     # opcional
-export AVAL_LLM_TIMEOUT_SECONDS=8       # opcional; estourou, as regras assumem
+git clone https://github.com/pmendonca-dev/hackathon.git
+cd hackathon
+
+uv run pytest -q
+uv run alembic upgrade head
+AVAL_OPERATOR_TOKEN=demo-token uv run uvicorn aval.main:app --port 8099
+```
+
+<details>
+<summary>Sem <code>uv</code>, com venv e pip</summary>
+
+O empacotamento é hatchling, então a instalação editável exige um pip com
+[PEP 660](https://peps.python.org/pep-0660/) — atualize antes ou o `-e .` falha com
+*"editable mode currently requires a setuptools-based build"*.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate                        # Linux/macOS
+# .venv/Scripts/activate                         # Windows
+
+python -m pip install -U pip
+python -m pip install -e . pytest httpx2      # httpx2, não httpx: é o que o
+                                              # TestClient do Starlette 1.6 usa
+
+python -m pytest -q
+python -m alembic upgrade head
+AVAL_OPERATOR_TOKEN=demo-token python -m uvicorn aval.main:app --port 8099
+```
+
+</details>
+
+**O modelo é opcional.** Sem chave, o agente decide por regras e tudo funciona. Com
+chave, quem escolhe a oferta é um LLM — e nada mais no sistema muda. São **duas**
+variáveis: uma diz que o time quer o modelo, a outra que existe um alcançável.
+Defaultar para o outro lado faria um clone limpo depender de uma conta para rodar o case.
+
+```bash
+uv sync --extra llm                      # instala o cliente `anthropic`
+
+export AVAL_LLM_AGENT=1                  # obrigatória: liga o proponente por modelo
+export ANTHROPIC_API_KEY=sk-ant-...      # obrigatória (ou ANTHROPIC_AUTH_TOKEN)
+export AVAL_LLM_MODEL=claude-opus-5      # opcional; este é o padrão
+export AVAL_LLM_TIMEOUT_SECONDS=8        # opcional; estourou, as regras assumem
 ```
 
 O bot do Telegram tem o par equivalente para a *conversa* que monta o mandato —
 `AVAL_TELEGRAM_LLM=1` mais `OPENAI_API_KEY`. Tudo está em [`.env.example`](.env.example),
 que é a lista completa e a que vale.
 
-O cookie `aval_ui_session` é HttpOnly e `SameSite=Strict`; `Secure` continua ativo
-exceto no ensaio HTTP local explícito com `AVAL_UI_LOCAL_HTTP=true`. As APIs de agente
-continuam exigindo RFC 9421. O browser nunca recebe JWS, AuthorizationProof, PAN, token
-de vault ou chave privada.
+A **vigília** — a ordem permanente que compra sozinha quando o preço cai — só é
+avaliada quando alguém pede um tick. Por padrão quem pede é o bot do Telegram, no laço
+de polling dele. Para que o servidor faça isso por conta própria, sem bot:
+
+```bash
+export AVAL_WATCH_TICK_SECONDS=30   # desligado quando ausente
+```
+
+A vigília não ganha autoridade nenhuma com isso: disparar significa chamar o mesmo
+`/authorize` e `/capture` de sempre, então uma ordem permanente contra um mandato
+revogado é recusada igualzinho. A autonomia está em *quando* o agente age, nunca no
+*que* ele pode fazer.
+
+`AVAL_OPERATOR_TOKEN` protege as superfícies de operador (`/agents`, `/admin/psp`,
+`/reconcile`). **Sem ela essas superfícies ficam desligadas** — nenhum token apresentado
+confere, e toda chamada é recusada com `403 operator_token_invalid`. A instância nasce
+fechada, não aberta, e nunca sorteia uma credencial para você.
+
+
+Com o servidor de pé, em outro terminal:
+
+```bash
+AVAL_OPERATOR_TOKEN=demo-token uv run python scripts/smoke_demo.py http://127.0.0.1:8099
+```
+
+O smoke percorre o case inteiro — mandato, compra, escalação com aprovação assinada,
+teto, revogação ao vivo, impostor, as três visões e uma disputa — e falha alto no
+primeiro passo que não se comportar. É o ensaio do *trial by fire*.
+
+O banco fica em `var/aval.db`. Para uma instância descartável:
+`AVAL_DATABASE_PATH=:memory:`.
+
+### O navegador
+
+```bash
+cd web && npm install
+VITE_AVAL_API_BASE_URL=http://127.0.0.1:8099 VITE_AVAL_OPERATOR_TOKEN=demo-token npm run dev
+```
+
+Quatro visões — titular, merchant, auditor e o console trial-by-fire — todas contra o
+runtime de verdade. Não existe fixture por trás: se o servidor não responde, a tela diz
+que não respondeu, porque uma página que se preenche com dados inventados quando o
+runtime cai é indistinguível de uma que funciona.
+
+Para conferir a jornada inteira sem clicar, com o servidor de pé:
+
+```bash
+cd web && AVAL_OPERATOR_TOKEN=demo-token   node --experimental-strip-types tests/live-browser-journey.mjs http://127.0.0.1:8099
+```
 
 `x402` não faz parte desta entrega. Não adicione Web3, cadeia ou facilitator ao caminho
 de demonstração.
@@ -140,9 +196,11 @@ curl "localhost:8099/ledger/verify?mandate_id=mandate_..."
 `AuthorizationCore.evaluate()` avalia em ordem fixa, e a ordem é a regra:
 
 ```
-mandato existe → não revogado → cartão não cancelado → não expirado → merchant no escopo
-              → categoria no escopo → cartão é o que o mandato nomeia → moeda e escala
-              conferem → valor > 0 → abaixo do TETO → dentro da FREQUÊNCIA → dentro do ORÇAMENTO
+mandato existe → revogação legível → não revogado → merchant não revogado
+              → cartão não cancelado → orçamento não zerado → não expirado
+              → merchant no escopo → categoria no escopo → é o cartão do mandato
+              → moeda e escala conferem → valor > 0 → abaixo do TETO
+              → há vaga de reserva → dentro da frequência → dentro do ORÇAMENTO
 ```
 
 Autoridade antes de dinheiro. Uma revogação não pode ser contornada por uma compra
@@ -499,7 +557,9 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
 
 ## Referências
 
-- [Diagrama de arquitetura](docs/architecture.md) — a tese em cinco diagramas
+- [Arquitetura](docs/architecture.pdf) — a tese em seis diagramas, 9 páginas
+  (a página que gera o PDF é [`docs/architecture.html`](docs/architecture.html); a
+  versão para ler no GitHub é [`docs/architecture.md`](docs/architecture.md))
 - [Modelo de segurança](docs/security-model.md) — quem pode o quê, e como é provado
 - [Roteiro da demo](docs/demo-runbook.md) — como subir tudo e o que mostrar, na ordem
 - [Regras, entregáveis e avaliação](docs/hackathon-rules.md)

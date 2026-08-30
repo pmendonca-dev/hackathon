@@ -34,4 +34,8 @@ packages = ["src/aval"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# The repository root travels with `src` because eight integration modules import their
+# shared harness as `tests.integration.api.conftest`. Without it pytest puts only the
+# module's own directory on the path — `tests` is not a package — and those eight fail
+# to collect, which aborts the whole run before a single test executes.
+pythonpath = ["src", "."]

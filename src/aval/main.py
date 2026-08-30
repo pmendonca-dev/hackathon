@@ -27,9 +27,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import asyncio
+import contextlib
+
 from fastapi import FastAPI
 
 from aval.api.browser_delivery import configured_web_dist_path, mount_browser_build
+from aval.agent.scheduler import configured_tick_interval, run_watch_scheduler
 from aval.adapters.ap2.mandates import ClosedCheckoutMandateVerifier
 from aval.adapters.ap2.merchant_authorization import (
     MerchantAuthorizationSigner,
@@ -41,7 +45,7 @@ from aval.api.middleware.raw_body import RawBodyMiddleware
 from aval.api.routers.audit import create_audit_router
 from aval.api.routers.delegate_payment import create_delegate_payment_router
 from aval.api.routers.payment_capture import create_payment_capture_router
-from aval.api.routers.revocation import create_revocation_router
+from aval.api.routers.revocations import create_revocation_router
 from aval.api.routers.ui_sessions import create_ui_session_router, ui_local_http_enabled
 from aval.api.routers.ui_workspace import create_ui_workspace_router
 from aval.api.routers.ucp_checkout import create_ucp_checkout_router
@@ -95,6 +99,15 @@ SEED_IDENTITIES = (
     ("holder_01", "https://holder.aval.local/.well-known/ucp", "holder-key"),
     ("auditor_01", "https://auditor.aval.local/.well-known/ucp", "auditor-key"),
 )
+
+# Who reads a mandate's trail by role rather than by having taken part in it: the holder
+# it belongs to, and the auditor engaged to examine it. Every other identity — every
+# agent — is answered from the trail itself, which names the agent behind each event.
+#
+# This lives in the composition root because it is a fact about *this deployment's*
+# fixtures, not a rule. Naming these ids inside `PaymentRuntime` made a demo fixture into
+# an authorization decision, and refused any agent or merchant the list had not foreseen.
+UNRESTRICTED_AUDIT_READERS = frozenset({"holder_01", "auditor_01"})
 
 SEED_MANDATE_ID = "mandate_01"
 SEED_INSTRUMENT_TOKEN = "vt_seed_protocol_fixture"
@@ -242,6 +255,7 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
             holder_jwk=custody.public_jwk("holder-key"),
             clock=clock,
         ),
+        unrestricted_audit_readers=UNRESTRICTED_AUDIT_READERS,
     )
     # One verifier for every protocol door. Payment and audit are agent traffic too, so
     # they answer the same question the checkout does: is the caller who it claims to be.
@@ -320,6 +334,36 @@ def _mount_browser_delivery_lane(app: FastAPI, web_dist_path: Path | None) -> No
     mount_browser_build(app, build_directory=web_dist_path or configured_web_dist_path())
 
 
+def _watch_scheduler_lifespan(runtime: AvalRuntime):
+    """Run standing orders on a timer, when the deployment asked for one.
+
+    Off unless `AVAL_WATCH_TICK_SECONDS` names an interval — returning None then, so the
+    app is built with no lifespan at all and nothing about its behaviour changes. Without
+    it a watch fires only when something calls `POST /agent/watches/tick`, which until
+    this existed meant only while the Telegram bot happened to be running.
+
+    The loop carries no authority. It reaches the core through the same `/authorize` and
+    `/capture` a person typing would, so a standing order against a revoked mandate is
+    refused exactly like a typed purchase.
+    """
+    interval = configured_tick_interval()
+    if interval is None:
+        return None
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
+        task = asyncio.create_task(run_watch_scheduler(runtime, interval_seconds=interval))
+        app.state.watch_scheduler = task
+        try:
+            yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    return lifespan
+
+
 def create_app(
     *,
     database_path: Path | None = None,
@@ -346,7 +390,7 @@ def create_app(
         custody=custody,
         extra_key_ids=PROTOCOL_KEY_IDS,
     )
-    app = create_authorization_app(runtime)
+    app = create_authorization_app(runtime, lifespan=_watch_scheduler_lifespan(runtime))
     _seed_protocol_fixtures(runtime, runtime.clock.now)
     _mount_protocol_lane(app, runtime, runtime.clock.now)
     _mount_browser_session_lane(app, runtime, runtime.clock.now)

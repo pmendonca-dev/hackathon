@@ -405,3 +405,31 @@ Introduce a separate service or frontend stack before the authorization core exi
 **What we chose:** Use Python 3.13 with FastAPI, SQLAlchemy, Alembic, and SQLite WAL, with AVAL-owned domain and persistence code.
 
 **Why:** The historical AP2 review identified Python as the compatible ecosystem while explicitly excluding its sample applications. SQLite WAL with `BEGIN IMMEDIATE` and a single writer is the documented demo boundary; it keeps durable authorization state local and leaves repositories isolatable for a later Postgres migration.
+
+## Which browser the delivery ships
+
+**Decision:** Which of the two front-ends on the repository is the demonstrated one
+
+**Options considered (one per line):**
+
+Ship the browser-safe BFF UI, where the server holds every credential and signs
+Ship the holder-wallet UI, where the browser signs with a non-extractable P-256 key
+Ship both and let the presenter pick at the podium
+
+**What we chose:** The holder-wallet UI is the delivered demonstration surface; the BFF session lane stays mounted behind `/ui-api/v1/` but is not on the demo path.
+
+**Why:** The BFF is the stronger production boundary — the browser never receives signing material — but it removed the only surfaces that prove the challenge: the merged `main` browser could log in, read projections and revoke with a server-held operator key, and nothing else. Creating a mandate, buying, approving an escalation and changing a limit live had no browser path, and the judges operate the system themselves. Shipping both would double the state a presenter has to keep straight during a seven-minute window. The holder-wallet UI also keeps the README's tenth decision true: the key that changes spend authority belongs to the holder, and a server that could sign in their place would erase the holder/operator separation exactly where it is being demonstrated.
+
+## Generating the architecture upload from its source
+
+**Decision:** How the PDF/PNG architecture deliverable is produced
+
+**Options considered (one per line):**
+
+Export the diagrams by hand into a drawing tool before submission
+Paste each fenced block into a web renderer and print the result
+Render the committed Markdown to PDF with a script in the repository
+
+**What we chose:** `scripts/export_architecture.py` renders every Mermaid block with mermaid-cli and prints the assembled page through the Chrome mermaid-cli already vendors.
+
+**Why:** A hand-made export is correct exactly once. The submitted picture and the versioned document drift on the next edit, and the drift is invisible because nobody re-opens the PDF. Generating from the source makes the upload reproducible in one command, and keeping it vector holds it at 0.34 MB against a 25 MB limit while staying readable when a judge zooms in.
