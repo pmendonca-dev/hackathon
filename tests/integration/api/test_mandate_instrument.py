@@ -214,3 +214,22 @@ def test_an_approved_escalation_completes_on_a_mandate_that_names_a_card(harness
 
     assert decided.status_code == 200, decided.text
     assert decided.json()["capture"]["approved"] is True, decided.text
+
+
+def test_a_cancelled_card_stops_reading_as_the_way_this_mandate_pays(harness):
+    """The screen and the refusal have to agree.
+
+    Cancelling the card leaves `Mandate.instrument` where it is — the revocation is a
+    separate fact, and rewriting the mandate would erase what was authorized. But a
+    view that keeps advertising the card while every purchase is refused for that same
+    card is a contradiction a judge reads as a bug.
+    """
+    mandate_id, scope = with_card(harness)
+    assert harness.client.get(f"/mandates/{mandate_id}").json()["instrument_revoked"] is False
+
+    cancel_card(harness, mandate_id, scope)
+
+    view = harness.client.get(f"/mandates/{mandate_id}").json()
+    assert view["instrument_revoked"] is True
+    assert view["instrument_label"] == "•••• 4242", "o titular ainda precisa saber qual cartão era"
+    assert view["status"] == "ACTIVE"

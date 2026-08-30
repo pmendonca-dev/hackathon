@@ -55,6 +55,7 @@ class MandateView:
     revocation_epoch: int
     # The card the mandate names, as four digits. The token behind it is never served.
     instrument_label: str | None = None
+    instrument_revoked: bool = False
 
 
 @dataclass(frozen=True)
@@ -418,6 +419,7 @@ def _mandate(payload: Mapping[str, Any]) -> MandateView:
         policy_version=int(payload.get("policy_version", 1)),
         revocation_epoch=int(payload.get("revocation_epoch", 0)),
         instrument_label=payload.get("instrument_label"),
+        instrument_revoked=bool(payload.get("instrument_revoked", False)),
     )
 
 

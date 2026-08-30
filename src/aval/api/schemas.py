@@ -195,6 +195,9 @@ class MandateView(BaseModel):
     # The card the mandate names, as four digits. The token is never served: a client
     # that could read it could present it, and only the agent needs to.
     instrument_label: str | None = None
+    # Whether that card has been cancelled. The label stays — the holder still needs to
+    # know which card it was — but nothing may present it as the live way to pay.
+    instrument_revoked: bool = False
 
 
 class MandateListView(BaseModel):
