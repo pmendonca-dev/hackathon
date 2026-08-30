@@ -8,6 +8,7 @@ import urllib.error
 
 import pytest
 
+from aval.agent.intent import fold
 from aval.interfaces.telegram import views
 from aval.interfaces.telegram.bot import Bot, TelegramApi, _display_name
 from aval.interfaces.telegram.config import BotConfig, ConfigError
@@ -210,6 +211,17 @@ class FakeAval:
                 "human_summary": "Mandato revogado.",
                 "offer": _offer("Voo Córdoba", 13000, "travel"),
                 "escalation_id": None,
+            }
+        if not any(
+            word in fold(body["instruction"])
+            for word in ("cordoba", "santiago", "executiva", "hotel", "buenos")
+        ):
+            # The real agent asks when nothing in the sentence names an offer. The
+            # fake keeps that shape so the screen under test is the real one.
+            return 200, {
+                "outcome": "needs_clarification",
+                "reason_code": "instruction_ambiguous",
+                "human_summary": "Para onde? Sem um destino eu estaria escolhendo por voce.",
             }
         if "executiva" in body["instruction"]:
             return 200, {
@@ -834,3 +846,19 @@ def test_a_chat_without_the_card_scope_refuses_rather_than_guessing_one(world) -
 
     assert "escopo do cartão" in api.last_text
     assert len(aval.verified_claims) == signed_before, "nothing was signed"
+
+
+def test_an_incomplete_request_is_answered_with_a_question_and_buttons(world) -> None:
+    """The agent stops and asks, and the answers are the ordinary wish buttons — so
+    answering needs no memory of what was asked."""
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(message("/comprar uma passagem"))
+
+    screen = api.sent[-1][1]
+    assert "Para onde" in screen.text
+    assert screen.buttons, "a question with no answers is a dead end"
+    assert all(
+        button[1].startswith(f"{views.CALLBACK_BUY}:") for row in screen.buttons for button in row
+    )

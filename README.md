@@ -371,6 +371,11 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
   **O modelo nunca é informado do limite, do teto ou do saldo**, então um modelo com
   prompt injetado não tem número privado para repetir — e tampouco consegue se
   autocensurar para dentro do mandato, que é o que mantém a recusa demonstrável.
+- **Pedido incompleto vira pergunta, não compra.** *"compre uma passagem"* não nomeia
+  nada à venda, e comprar o voo mais barato do catálogo seria aprovar em silêncio algo
+  que ninguém pediu. O agente tem uma terceira saída além de propor e não achar: ele
+  pergunta, e a resposta é um toque nos mesmos botões de sempre. **Ambiguidade pergunta,
+  mandato recusa** — dois freios, em duas coisas diferentes.
 - **O mandato nomeia o cartão, e o cartão pode ser cancelado sozinho.** O número é
   lido uma vez na criação do mandato, tokenizado na borda e esquecido; o mandato guarda
   um token e quatro dígitos. O agente apresenta o token e nunca viu o cartão, e o núcleo

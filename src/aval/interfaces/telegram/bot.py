@@ -257,6 +257,15 @@ class Bot:
             return (views.plain("Diga o que comprar: /comprar um voo pra Córdoba"),)
         assert identity.mandate_id is not None
         result = self._gateway.purchase(identity.mandate_id, instruction)
+        if result.outcome == "needs_clarification":
+            # One screen, not two: the question and the answers belong together.
+            return (
+                views.clarification(
+                    result,
+                    self._gateway.catalogue(),
+                    mandate=self._gateway.mandate(identity.mandate_id),
+                ),
+            )
         screens: list[View] = [views.purchase_result(result)]
         if result.escalation_id:
             escalation = self._gateway.escalation(result.escalation_id)

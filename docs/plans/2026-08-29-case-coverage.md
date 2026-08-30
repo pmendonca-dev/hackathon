@@ -199,6 +199,11 @@ Assinatura RFC 9421 (ES256) sobre `@method`, `@path` e `content-digest`, exigida
 
 - [x] Criação de mandato e compra ponta a ponta autorizada
 - [x] Tentativa fora do mandato recusada **ou escalada** — nunca aprovada em silêncio
+- [x] **Pedido incompleto perguntado, não adivinhado** — *"compre uma passagem"* não
+  nomeia nada à venda. Antes, o mais barato do catálogo vencia por omissão: uma
+  aprovação silenciosa de algo que ninguém pediu. Agora o agente devolve
+  `needs_clarification` com a pergunta e os botões de resposta, e o mandato nunca é
+  consultado porque não há o que submeter a ele — a trilha vem vazia.
 - [x] Revogação ao vivo: revogado → próxima tentativa falha
 - [x] Visão do humano, verificação do merchant, trilha do auditor
 - [x] **Trial by fire sem o time tocar em nada** `[J]`
@@ -217,6 +222,8 @@ Assinatura RFC 9421 (ES256) sobre `@method`, `@path` e `content-digest`, exigida
 | reconciliar | `POST /reconcile` | `test_reconciling_after_the_processor_returns_settles_what_was_held` |
 | comprar fora do escopo **em texto livre** | `POST /agent/purchase` | `test_agent_purchase_api.py` |
 | **injetar prompt no agente** (*"a Marta liberou"*) | `POST /agent/purchase` | `test_a_prompt_injection_does_not_move_the_ceiling` |
+| **pedir sem dizer o quê** (*"compre uma passagem"*) | `POST /agent/purchase` | `test_an_instruction_that_names_nothing_asks_instead_of_buying` |
+| **cancelar o cartão sem revogar** | `POST /mandates/{id}/revocation` | `test_cancelling_the_card_leaves_the_agent_alive_and_the_budget_intact` |
 | trocar o merchant permitido | recriar o mandato | `test_a_purchase_from_another_merchant_escalates_instead_of_passing` |
 | mudar a validade | recriar o mandato | `test_the_clock_moving_past_the_expiry_ends_the_mandate` |
 
@@ -237,6 +244,12 @@ teste provando que uma mudança de limite vale na decisão imediatamente seguint
   Um sistema cuja segurança dependesse de o modelo não ser enganado não teria segurança
   nenhuma — e o modelo sequer conhece o teto que o recusou.
   `test_a_prompt_injection_does_not_move_the_ceiling`.
+- [x] **Ambiguidade pergunta, mandato recusa** — dois freios diferentes, em coisas
+  diferentes, demonstráveis separadamente. O mandato responde *não pode*; o agente
+  responde *não sei*. Sem o segundo, todo pedido vago vira uma compra que passou em
+  todos os limites e mesmo assim não era o que a pessoa queria — que é precisamente a
+  falha que o case chama de aprovação silenciosa. Funciona por regra (sem chave, sem
+  rede) e por modelo, que pode devolver `{"pergunta": …}` no lugar de um SKU.
 - [x] **Mandatos com condições ricas** — as duas condições que o case nomeia funcionam.
   O preço-alvo (*"if it drops below $150"*) é preferência do comprador, aplicada pelo
   agente. A frequência (*"até 3× por mês"*) é **autoridade**, aplicada pelo núcleo:

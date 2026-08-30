@@ -207,6 +207,11 @@ def purchase_result(result: PurchaseView) -> View:
     elif result.outcome == "awaiting_human":
         head = f"🟡 <b>Precisa de você.</b>\n{what}{price}"
         tail = "\nO agente parou aqui. Decida abaixo."
+    elif result.outcome == "needs_clarification":
+        # Answered by the catalogue screen, which carries the buttons. This branch
+        # exists so a caller that renders only the result still says the right thing.
+        head = "\U0001f914 <b>Preciso saber mais.</b>"
+        tail = ""
     elif result.outcome == "no_offer":
         head = "🔍 <b>Nada no catálogo atende.</b>"
         tail = "\nVeja /catalogo e tente com outras palavras."
@@ -400,6 +405,36 @@ def catalogue(items: Sequence[OfferView], *, mandate: MandateView | None = None)
         "",
         "Também aceita texto livre: <code>/comprar um voo barato pra Córdoba</code>",
     ]
+    return View("\n".join(lines), tuple(rows))
+
+
+def clarification(
+    result: PurchaseView,
+    items: Sequence[OfferView],
+    *,
+    mandate: MandateView | None = None,
+) -> View:
+    """The agent asking, with the answers as buttons.
+
+    The buttons are the ordinary wish buttons, so answering the question *is* a normal
+    purchase and the bot needs no memory of what was asked. Free text still works, and
+    the question is the agent's own words — the bot does not paraphrase it.
+    """
+    lines = [
+        "\U0001f914 <b>" + escape(result.human_summary) + "</b>",
+        "",
+        "<i>O agente parou aqui em vez de escolher por você.</i>",
+        "",
+    ]
+    rows: list[Row] = []
+    for wish in wishes(items):
+        if mandate is not None and wish.category not in mandate.categories:
+            continue
+        lines.append(f"{wish.label} — a partir de <b>{format_money(wish.cheapest)}</b>")
+        rows.append(
+            ((f"{wish.label} · {format_money(wish.cheapest)}", f"{CALLBACK_BUY}:{wish.slug}"),)
+        )
+    lines += ["", "Ou responda em texto: <code>/comprar um voo pra Córdoba</code>"]
     return View("\n".join(lines), tuple(rows))
 
 
