@@ -21,7 +21,7 @@ LEGACY_SCHEMA_REPAIR = "0013_repair_legacy_mandate_frequency"
 #: Where `upgrade head` lands today. Kept apart from the repair revision on purpose:
 #: these assertions are about reaching the end of the graph, and the repair stopped
 #: being the end of it when the creation-proof branch was merged back in.
-CURRENT_HEAD = "0015_merge_creation_proof_and_legacy_repair"
+CURRENT_HEAD = "0016_edge_events"
 
 
 def _project_root() -> Path:

@@ -22,6 +22,7 @@ from uuid import uuid4
 
 from aval.agent.proposer import ShoppingProposer
 from aval.agent.purchasing_agent import AgentRun, PurchasingAgent
+from aval.application.services.edge_events import append_watch_closed
 from aval.discovery.models import decode_shopping_request
 from aval.domain.entities import Watch
 from aval.domain.enums import WatchStatus
@@ -138,9 +139,14 @@ class WatchService:
                 status=WatchStatus.FIRED,
                 outcome=run.reason_code,
                 settlement_reference=run.settlement_reference,
+                run=run,
             )
             outcomes.append(WatchOutcome(closed, run))
         return outcomes
+
+    def _principal_of(self, mandate_id: str) -> str:
+        snapshot = self._runtime.core.snapshot(mandate_id)
+        return "" if snapshot is None else snapshot.mandate.principal.id
 
     def _close(
         self,
@@ -149,22 +155,37 @@ class WatchService:
         status: WatchStatus,
         outcome: str | None,
         settlement_reference: str | None = None,
+        run: AgentRun | None = None,
     ) -> Watch:
         closed_at = self._now()
-        run_in_write_transaction(
-            self._runtime.engine,
-            lambda connection: SqliteWatchRepository(connection).close(
-                watch.id,
-                status=status,
-                outcome=outcome,
-                settlement_reference=settlement_reference,
-                closed_at=closed_at,
-            ),
-        )
-        return replace(
+        closed = replace(
             watch,
             status=status,
             outcome=outcome,
             settlement_reference=settlement_reference,
             closed_at=closed_at,
         )
+        principal_id = self._principal_of(watch.mandate_id)
+
+        def write(connection) -> None:
+            SqliteWatchRepository(connection).close(
+                watch.id,
+                status=status,
+                outcome=outcome,
+                settlement_reference=settlement_reference,
+                closed_at=closed_at,
+            )
+            # Same transaction as the close, deliberately. A second write could fail
+            # after the watch had already closed, and the result would be a purchase
+            # that happened and that nobody is ever told about — which is the one
+            # failure this outbox exists to remove.
+            append_watch_closed(
+                connection,
+                watch=closed,
+                run=run,
+                principal_id=principal_id,
+                created_at=closed_at,
+            )
+
+        run_in_write_transaction(self._runtime.engine, write)
+        return closed

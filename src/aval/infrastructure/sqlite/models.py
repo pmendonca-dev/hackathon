@@ -343,6 +343,34 @@ payment_runtime_captures = Table(
     Column("payment_receipt", Text, nullable=False),
 )
 
+
+edge_events = Table(
+    # What Computer B has to tell Computer A, kept until A says it arrived.
+    #
+    # B closes a watch with nobody watching; A is the only half that can reach Telegram.
+    # A direct call between them would lose the result whenever the network is down at
+    # the wrong second — and the thing being lost is "your money moved". So B writes the
+    # row in the same transaction that closes the watch, and A marks it delivered only
+    # after Telegram has taken the message.
+    #
+    # `id` is an integer because it is a cursor before it is a name: A polls with
+    # `after=<id>`, and the order has to be the order things happened.
+    #
+    # `payload` crosses to the computer that holds the OpenAI key and ends up in a chat
+    # message. It carries a principal, an outcome, a title, a link and an amount — never
+    # a payment token, never a signature.
+    "edge_events",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("principal_id", String, nullable=False),
+    Column("event_type", String, nullable=False),
+    Column("payload", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("delivered_at", DateTime(timezone=True)),
+    Index("ix_edge_events_undelivered", "delivered_at", "id"),
+)
+
+
 CORE_TABLE_NAMES = (
     "mandates",
     "revocation_authorities",
@@ -362,4 +390,5 @@ CORE_TABLE_NAMES = (
     "escalations",
     "agent_watches",
     "payment_runtime_captures",
+    "edge_events",
 )
