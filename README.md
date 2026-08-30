@@ -25,7 +25,7 @@ python -m venv .venv
 # source .venv/bin/activate && pip install -e .  # Linux/macOS
 
 .venv/Scripts/python.exe -m pip install pytest httpx uvicorn
-.venv/Scripts/python.exe -m pytest -q             # 421 testes
+.venv/Scripts/python.exe -m pytest -q             # 425 testes
 
 AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe -m uvicorn aval.main:app --port 8099
 ```
