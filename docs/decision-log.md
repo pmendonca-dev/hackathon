@@ -650,3 +650,31 @@ Add a same-origin session-authenticated BFF while preserving RFC 9421 for agent 
 **What we chose:** Add a same-origin BFF with server-side role sessions and CSRF protection for browser views and operator commands; retain RFC 9421 and raw-body verification for agent-facing APIs.
 
 **Why:** Browser assets cannot safely hold runtime signing keys, while an unsigned cookie does not satisfy the agent identity contract. A role-scoped BFF keeps private signing material in `KeyCustodyService`, applies the existing Core services without creating another policy authority, and enables an authenticated operator revocation without asking the browser to handle a JWS.
+
+## Browser CSRF material boundary
+
+**Decision:** Scope of the BFF CSRF value in the same-origin UI
+
+**Options considered (one per line):**
+
+Remove the published CSRF header and replace it with a different browser protocol
+Treat the CSRF value as a browser credential and persist it in a cookie or storage
+Keep the published one-time CSRF value only in transient browser memory for the required request header
+
+**What we chose:** Preserve the published `csrf_token` login response and `X-AVAL-CSRF` request header. The value is an anti-CSRF nonce, not an authority credential, and may exist only in the login response and transient browser memory; it must not enter static assets, URLs, cookies, storage, logs, exceptions, or projections.
+
+**Why:** The BFF contract explicitly requires the browser to send this value while keeping the session bearer cookie HttpOnly. Removing it would change the published API and break the UI handoff. Restricting its lifetime and locations retains the intended CSRF boundary without treating it as payment or signing authority.
+
+## Same-origin browser build delivery
+
+**Decision:** How the FastAPI runtime serves the browser production build
+
+**Options considered (one per line):**
+
+Keep Vite Preview as a second origin and configure CORS
+Add a reverse proxy that forwards browser requests to Vite Preview
+Serve the already-built `web/dist` bytes from FastAPI after all API routers are mounted
+
+**What we chose:** FastAPI serves `web/dist` directly. It reserves every documented API root before a final GET/HEAD-only SPA fallback, returns API JSON for unknown API paths, and returns `503 ui_build_unavailable` when the build directory or `index.html` is absent.
+
+**Why:** A direct static response keeps the SPA and BFF on one scheme, host, and port without inventing identity or relying on CORS. Reserving API namespaces prevents an unknown BFF or agent path from receiving `index.html`, while the explicit unavailable response avoids a simulated UI when a production build has not been made.

@@ -29,6 +29,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
+from aval.api.browser_delivery import configured_web_dist_path, mount_browser_build
 from aval.adapters.ap2.mandates import ClosedCheckoutMandateVerifier
 from aval.adapters.ap2.merchant_authorization import (
     MerchantAuthorizationSigner,
@@ -306,11 +307,17 @@ def _mount_browser_session_lane(app: FastAPI, runtime: AvalRuntime, clock: Calla
     )
 
 
+def _mount_browser_delivery_lane(app: FastAPI, web_dist_path: Path | None) -> None:
+    """Serve the built SPA last, after every BFF and agent route owns its path."""
+    mount_browser_build(app, build_directory=web_dist_path or configured_web_dist_path())
+
+
 def create_app(
     *,
     database_path: Path | None = None,
     clock: Callable[[], datetime] = _now,
     custody: KeyCustodyService | None = None,
+    web_dist_path: Path | None = None,
 ) -> FastAPI:
     """Build the whole system: authorization surfaces plus protocol ingress.
 
@@ -335,6 +342,7 @@ def create_app(
     _seed_protocol_fixtures(runtime, runtime.clock.now)
     _mount_protocol_lane(app, runtime, runtime.clock.now)
     _mount_browser_session_lane(app, runtime, runtime.clock.now)
+    _mount_browser_delivery_lane(app, web_dist_path)
     return app
 
 
