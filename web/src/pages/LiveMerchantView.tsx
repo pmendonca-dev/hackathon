@@ -5,7 +5,7 @@ import type {
   PaymentReceiptsProjection,
 } from '../contracts/paymentRuntimeApi.ts';
 import { Badge, EmptyNotice, Field, Panel } from '../components/ui.tsx';
-import { shortHash } from '../utils/format.ts';
+import { safeDisplayText } from '../utils/safePresentation.ts';
 
 export function LiveMerchantView({
   capture,
@@ -22,7 +22,7 @@ export function LiveMerchantView({
           <h1>Liquidação e recibos — apenas o necessário.</h1>
           <p>Nenhuma credencial de cartão, identidade do titular, orçamento privado ou prova interna faz parte desta visão.</p>
         </div>
-        <Badge tone={capture?.status === 'settled' ? 'allow' : 'hold'}>{capture?.status ?? 'sem captura'}</Badge>
+        <Badge tone={capture?.status === 'settled' ? 'allow' : 'hold'}>{capture ? safeDisplayText(capture.status) : 'sem captura'}</Badge>
       </header>
 
       {!capture ? (
@@ -32,20 +32,20 @@ export function LiveMerchantView({
         />
       ) : (
         <section className="grid gap-4 lg:grid-cols-2">
-          <Panel eyebrow="Payment capture" title={capture.capture_id} action={<Store size={20} className="text-allow" aria-hidden="true" />}>
+          <Panel eyebrow="Payment capture" title={safeDisplayText(capture.capture_id)} action={<Store size={20} className="text-allow" aria-hidden="true" />}>
             <dl>
-              <Field label="Status">{capture.status}</Field>
-              <Field label="Reserva">{capture.reservation_id}</Field>
-              <Field label="Referência PSP">{capture.settlement_reference}</Field>
+              <Field label="Status">{safeDisplayText(capture.status)}</Field>
+              <Field label="Reserva">{safeDisplayText(capture.reservation_id)}</Field>
+              <Field label="Referência PSP">{safeDisplayText(capture.settlement_reference)}</Field>
             </dl>
           </Panel>
 
           <Panel eyebrow="AP2 receipts" title={receipts ? 'Recibos disponíveis' : 'Recibos indisponíveis'} action={<FileCheck2 size={20} className="text-verify" aria-hidden="true" />}>
             {receipts ? (
               <dl>
-                <Field label="Captura">{receipts.capture_id}</Field>
-                <Field label="Checkout receipt">{shortHash(receipts.checkout_receipt)}</Field>
-                <Field label="Payment receipt">{shortHash(receipts.payment_receipt)}</Field>
+                <Field label="Captura">{safeDisplayText(receipts.capture_id)}</Field>
+                <Field label="Checkout receipt">verificado pelo runtime</Field>
+                <Field label="Payment receipt">verificado pelo runtime</Field>
               </dl>
             ) : (
               <p className="text-[13px] leading-relaxed text-fg-mute">O runtime ainda não publicou recibos para esta captura.</p>

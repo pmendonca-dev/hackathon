@@ -13,11 +13,18 @@ import type {
   TrialCommandReceipt,
 } from '../contracts/avalGateway.ts';
 import { createAvalGateway } from '../gateways/createAvalGateway.ts';
+import { AvalHttpError } from '../gateways/httpAvalGateway.ts';
+import {
+  presentUnavailable,
+  type AvalErrorPresentation,
+} from '../errors/avalError.ts';
 import { AvalContext, type AvalContextValue, type View } from './AvalContext.ts';
 const DEFAULT_AVAL_GATEWAY = createAvalGateway(import.meta.env);
 
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
+function safeFailure(error: unknown, fallback: string): AvalErrorPresentation {
+  return error instanceof AvalHttpError
+    ? error.presentation
+    : presentUnavailable(fallback);
 }
 
 export function AvalProvider({
@@ -29,7 +36,7 @@ export function AvalProvider({
 }) {
   const [snapshot, setSnapshot] = useState<AvalSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AvalErrorPresentation | null>(null);
   const [view, setView] = useState<View>('human');
   const [lastCommandReceipt, setLastCommandReceipt] = useState<TrialCommandReceipt | null>(null);
 
@@ -39,7 +46,7 @@ export function AvalProvider({
     try {
       setSnapshot(await gateway.loadWorkspace());
     } catch (error) {
-      setError(errorMessage(error, 'Não foi possível carregar o snapshot. Verifique a boundary configurada.'));
+      setError(safeFailure(error, 'Não foi possível carregar a projeção canônica.'));
     } finally {
       setLoading(false);
     }
@@ -54,7 +61,7 @@ export function AvalProvider({
         if (active) setSnapshot(loadedSnapshot);
       } catch (error) {
         if (active) {
-          setError(errorMessage(error, 'Não foi possível carregar o snapshot. Verifique a boundary configurada.'));
+          setError(safeFailure(error, 'Não foi possível carregar a projeção canônica.'));
         }
       } finally {
         if (active) setLoading(false);
@@ -77,7 +84,7 @@ export function AvalProvider({
           setSnapshot(await gateway.loadWorkspace());
         }
       } catch (error) {
-        setError(errorMessage(error, 'A boundary recusou o comando. Nenhuma alteração foi presumida pelo browser.'));
+        setError(safeFailure(error, 'A boundary não confirmou o comando. Nenhuma alteração foi presumida pelo browser.'));
       }
     },
     [gateway],

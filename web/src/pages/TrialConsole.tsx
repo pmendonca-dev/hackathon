@@ -3,12 +3,13 @@ import { AlertTriangle, ArrowRight, LockKeyhole, RadioTower } from 'lucide-react
 
 import type { DataSource, TrialCommandKind, TrialCommandReceipt } from '../contracts/avalGateway.ts';
 import { Badge, Button, Field, Panel } from '../components/ui.tsx';
+import { safeDisplayText } from '../utils/safePresentation.ts';
 
 const commands: Array<{ kind: TrialCommandKind; label: string; hint: string; placeholder: string }> = [
   { kind: 'lower-limit', label: 'Reduzir limite', hint: 'API administrativa não publicada.', placeholder: 'indisponível' },
   { kind: 'change-scope', label: 'Alterar escopo', hint: 'API administrativa não publicada.', placeholder: 'indisponível' },
   { kind: 'budget-zero', label: 'Zerar orçamento', hint: 'API administrativa não publicada.', placeholder: 'indisponível' },
-  { kind: 'revoke-mandate', label: 'Revogar mandato', hint: 'Enviar uma revogação assinada pela autoridade registrada.', placeholder: 'eyJ... signed revocation JWS' },
+  { kind: 'revoke-mandate', label: 'Revogar mandato', hint: 'Enviar uma revogação assinada pela autoridade registrada.', placeholder: 'Cole a revogação assinada' },
 ];
 
 export function TrialConsole({
@@ -36,6 +37,7 @@ export function TrialConsole({
     try {
       await onSubmit({ kind, targetId, requestedValue });
     } finally {
+      setRequestedValue('');
       setSubmitting(false);
     }
   }
@@ -93,7 +95,17 @@ export function TrialConsole({
             </label>
             <label className="block">
               <span className="eyebrow">Revogação assinada (JWS)</span>
-              <input className="form-control" value={requestedValue} onChange={(event) => setRequestedValue(event.target.value)} placeholder={selected.placeholder} required disabled={!commandAvailable} />
+              <input
+                className="form-control"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={requestedValue}
+                onChange={(event) => setRequestedValue(event.target.value)}
+                placeholder={selected.placeholder}
+                required
+                disabled={!commandAvailable}
+              />
             </label>
             <div className="rounded-xl border border-line bg-ink-800/60 p-3.5">
               <p className="eyebrow">Endpoint publicado</p>
@@ -109,12 +121,12 @@ export function TrialConsole({
       <Panel eyebrow="Resultado da boundary" title="Resposta sem inferência local">
         {receipt ? (
           <dl>
-            <Field label="Request ID">{receipt.requestId}</Field>
+            <Field label="Request ID">{safeDisplayText(receipt.requestId)}</Field>
             <Field label="Origem">{receipt.dataSource}</Field>
             <Field label="Resultado">{receipt.outcome}</Field>
             <Field label="Estado alterado">{receipt.canonicalStateChanged ? 'sim' : 'não'}</Field>
             <Field label="Effective at">{receipt.effectiveAt ?? 'não informado pela API'}</Field>
-            <Field label="Mensagem" mono={false}>{receipt.message}</Field>
+            <Field label="Mensagem" mono={false}>{safeDisplayText(receipt.message)}</Field>
           </dl>
         ) : (
           <p className="py-5 text-center text-[13px] text-fg-mute">Nenhum comando real foi executado nesta sessão.</p>

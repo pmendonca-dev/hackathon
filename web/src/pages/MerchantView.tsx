@@ -3,6 +3,7 @@ import { EyeOff, FileCheck2, Store } from 'lucide-react';
 import type { MerchantViewProjection } from '../contracts/avalGateway.ts';
 import { Badge, Field, Panel } from '../components/ui.tsx';
 import { formatDateTime, formatMoney, shortHash } from '../utils/format.ts';
+import { safeDisplayText } from '../utils/safePresentation.ts';
 
 export function MerchantView({ data }: { data: MerchantViewProjection }) {
   return (
@@ -10,14 +11,14 @@ export function MerchantView({ data }: { data: MerchantViewProjection }) {
       <header className="page-heading">
         <div>
           <p className="eyebrow">Visão do merchant</p>
-          <h1>{data.merchantName} recebeu o necessário — e nada além.</h1>
+          <h1>{safeDisplayText(data.merchantName)} recebeu o necessário — e nada além.</h1>
           <p>A prova confirma pagamento e autorização sem expor identidade privada, orçamento ou credencial de cartão.</p>
         </div>
         <Badge tone="verify">AP2 {data.signedEvidence.ap2Version}</Badge>
       </header>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <Panel eyebrow="Payment receipt" title={data.receipt.itemSummary} action={<Badge tone="allow">{data.receipt.status}</Badge>}>
+        <Panel eyebrow="Payment receipt" title={safeDisplayText(data.receipt.itemSummary)} action={<Badge tone="allow">{safeDisplayText(data.receipt.status)}</Badge>}>
           <div className="mb-4 flex items-center justify-between rounded-xl border border-allow/25 bg-allow/6 p-4">
             <div>
               <p className="eyebrow">Valor confirmado</p>
@@ -26,9 +27,8 @@ export function MerchantView({ data }: { data: MerchantViewProjection }) {
             <Store size={24} className="text-allow" aria-hidden="true" />
           </div>
           <dl>
-            <Field label="Recibo">{data.receipt.receiptId}</Field>
-            <Field label="Transação">{data.receipt.transactionRef}</Field>
-            <Field label="Token opaco">{data.receipt.paymentToken}</Field>
+            <Field label="Recibo">{safeDisplayText(data.receipt.receiptId)}</Field>
+            <Field label="Transação">{safeDisplayText(data.receipt.transactionRef)}</Field>
             <Field label="Confirmado em">{formatDateTime(data.receipt.occurredAt)}</Field>
           </dl>
         </Panel>
@@ -43,7 +43,7 @@ export function MerchantView({ data }: { data: MerchantViewProjection }) {
                     <h3 className="text-[13px] font-semibold">{check.label}</h3>
                     <Badge tone={check.result === 'verified' ? 'verify' : 'neutral'}>{check.result}</Badge>
                   </div>
-                  <p className="mt-1 text-[12px] leading-relaxed text-fg-mute">{check.detail}</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-fg-mute">{safeDisplayText(check.detail)}</p>
                 </div>
               </li>
             ))}
@@ -55,7 +55,7 @@ export function MerchantView({ data }: { data: MerchantViewProjection }) {
         <dl className="grid gap-x-6 md:grid-cols-3">
           <Field label="Checkout receipt">{shortHash(data.signedEvidence.checkoutReceiptHash)}</Field>
           <Field label="Payment receipt">{shortHash(data.signedEvidence.paymentReceiptHash)}</Field>
-          <Field label="Authorization proof">{data.signedEvidence.authorizationProofRef}</Field>
+          <Field label="Authorization proof">verificada pelo runtime</Field>
         </dl>
       </Panel>
 

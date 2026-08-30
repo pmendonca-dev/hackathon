@@ -100,6 +100,60 @@ test('protocol failures preserve the stable HTTP status and error code', async (
       assert.equal(error instanceof AvalHttpError, true);
       assert.equal(error.status, 422);
       assert.equal(error.code, 'mandate_expired');
+      assert.equal(error.presentation.message, 'Este mandato expirou e não pode autorizar o pagamento.');
+      return true;
+    },
+  );
+});
+
+test('protocol failures never echo untrusted response fields', async () => {
+  const secrets = [
+    '4111111111111111',
+    'vt_secret-value',
+    'eyJhbGciOiJFZERTQSJ9.payload.signature',
+    'proof_private-evidence',
+  ];
+  const gateway = new HttpAvalGateway({
+    baseUrl: 'https://aval.example',
+    fetch: async () => Response.json(
+      {
+        detail: {
+          code: 'request_invalid',
+          fields: secrets,
+        },
+      },
+      { status: 422 },
+    ),
+  });
+
+  await assert.rejects(
+    gateway.getPaymentCapture('cap_01'),
+    (error) => {
+      const visibleError = JSON.stringify({
+        message: error.message,
+        presentation: error.presentation,
+      });
+      for (const secret of secrets) assert.equal(visibleError.includes(secret), false);
+      return true;
+    },
+  );
+});
+
+test('malformed error responses fail with a safe generic rejection', async () => {
+  const gateway = new HttpAvalGateway({
+    baseUrl: 'https://aval.example',
+    fetch: async () => new Response('<html>gateway failure includes vt_secret</html>', {
+      status: 502,
+      headers: { 'content-type': 'text/html' },
+    }),
+  });
+
+  await assert.rejects(
+    gateway.getPaymentCapture('cap_01'),
+    (error) => {
+      assert.equal(error instanceof AvalHttpError, true);
+      assert.equal(error.code, 'request_invalid');
+      assert.equal(error.message.includes('vt_secret'), false);
       return true;
     },
   );

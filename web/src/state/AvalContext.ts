@@ -5,13 +5,14 @@ import type {
   TrialCommand,
   TrialCommandReceipt,
 } from '../contracts/avalGateway.ts';
+import type { AvalErrorPresentation } from '../errors/avalError.ts';
 
 export type View = 'human' | 'merchant' | 'auditor' | 'trial';
 
 export interface AvalContextValue {
   snapshot: AvalSnapshot | null;
   loading: boolean;
-  error: string | null;
+  error: AvalErrorPresentation | null;
   view: View;
   lastCommandReceipt: TrialCommandReceipt | null;
   setView(view: View): void;

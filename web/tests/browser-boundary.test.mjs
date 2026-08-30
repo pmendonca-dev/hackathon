@@ -34,7 +34,9 @@ test('provider creates the environment-selected gateway once outside renders', (
   assert.match(providerSource, /gateway = DEFAULT_AVAL_GATEWAY/);
   assert.equal(providerSource.includes('gateway = createMockAvalGateway()'), false);
   assert.equal(providerSource.includes("from '../fixtures/mockAvalGateway.ts'"), false);
-  assert.match(providerSource, /error instanceof Error \? error\.message/);
+  assert.match(providerSource, /error instanceof AvalHttpError/);
+  assert.match(providerSource, /error\.presentation/);
+  assert.equal(providerSource.includes('error instanceof Error ? error.message'), false);
   assert.match(providerSource, /const receipt = await gateway\.submitTrialCommand\(command\)/);
   assert.match(providerSource, /receipt\.dataSource === 'api'/);
   assert.match(providerSource, /setSnapshot\(await gateway\.loadWorkspace\(\)\)/);

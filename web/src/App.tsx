@@ -1,7 +1,7 @@
-import { AlertTriangle, LoaderCircle } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 
+import { RuntimeFailure } from './components/RuntimeFailure.tsx';
 import { Shell } from './components/Shell.tsx';
-import { Button } from './components/ui.tsx';
 import { HumanView } from './pages/HumanView.tsx';
 import { MerchantView } from './pages/MerchantView.tsx';
 import { AuditorView } from './pages/AuditorView.tsx';
@@ -29,11 +29,8 @@ function Workspace() {
   if (error || !snapshot) {
     return (
       <Shell>
-        <div className="mx-auto flex min-h-[70vh] max-w-md flex-col items-center justify-center px-6 text-center" role="alert">
-          <AlertTriangle className="text-deny" size={28} aria-hidden="true" />
-          <h1 className="mt-4 font-display text-xl font-semibold">Snapshot indisponível</h1>
-          <p className="mt-2 text-sm leading-relaxed text-fg-mute">{error ?? 'A boundary não retornou dados.'}</p>
-          <Button className="mt-5" onClick={() => void reload()}>Tentar novamente</Button>
+        <div className="mx-auto flex min-h-[70vh] max-w-2xl items-center px-6">
+          {error && <RuntimeFailure error={error} onAction={() => void reload()} />}
         </div>
       </Shell>
     );
@@ -54,7 +51,18 @@ function Workspace() {
           DADOS DE DEMONSTRAÇÃO / MOCK — estas projeções não representam estado vivo nem comprovam execução do runtime.
         </div>
       )}
-      {error && <div className="mx-auto mt-4 max-w-[1180px] px-5 text-[12px] text-deny" role="alert">{error}</div>}
+      {(error || loading) && (
+        <div className="mx-auto mt-4 max-w-[1180px] px-5">
+          {error ? (
+            <RuntimeFailure error={error} compact onAction={() => void reload()} />
+          ) : (
+            <div className="flex items-center gap-2 rounded-xl border border-line bg-ink-850 px-4 py-3 text-[12px] text-fg-mute" role="status">
+              <LoaderCircle className="animate-spin text-verify" size={14} aria-hidden="true" />
+              Atualizando a projeção canônica…
+            </div>
+          )}
+        </div>
+      )}
       {liveSnapshot ? (
         <>
           {view === 'human' && <LiveHumanView data={liveSnapshot.live} />}

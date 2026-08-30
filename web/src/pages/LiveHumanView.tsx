@@ -2,6 +2,7 @@ import { FileCheck2, ShieldCheck, WalletCards } from 'lucide-react';
 
 import type { LiveWorkspaceProjection } from '../contracts/avalGateway.ts';
 import { Badge, Field, Panel } from '../components/ui.tsx';
+import { safeDisplayText } from '../utils/safePresentation.ts';
 
 export function LiveHumanView({ data }: { data: LiveWorkspaceProjection }) {
   const decisionTone = data.audit.reason_code.includes('expired')
@@ -20,25 +21,25 @@ export function LiveHumanView({ data }: { data: LiveWorkspaceProjection }) {
           <h1>O runtime explica o que aconteceu sem o browser refazer a decisão.</h1>
           <p>Somente fatos devolvidos pelas APIs de captura, recibo, auditoria e disputa aparecem aqui.</p>
         </div>
-        <Badge tone={decisionTone}>{data.audit.status}</Badge>
+        <Badge tone={decisionTone}>{safeDisplayText(data.audit.status)}</Badge>
       </header>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <Panel eyebrow="Mandato observado" title={data.mandateId} action={<ShieldCheck size={18} className="text-verify" aria-hidden="true" />}>
+        <Panel eyebrow="Mandato observado" title={safeDisplayText(data.mandateId)} action={<ShieldCheck size={18} className="text-verify" aria-hidden="true" />}>
           <dl>
-            <Field label="Resultado">{data.audit.status}</Field>
-            <Field label="Motivo">{data.audit.reason_code}</Field>
-            <Field label="Explicação" mono={false}>{data.audit.human_summary}</Field>
+            <Field label="Resultado">{safeDisplayText(data.audit.status)}</Field>
+            <Field label="Motivo">{safeDisplayText(data.audit.reason_code)}</Field>
+            <Field label="Explicação" mono={false}>{safeDisplayText(data.audit.human_summary)}</Field>
             <Field label="Eventos duráveis">{data.audit.timeline.length}</Field>
           </dl>
         </Panel>
 
-        <Panel eyebrow="Captura canônica" title={data.capture?.capture_id ?? 'Nenhuma captura configurada'} action={<WalletCards size={18} className="text-allow" aria-hidden="true" />}>
+        <Panel eyebrow="Captura canônica" title={data.capture ? safeDisplayText(data.capture.capture_id) : 'Nenhuma captura configurada'} action={<WalletCards size={18} className="text-allow" aria-hidden="true" />}>
           {data.capture ? (
             <dl>
-              <Field label="Status">{data.capture.status}</Field>
-              <Field label="Reserva">{data.capture.reservation_id}</Field>
-              <Field label="Liquidação">{data.capture.settlement_reference}</Field>
+              <Field label="Status">{safeDisplayText(data.capture.status)}</Field>
+              <Field label="Reserva">{safeDisplayText(data.capture.reservation_id)}</Field>
+              <Field label="Liquidação">{safeDisplayText(data.capture.settlement_reference)}</Field>
               <Field label="Recibos">{data.receipts ? 'disponíveis' : 'indisponíveis'}</Field>
             </dl>
           ) : (
@@ -47,11 +48,11 @@ export function LiveHumanView({ data }: { data: LiveWorkspaceProjection }) {
         </Panel>
       </section>
 
-      <Panel eyebrow="Disputa" title={data.dispute.reason_code} action={<FileCheck2 size={18} className="text-escalate" aria-hidden="true" />}>
-        <p className="text-sm leading-relaxed">{data.dispute.human_summary}</p>
+      <Panel eyebrow="Disputa" title={safeDisplayText(data.dispute.reason_code)} action={<FileCheck2 size={18} className="text-escalate" aria-hidden="true" />}>
+        <p className="text-sm leading-relaxed">{safeDisplayText(data.dispute.human_summary)}</p>
         {data.dispute.post_commit_note && (
           <p className="mt-4 rounded-xl border border-escalate/30 bg-escalate/7 p-4 text-[13px] leading-relaxed text-escalate">
-            {data.dispute.post_commit_note}
+            {safeDisplayText(data.dispute.post_commit_note)}
           </p>
         )}
       </Panel>

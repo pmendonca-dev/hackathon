@@ -3,6 +3,7 @@ import { Fingerprint, Scale } from 'lucide-react';
 import type { AuditVerdictProjection } from '../contracts/paymentRuntimeApi.ts';
 import { Badge, EmptyNotice, Field, Panel } from '../components/ui.tsx';
 import { formatDateTime, shortHash } from '../utils/format.ts';
+import { safeDisplayText } from '../utils/safePresentation.ts';
 
 export function LiveAuditorView({
   audit,
@@ -19,7 +20,7 @@ export function LiveAuditorView({
           <h1>A timeline append-only na ordem devolvida pelo runtime.</h1>
           <p>Ator, motivo, explicação e hash de evidência são apresentados sem correção ou reclassificação local.</p>
         </div>
-        <Badge tone="verify">{audit.status}</Badge>
+        <Badge tone="verify">{safeDisplayText(audit.status)}</Badge>
       </header>
 
       <Panel eyebrow="Audit ledger" title="Timeline canônica" action={<span className="mono text-[10px] text-fg-mute">{audit.timeline.length} eventos</span>}>
@@ -31,15 +32,15 @@ export function LiveAuditorView({
               <li key={event.id} className="audit-event">
                 <div className="audit-sequence" aria-hidden="true">{index + 1}</div>
                 <article className="min-w-0 rounded-xl border border-line bg-ink-800/50 p-4">
-                  <p className="eyebrow">{event.event_type}</p>
-                  <h3 className="mt-1 text-sm font-semibold">{event.human_summary}</h3>
+                  <p className="eyebrow">{safeDisplayText(event.event_type)}</p>
+                  <h3 className="mt-1 text-sm font-semibold">{safeDisplayText(event.human_summary)}</h3>
                   <dl className="mt-3 grid gap-x-5 sm:grid-cols-2">
-                    <Field label="Ator">{event.actor}</Field>
-                    <Field label="Motivo">{event.reason_code}</Field>
+                    <Field label="Ator">{safeDisplayText(event.actor)}</Field>
+                    <Field label="Motivo">{safeDisplayText(event.reason_code)}</Field>
                     <Field label="Quando">{formatDateTime(event.occurred_at)}</Field>
                     <Field label="Epoch">{event.revocation_epoch}</Field>
-                    <Field label="Evento">{event.id}</Field>
-                    <Field label="Evidência">{shortHash(event.evidence_hash)}</Field>
+                    <Field label="Evento">{safeDisplayText(event.id)}</Field>
+                    <Field label="Evidência">{safeDisplayText(shortHash(event.evidence_hash))}</Field>
                   </dl>
                 </article>
               </li>
@@ -48,11 +49,11 @@ export function LiveAuditorView({
         )}
       </Panel>
 
-      <Panel eyebrow="Disputa reconstruída" title={dispute.reason_code} action={<Scale size={18} className="text-escalate" aria-hidden="true" />}>
-        <p className="text-sm leading-relaxed">{dispute.human_summary}</p>
+      <Panel eyebrow="Disputa reconstruída" title={safeDisplayText(dispute.reason_code)} action={<Scale size={18} className="text-escalate" aria-hidden="true" />}>
+        <p className="text-sm leading-relaxed">{safeDisplayText(dispute.human_summary)}</p>
         {dispute.post_commit_note && (
           <p className="mt-4 rounded-xl border border-escalate/30 bg-escalate/7 p-4 text-[13px] leading-relaxed text-escalate">
-            {dispute.post_commit_note}
+            {safeDisplayText(dispute.post_commit_note)}
           </p>
         )}
       </Panel>

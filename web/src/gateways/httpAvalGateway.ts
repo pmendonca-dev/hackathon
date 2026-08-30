@@ -20,18 +20,26 @@ import type {
   RevocationProjection,
 } from '../contracts/paymentRuntimeApi.ts';
 import { PAYMENT_RUNTIME_API_CONTRACT_VERSION } from '../contracts/paymentRuntimeApi.ts';
+import {
+  parseAvalErrorEnvelope,
+  presentAvalError,
+  type AvalErrorPresentation,
+} from '../errors/avalError.ts';
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 export class AvalHttpError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly presentation: AvalErrorPresentation;
 
   constructor(status: number, code: string) {
-    super(`AVAL request failed with HTTP ${status} (${code}).`);
+    const presentation = presentAvalError({ status, code });
+    super(presentation.message);
     this.name = 'AvalHttpError';
     this.status = status;
     this.code = code;
+    this.presentation = presentation;
   }
 }
 
@@ -76,18 +84,14 @@ export class HttpAvalGateway implements AvalGateway {
   }
 
   async #readJson<T>(response: Response): Promise<T> {
-    const payload = (await response.json()) as unknown;
+    let payload: unknown = null;
+    try {
+      payload = await response.json() as unknown;
+    } catch {
+      // Error bodies are untrusted. Never surface their raw text or parser errors.
+    }
     if (!response.ok) {
-      const code =
-        typeof payload === 'object'
-        && payload !== null
-        && 'detail' in payload
-        && typeof payload.detail === 'object'
-        && payload.detail !== null
-        && 'code' in payload.detail
-        && typeof payload.detail.code === 'string'
-          ? payload.detail.code
-          : 'http_error';
+      const code = parseAvalErrorEnvelope(payload);
       throw new AvalHttpError(response.status, code);
     }
     return payload as T;
