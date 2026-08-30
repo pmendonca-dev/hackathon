@@ -107,7 +107,7 @@ passa, o jurado consegue fazer tudo no navegador.
    de avaliação aparece inteira, toda verde, com o orçamento no último degrau — que é
    onde ele tem que estar: autoridade antes de dinheiro.
 
-3. **O agente tenta o que não pode.** *"compre a passagem executiva de $900"* → o teto
+3. **O agente tenta o que não pode.** *"buy the business class fare to Córdoba at $900"* → o teto
    recusa **sem** botão de aprovar. A escada mostra onde parou: `below_ceiling` em
    vermelho, `within_budget` em cinza — *nunca consultado*. Esse cinza é o argumento.
 

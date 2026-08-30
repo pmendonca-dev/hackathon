@@ -131,7 +131,7 @@ class Smoke:
         self.check("/catalogo lista ofertas assinadas", len(offers) > 0, f"{len(offers)} ofertas")
 
         # /comprar — inside the mandate.
-        bought = self.gateway.purchase(mandate_id, "compre um voo para Córdoba abaixo de $150")
+        bought = self.gateway.purchase(mandate_id, "buy a flight to Córdoba under $150")
         self.check(
             "/comprar dentro do mandato liquida",
             bought.outcome == "settled",
@@ -144,7 +144,7 @@ class Smoke:
         )
 
         # /comprar — outside the mandate. Escalates rather than passing.
-        hotel = self.gateway.purchase(mandate_id, "reserve um hotel em Córdoba")
+        hotel = self.gateway.purchase(mandate_id, "book a hotel in Córdoba")
         self.check(
             "fora do escopo escala em vez de passar",
             hotel.outcome != "settled" and hotel.escalation_id is not None,
@@ -174,7 +174,7 @@ class Smoke:
         watcher = self.store.bind_mandate(WATCH_CHAT_ID, watch_mandate)
         self.register_card(watcher, watch_mandate)
         watching = self.gateway.register_watch(
-            watch_mandate, "um voo para Córdoba abaixo de $100"
+            watch_mandate, "a flight to Córdoba under $100"
         )
         self.check(
             "um alvo inalcançável vira vigília em vez de beco",
@@ -224,7 +224,7 @@ class Smoke:
         # o passo passaria verde pelo motivo errado. O que tem de recusar aqui é a
         # autoridade que acabou.
         self.register_card(revoked_watcher, revoked_mandate)
-        self.gateway.register_watch(revoked_mandate, "um voo para Córdoba abaixo de $100")
+        self.gateway.register_watch(revoked_mandate, "a flight to Córdoba under $100")
         revoked_view = self.gateway.mandate(revoked_mandate)
         self.gateway.revoke(
             revoked_watcher,
@@ -242,7 +242,7 @@ class Smoke:
         self.reprice("FL-SAO-COR-0918", 11_800)
 
         # The ceiling refuses with no button at all.
-        executive = self.gateway.purchase(mandate_id, "compre a passagem executiva de $900")
+        executive = self.gateway.purchase(mandate_id, "buy the business class fare to Córdoba at $900")
         self.check(
             "o teto recusa e não abre escalação",
             executive.reason_code == "mandate_ceiling" and executive.escalation_id is None,
@@ -320,7 +320,7 @@ class Smoke:
         revoked = self.gateway.revoke(identity, mandate_id, epoch=0, reason="fim do teste")
         self.check("/revogar assina e encerra o mandato", bool(revoked), revoked)
 
-        after = self.gateway.purchase(mandate_id, "compre um voo para Córdoba")
+        after = self.gateway.purchase(mandate_id, "buy a flight to Córdoba")
         self.check(
             "depois da revogação a próxima compra falha",
             after.reason_code == "mandate_revoked",

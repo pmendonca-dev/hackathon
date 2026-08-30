@@ -39,20 +39,20 @@ def _raise(error: Exception):
 
 
 def test_question_keeps_talking_without_a_spec():
-    draft = talk({"resposta": "Até quanto por noite?", "mandato": None})
+    draft = talk({"reply": "Up to how much per night?", "mandate": None})
     assert draft.spec is None
-    assert draft.reply == "Até quanto por noite?"
+    assert draft.reply == "Up to how much per night?"
 
 
 def test_complete_answer_becomes_a_confirmable_spec():
     draft = talk(
         {
-            "resposta": "Hotel até 300 dólares, por 7 dias, 2 vezes.",
-            "mandato": {
-                "categorias": ["lodging"],
-                "valor_maximo": 300,
-                "dias": 7,
-                "vezes": 2,
+            "reply": "Hotel up to 300 dollars, for 7 days, 2 times.",
+            "mandate": {
+                "categories": ["lodging"],
+                "max_amount": 300,
+                "days": 7,
+                "times": 2,
             },
         }
     )
@@ -69,10 +69,10 @@ def test_complete_answer_becomes_a_confirmable_spec():
     [
         # A category nobody sells, a mandate that authorizes nothing, a shape that
         # is not an answer, and the network failing. All the same failure.
-        {"resposta": "ok", "mandato": {"categorias": ["crypto"], "valor_maximo": 1, "dias": 1, "vezes": None}},
-        {"resposta": "ok", "mandato": {"categorias": ["travel"], "valor_maximo": 0, "dias": 7, "vezes": None}},
-        {"resposta": "ok", "mandato": {"categorias": ["travel"], "valor_maximo": 10, "dias": 0, "vezes": None}},
-        {"resposta": "", "mandato": None},
+        {"reply": "ok", "mandate": {"categories": ["crypto"], "max_amount": 1, "days": 1, "times": None}},
+        {"reply": "ok", "mandate": {"categories": ["travel"], "max_amount": 0, "days": 7, "times": None}},
+        {"reply": "ok", "mandate": {"categories": ["travel"], "max_amount": 10, "days": 0, "times": None}},
+        {"reply": "", "mandate": None},
         "not an object",
         TimeoutError("model unreachable"),
     ],
@@ -114,14 +114,14 @@ def shop(answer, history=("acompanhe um notebook",)) -> Draft:
 
 def complete_answer(**overrides):
     base = {
-        "resposta": "Entendi: vou acompanhar um notebook.",
-        "mandato": {
-            "categorias": ["shopping"],
-            "valor_maximo": 2000.0,
-            "dias": 30,
-            "vezes": 1,
+        "reply": "Understood: I will watch for a laptop.",
+        "mandate": {
+            "categories": ["shopping"],
+            "max_amount": 2000.0,
+            "days": 30,
+            "times": 1,
         },
-        "compra": {"query": "notebook para faculdade", "dias": 30},
+        "shopping": {"query": "laptop for university", "days": 30},
     }
     base.update(overrides)
     return base
@@ -130,7 +130,7 @@ def complete_answer(**overrides):
 def test_a_complete_shopping_sentence_produces_a_query_and_a_deadline():
     draft = shop(complete_answer())
     assert draft.shopping is not None
-    assert draft.shopping.query == "notebook para faculdade"
+    assert draft.shopping.query == "laptop for university"
     assert draft.shopping.watch_days == 30
     assert draft.shopping.max_minor_units == 200_000
     assert draft.shopping.currency == "USD"
@@ -139,7 +139,7 @@ def test_a_complete_shopping_sentence_produces_a_query_and_a_deadline():
 
 def test_shopping_sentence_requires_budget_and_deadline_before_confirmation():
     """No mandate means nothing to confirm, and no watch to hang off it."""
-    draft = shop({"resposta": "Até quanto você quer gastar?", "mandato": None, "compra": None})
+    draft = shop({"reply": "Up to how much do you want to spend?", "mandate": None, "shopping": None})
     assert draft.spec is None
     assert draft.shopping is None
 
@@ -147,45 +147,45 @@ def test_shopping_sentence_requires_budget_and_deadline_before_confirmation():
 def test_a_query_without_a_mandate_authorizes_nothing():
     """The model may not hand back something to search for and no ceiling to search
     under. Half a draft is not a draft."""
-    draft = shop(complete_answer(mandato=None))
+    draft = shop(complete_answer(mandate=None))
     assert draft.spec is None
     assert draft.shopping is None
 
 
 def test_a_mandate_without_a_query_is_still_an_ordinary_mandate():
     """Someone describing only authority gets only authority — and no watch."""
-    draft = shop(complete_answer(compra=None))
+    draft = shop(complete_answer(shopping=None))
     assert draft.spec is not None
     assert draft.shopping is None
 
 
 @pytest.mark.parametrize(
-    "compra",
+    "shopping",
     [
-        {"query": "", "dias": 30},
-        {"query": "   ", "dias": 30},
-        {"query": "notebook", "dias": 0},
-        {"query": "notebook", "dias": -5},
+        {"query": "", "days": 30},
+        {"query": "   ", "days": 30},
+        {"query": "notebook", "days": 0},
+        {"query": "notebook", "days": -5},
         {"query": "notebook"},
-        {"dias": 30},
+        {"days": 30},
         "not an object",
         [],
     ],
 )
-def test_an_unusable_search_is_dropped_rather_than_guessed(compra):
-    assert shop(complete_answer(compra=compra)).shopping is None
+def test_an_unusable_search_is_dropped_rather_than_guessed(shopping):
+    assert shop(complete_answer(shopping=shopping)).shopping is None
 
 
 def test_the_watch_never_outlives_the_mandate_it_hangs_from():
     """A search running past the authority that pays for it would be a standing order
     against nothing. The mandate's own window is the ceiling."""
-    draft = shop(complete_answer(compra={"query": "notebook", "dias": 365}))
+    draft = shop(complete_answer(shopping={"query": "notebook", "days": 365}))
     assert draft.shopping is not None
     assert draft.shopping.watch_days == draft.spec.valid_for_days
 
 
 def test_a_long_query_cannot_become_the_search():
-    draft = shop(complete_answer(compra={"query": "x" * 5000, "dias": 30}))
+    draft = shop(complete_answer(shopping={"query": "x" * 5000, "days": 30}))
     assert draft.shopping is not None
     assert len(draft.shopping.query) <= 300
 
@@ -193,5 +193,5 @@ def test_a_long_query_cannot_become_the_search():
 def test_the_rules_still_answer_when_the_model_fails():
     """The fallback has no search in it: a regex that guessed what to buy on the open
     web would be the one component here allowed to invent a purchase."""
-    draft = shop(Exception("boom") and {"resposta": "", "mandato": None})
+    draft = shop(Exception("boom") and {"reply": "", "mandate": None})
     assert draft.shopping is None

@@ -497,11 +497,11 @@ class AvalGateway:
         )
         capture = payload.get("capture") or {}
         if not approve:
-            return "Compra negada. Nada foi cobrado."
+            return "Purchase denied. Nothing was charged."
         if capture.get("approved"):
-            return "Compra aprovada e liquidada."
+            return "Purchase approved and settled."
         # An approval is not a bypass: the core re-checks everything on resume.
-        return f"Aprovação registrada, mas a compra não passou: {capture.get('reason_code', 'desconhecido')}."
+        return f"Approval recorded, but the purchase did not pass: {capture.get('reason_code', 'unknown')}."
 
     # ── card registration ──────────────────────────────────────────────────
     def open_card_session(self, identity: ChatIdentity, mandate_id: str) -> CardSessionView:
@@ -618,7 +618,7 @@ class AvalGateway:
         payload = self._call(
             "POST", ENDPOINTS["revocation"].format(mandate_id=mandate_id), body={"token": token}
         )
-        return f"Mandato revogado (epoch {payload.get('epoch', epoch + 1)})."
+        return f"Mandate revoked (epoch {payload.get('epoch', epoch + 1)})."
 
     def cancel_instrument(
         self, identity: ChatIdentity, mandate_id: str, *, scope: str, epoch: int
@@ -634,7 +634,7 @@ class AvalGateway:
             {
                 "mandate_id": mandate_id,
                 "scope": scope,
-                "reason": "cartão cancelado pelo titular",
+                "reason": "card cancelled by the holder",
                 "epoch": epoch + 1,
             },
         )
@@ -642,8 +642,8 @@ class AvalGateway:
             "POST", ENDPOINTS["revocation"].format(mandate_id=mandate_id), body={"token": token}
         )
         return (
-            "Cartão cancelado. O mandato segue ativo — o agente pode decidir, "
-            f"mas não tem com o que pagar (epoch {payload.get('epoch', epoch + 1)})."
+            "Card cancelled. The mandate stays active — the agent can still decide, "
+            f"but it has nothing to pay with (epoch {payload.get('epoch', epoch + 1)})."
         )
 
     def replace_limit(self, identity: ChatIdentity, mandate_id: str, limit: MoneyView) -> str:
@@ -652,7 +652,7 @@ class AvalGateway:
         # limit the holder had already lowered.
         current = self.mandate(mandate_id)
         if current is None:
-            raise GatewayError("mandate_not_found", "Mandato não encontrado.")
+            raise GatewayError("mandate_not_found", "Mandate not found.")
         authorization_jws = self._identities.sign(
             identity,
             {
@@ -668,7 +668,7 @@ class AvalGateway:
             ENDPOINTS["limit"].format(mandate_id=mandate_id),
             body={"limit": _money_body(limit), "authorization_jws": authorization_jws},
         )
-        return f"Limite alterado. Política v{payload.get('policy_version', '?')}."
+        return f"Limit changed. Policy v{payload.get('policy_version', '?')}."
 
     # ── transport ──────────────────────────────────────────────────────────
     def _call(
@@ -696,13 +696,13 @@ class AvalGateway:
         except urllib.error.HTTPError as error:
             raise _from_http_error(error, method, path) from error
         except OSError as error:
-            raise GatewayError(f"AVAL inacessível: {error}", reason_code="unreachable") from error
+            raise GatewayError(f"AVAL unreachable: {error}", reason_code="unreachable") from error
         if not raw:
             return {}
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as error:
-            raise GatewayError("AVAL devolveu JSON inválido", reason_code="malformed") from error
+            raise GatewayError("AVAL returned invalid JSON", reason_code="malformed") from error
         return payload if isinstance(payload, dict) else {"items": payload}
 
 

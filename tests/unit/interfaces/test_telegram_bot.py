@@ -98,8 +98,8 @@ class FakeAval:
         if route == "/merchant/offers":
             return 200, {
                 "offers": [
-                    _offer("São Paulo → Córdoba, direto", 13000, "travel", sku="FL-COR"),
-                    _offer("São Paulo → Córdoba, executiva", 90000, "travel", sku="FL-EXEC"),
+                    _offer("São Paulo → Córdoba, nonstop", 13000, "travel", sku="FL-COR"),
+                    _offer("São Paulo → Córdoba, business class", 90000, "travel", sku="FL-EXEC"),
                     _offer("Hotel Córdoba Centro", 22000, "lodging", sku="HT-COR"),
                 ]
             }
@@ -168,7 +168,7 @@ class FakeAval:
                     {
                         "sequence": 1,
                         "event_type": "mandate_registered",
-                        "human_summary": "Mandato criado.",
+                        "human_summary": "Mandate created.",
                         "occurred_at": datetime.now(UTC).isoformat(),
                     }
                 ],
@@ -201,7 +201,7 @@ class FakeAval:
                 "resolution": (
                     "Prova jti_1 vincula merchant vuelaya, valor 13000 e terms_hash th_1."
                     if held
-                    else "Nenhuma prova de autorização vincula esta compra."
+                    else "No authorization proof ties this purchase."
                 ),
             }
         if route == "/ledger/verify":
@@ -411,7 +411,7 @@ class FakeAval:
                 "outcome": "rejected",
                 "reason_code": "mandate_revoked",
                 "human_summary": "Mandato revogado.",
-                "offer": _offer("Voo Córdoba", 13000, "travel"),
+                "offer": _offer("Córdoba flight", 13000, "travel"),
                 "escalation_id": None,
             }
         if not any(
@@ -429,8 +429,8 @@ class FakeAval:
             return 200, {
                 "outcome": "rejected",
                 "reason_code": "mandate_ceiling",
-                "human_summary": "Valor acima do teto do mandato.",
-                "offer": _offer("Executiva", 90000, "travel"),
+                "human_summary": "Amount above the mandate ceiling.",
+                "offer": _offer("Business class", 90000, "travel"),
                 "escalation_id": None,
             }
         if "santiago" in body["instruction"].lower():
@@ -451,7 +451,7 @@ class FakeAval:
             return 200, {
                 "outcome": "awaiting_human",
                 "reason_code": "budget_exceeded",
-                "human_summary": "Compra excede o orçamento vivo do mandato.",
+                "human_summary": "Purchase exceeds the mandate's live budget.",
                 "offer": _offer("Voo Santiago", 30000, "travel"),
                 "escalation_id": escalation_id,
             }
@@ -462,13 +462,13 @@ class FakeAval:
             return 200, {
                 "outcome": "no_offer",
                 "reason_code": "no_offer_matched",
-                "human_summary": "Nenhuma oferta do catálogo atende ao pedido.",
+                "human_summary": "No offer in the catalogue meets the request.",
             }
         return 200, {
             "outcome": "settled",
             "reason_code": "settled",
-            "human_summary": "Compra concluída.",
-            "offer": _offer("Voo Córdoba", self.cordoba_price, "travel"),
+            "human_summary": "Purchase completed.",
+            "offer": _offer("Córdoba flight", self.cordoba_price, "travel"),
             "escalation_id": None,
             "reservation_id": "rsv_1",
             "settlement_reference": "psp_abc123",
@@ -509,6 +509,7 @@ class FakeApi:
         # Telegram refusing a message is the ordinary case the outbox exists for: a
         # rate limit, a network blip, a chat that blocked the bot.
         self.fail_next = False
+        self.stale_callbacks = False
 
     def send_message(self, chat_id: int, view: views.View) -> dict:
         if self.fail_next:
@@ -520,6 +521,10 @@ class FakeApi:
         self.edited.append((chat_id, message_id, view))
 
     def answer_callback(self, callback_id: str, text: str = "") -> None:
+        # Telegram refuses an acknowledgement once the query is old, which is the
+        # state every queued tap is in after a restart drains its backlog.
+        if self.stale_callbacks:
+            raise TelegramError("answerCallbackQuery falhou com 400")
         self.answers.append((callback_id, text))
 
     @property
@@ -692,7 +697,7 @@ def test_one_person_cannot_touch_another_persons_mandate(world) -> None:
 
     bot.handle_update(tap(f"rvm:{marta_mandate}", chat_id=JUDGE))
 
-    assert "não é seu" in api.last_text
+    assert "not yours" in api.last_text
     assert aval.mandates[marta_mandate]["status"] == "ACTIVE"
 
 
@@ -704,10 +709,10 @@ def test_a_purchase_inside_the_mandate_settles_and_returns_a_receipt(world) -> N
 
     bot.handle_update(message("/comprar um voo pra Cordoba"))
 
-    assert "Comprado" in api.sent[0][1].text
+    assert "Bought" in api.sent[0][1].text
     assert "psp_abc123" in api.sent[0][1].text
     # A4: the record of what was bought arrives without being asked for.
-    assert "Extrato" in api.sent[1][1].text
+    assert "Statement" in api.sent[1][1].text
 
 
 def test_a_purchase_above_the_ceiling_is_refused_with_no_approve_button(world) -> None:
@@ -718,7 +723,7 @@ def test_a_purchase_above_the_ceiling_is_refused_with_no_approve_button(world) -
     bot.handle_update(message("/comprar a executiva"))
 
     view = api.sent[0][1]
-    assert "Recusado" in view.text and "mandate_ceiling" in view.text
+    assert "Refused" in view.text and "mandate_ceiling" in view.text
     assert view.buttons == (), "a ceiling is not negotiable, so it gets no approve button"
 
 
@@ -729,9 +734,9 @@ def test_a_purchase_over_budget_escalates_with_a_decision_card(world) -> None:
 
     bot.handle_update(message("/comprar o voo pra Santiago"))
 
-    assert "Precisa de você" in api.sent[0][1].text
+    assert "Needs you" in api.sent[0][1].text
     labels = [label for row in api.sent[1][1].buttons for label, _ in row]
-    assert labels == ["✅ Aprovar", "❌ Recusar"]
+    assert labels == ["✅ Approve", "❌ Refuse"]
 
 
 # ── the signed tap ──────────────────────────────────────────────────────────
@@ -748,7 +753,7 @@ def test_approving_sends_a_signature_the_core_can_verify(world) -> None:
     assert claims["decision_handle"] == escalation_id
     assert claims["decision"] == "approve"
     assert claims["amount_minor_units"] == 30000
-    assert "assinado pela sua chave" in api.last_text
+    assert "signed by your own key" in api.last_text
 
 
 def test_denying_closes_the_escalation_without_charging(world) -> None:
@@ -760,7 +765,7 @@ def test_denying_closes_the_escalation_without_charging(world) -> None:
     bot.handle_update(tap(f"den:{escalation_id}"))
 
     assert aval.escalations[escalation_id]["status"] == "DENIED"
-    assert "Nada foi cobrado" in api.last_text
+    assert "Nothing was charged" in api.last_text
 
 
 def test_revoking_is_signed_and_stops_the_next_purchase(world) -> None:
@@ -786,7 +791,7 @@ def test_a_limit_change_carries_the_holders_signature(world) -> None:
 
     assert aval.mandates[mandate_id]["limit"]["minor_units"] == 5000
     assert aval.verified_claims[-1]["limit_minor_units"] == 5000
-    assert "assinado pela sua chave" in api.last_text
+    assert "signed by your own key" in api.last_text
 
 
 def test_a_limit_change_without_a_number_changes_nothing(world) -> None:
@@ -797,7 +802,7 @@ def test_a_limit_change_without_a_number_changes_nothing(world) -> None:
     bot.handle_update(message("/limite muito"))
 
     assert aval.mandates[mandate_id]["limit"]["minor_units"] == 20000
-    assert "valor positivo" in api.sent[-1][1].text
+    assert "positive amount" in api.sent[-1][1].text
 
 
 # ── push ────────────────────────────────────────────────────────────────────
@@ -840,7 +845,7 @@ def test_an_unreachable_core_reports_that_nothing_ran(world) -> None:
 
     bot.handle_update(message("/mandato"))
 
-    assert "Nenhuma ação foi executada" in api.sent[-1][1].text
+    assert "No action was taken" in api.sent[-1][1].text
 
 
 def test_a_refused_write_leaves_no_confirmation_on_screen(world) -> None:
@@ -851,7 +856,7 @@ def test_a_refused_write_leaves_no_confirmation_on_screen(world) -> None:
 
     bot.handle_update(tap(f"rvm:{mandate_id}"))
 
-    assert api.answers[-1] == ("cb1", "AVAL indisponível.")
+    assert api.answers[-1] == ("cb1", "AVAL unavailable.")
     assert api.edited == []
     assert aval.mandates[mandate_id]["status"] == "ACTIVE"
 
@@ -878,7 +883,7 @@ def test_the_core_reason_code_reaches_the_screen(world) -> None:
 def test_a_person_without_a_mandate_is_told_to_start(world) -> None:
     bot, api, _, _ = world
     bot.handle_update(message("/mandato"))
-    assert "Mande /start" in api.sent[-1][1].text
+    assert "Send /start" in api.sent[-1][1].text
 
 
 def test_meuid_answers_even_a_chat_with_no_authority(tmp_path: Path) -> None:
@@ -895,7 +900,7 @@ def test_meuid_answers_even_a_chat_with_no_authority(tmp_path: Path) -> None:
     assert str(JUDGE) in api.sent[0][1].text
 
     bot.handle_update(message("/mandato", chat_id=JUDGE))
-    assert "não tem autoridade" in api.sent[-1][1].text
+    assert "no authority" in api.sent[-1][1].text
 
 
 def test_the_display_name_falls_back_to_the_chat_id() -> None:
@@ -922,7 +927,7 @@ def test_a_settled_purchase_offers_a_way_to_deny_it_later(world) -> None:
     bot.handle_update(message("/comprar um voo pra Cordoba"))
 
     labels = [label for row in api.sent[0][1].buttons for label, _ in row]
-    assert labels == ["⚠️ Não reconheço esta compra"]
+    assert labels == ["⚠️ I do not recognize this purchase"]
 
 
 def test_denying_a_purchase_opens_a_dispute_against_the_reservation(world) -> None:
@@ -951,7 +956,7 @@ def test_a_crafted_tap_cannot_dispute_someone_elses_purchase(world) -> None:
     bot.handle_update(tap("dsp:rsv_1", chat_id=JUDGE))
 
     assert aval.disputes == [], "a stranger must not open a dispute on this purchase"
-    assert "não é sua" in api.last_text
+    assert "not yours" in api.last_text
 
 
 # ── someone arriving for the first time ─────────────────────────────────────
@@ -962,8 +967,8 @@ def test_the_welcome_leads_with_a_way_to_buy(world) -> None:
 
     view = api.sent[0][1]
     first_button = view.buttons[0][0][0]
-    assert "comprar" in first_button.lower(), "buying is the point, so it is the first button"
-    assert "Ver o que posso comprar" in view.text
+    assert "buy" in first_button.lower(), "buying is the point, so it is the first button"
+    assert "See what I can buy" in view.text
 
 
 def test_the_catalogue_button_asks_what_the_person_wants(world) -> None:
@@ -973,7 +978,7 @@ def test_the_catalogue_button_asks_what_the_person_wants(world) -> None:
     bot.handle_update(tap("cat:_"))
 
     view = api.edited[-1][2]
-    assert "O que você quer?" in view.text
+    assert "What do you want?" in view.text
     labels = [label for row in view.buttons for label, _ in row]
     # Two destinations, not three offers: the person names a wish, the agent picks.
     assert len(labels) == 2
@@ -1002,10 +1007,10 @@ def test_buying_from_the_catalogue_goes_through_the_agent(world) -> None:
     bot.handle_update(tap("buy:travel-cordoba"))
 
     sent = [body for path, body in aval.received if path == "POST /agent/purchase"][-1]
-    assert sent["instruction"] == "voo para Córdoba", "the button feeds the agent an intent"
-    assert "Comprado" in api.edited[0][2].text
+    assert sent["instruction"] == "flight to Córdoba", "the button feeds the agent an intent"
+    assert "Bought" in api.edited[0][2].text
     # A purchase produces more than one screen; the extras must not be swallowed.
-    assert "Extrato" in api.sent[-1][1].text
+    assert "Statement" in api.sent[-1][1].text
 
 
 def test_a_stale_offer_button_says_so_instead_of_failing(world) -> None:
@@ -1014,7 +1019,7 @@ def test_a_stale_offer_button_says_so_instead_of_failing(world) -> None:
 
     bot.handle_update(tap("buy:travel-atlantida"))
 
-    assert "saiu do catálogo" in api.edited[-1][2].text
+    assert "no longer in the catalogue" in api.edited[-1][2].text
 
 
 def test_a_revoked_mandate_offers_no_way_to_buy(world) -> None:
@@ -1055,7 +1060,7 @@ def test_the_card_is_typed_at_the_processor_and_never_in_the_chat(world) -> None
 
     assert aval.card_sessions == [identities.get(MARTA).mandate_id]
     assert "checkout.stripe.test" in api.last_text
-    assert "não passa por este chat" in api.last_text
+    assert "never passes through this chat" in api.last_text
 
 
 def test_an_unfinished_registration_binds_nothing(world) -> None:
@@ -1066,7 +1071,7 @@ def test_an_unfinished_registration_binds_nothing(world) -> None:
     bot.handle_update(message("/cartao"))
 
     assert aval.bindings == []
-    assert "Ainda não vi um cartão" in api.last_text
+    assert "I have not seen a card registered" in api.last_text
 
 
 def _instrument_claims(aval) -> dict:
@@ -1132,7 +1137,7 @@ def test_cancelling_the_card_is_signed_and_leaves_the_mandate_alive(world) -> No
     bot.handle_update(message("/cartao"))
 
     bot.handle_update(tap(f"{views.CALLBACK_CARD_MENU}:{mandate_id}"))
-    assert "mandato continua ativo" in api.last_text
+    assert "mandate stays active" in api.last_text
 
     bot.handle_update(tap(f"{views.CALLBACK_CARD_CONFIRM}:{mandate_id}"))
 
@@ -1142,7 +1147,7 @@ def test_cancelling_the_card_is_signed_and_leaves_the_mandate_alive(world) -> No
     assert claims["scope"] == "instrument:pm_test_1"
     assert aval.mandates[mandate_id]["status"] == "ACTIVE", "the agent is still authorized"
 
-    bot.handle_update(message("/comprar um voo pra Córdoba"))
+    bot.handle_update(message("/buy a flight to Córdoba"))
     # `last_text` prefers the edited card left by the tap, so read what was sent.
     assert "instrument_revoked" in api.sent[-1][1].text
 
@@ -1159,7 +1164,7 @@ def test_a_chat_without_the_card_scope_refuses_rather_than_guessing_one(world) -
 
     bot.handle_update(tap(f"{views.CALLBACK_CARD_CONFIRM}:{mandate_id}"))
 
-    assert "escopo do cartão" in api.last_text
+    assert "card scope" in api.last_text
     authority_after = [claims for claims in aval.verified_claims if "mandate_id" in claims]
     assert authority_after == authority_before, "nothing was signed"
 
@@ -1185,7 +1190,7 @@ def test_a_chat_whose_mandate_vanished_is_told_to_start_again(world) -> None:
     """The stored id outlives the mandate: a reset environment, an expiry purge, a
     fresh database. Every command below the guard needs it to exist.
 
-    Before this, `/comprar` answered "nenhuma ação foi executada" — true, unhelpful,
+    Before this, `/comprar` answered "no action was taken" — true, unhelpful,
     and indistinguishable from the backend being down. The person had no way to know
     that `/start` would fix it.
     """
@@ -1193,9 +1198,9 @@ def test_a_chat_whose_mandate_vanished_is_told_to_start_again(world) -> None:
     bot.handle_update(message("/start"))
     identities.bind_mandate(MARTA, "mandate_que_nao_existe")
 
-    for command in ("/comprar um voo pra Córdoba", "/extrato", "/aprovacoes", "/mandato"):
+    for command in ("/buy a flight to Córdoba", "/extrato", "/aprovacoes", "/mandato"):
         bot.handle_update(message(command))
-        assert "/start" in api.sent[-1][1].text, f"{command} não orientou a pessoa"
+        assert "/start" in api.sent[-1][1].text, f"{command} did not guide the person"
 
 
 def test_a_vanished_mandate_does_not_spam_the_escalation_poller(world, caplog) -> None:
@@ -1206,7 +1211,7 @@ def test_a_vanished_mandate_does_not_spam_the_escalation_poller(world, caplog) -
     with caplog.at_level("WARNING"):
         assert bot.push_pending_approvals() == 0
 
-    assert not [record for record in caplog.records if "escalações" in record.message]
+    assert not [record for record in caplog.records if "escalations" in record.message]
 
 
 def test_the_catalogue_leads_with_what_the_mandate_can_actually_buy(world) -> None:
@@ -1223,21 +1228,21 @@ def test_the_catalogue_leads_with_what_the_mandate_can_actually_buy(world) -> No
 
     screen = api.sent[-1][1]
     buttons = [button for row in screen.buttons for button in row]
-    assert buttons, "o catálogo não ofereceu nada"
+    assert buttons, "the catalogue offered nothing"
     allowed = set(aval.mandates[identities.get(MARTA).mandate_id]["allowed_categories"])
 
     def category_of(button) -> str:
         return button[1].split(":", 1)[1].split("-", 1)[0]
 
     assert category_of(buttons[0]) in allowed, (
-        f"o primeiro botão é um beco sem saída: {buttons[0][0]}"
+        f"the first button is a dead end: {buttons[0][0]}"
     )
     reachable = [index for index, b in enumerate(buttons) if category_of(b) in allowed]
     barred = [index for index, b in enumerate(buttons) if category_of(b) not in allowed]
     assert barred, "o fake precisa oferecer algo fora do escopo para este teste valer"
     assert min(barred) > max(reachable), "o que o mandato permite vem antes do que ele barra"
     assert all("⚠️" in buttons[index][0] for index in barred), (
-        "um botão que o mandato vai barrar tem de avisar antes de ser tocado"
+        "a button the mandate will bar must warn before it is tapped"
     )
 
 
@@ -1245,18 +1250,18 @@ def test_the_catalogue_leads_with_what_the_mandate_can_actually_buy(world) -> No
 def test_an_unreachable_target_offers_to_watch_instead_of_giving_up(world) -> None:
     """*Buy me a flight if it drops below X* is not a dead end, it is a standing order.
 
-    Answering "nada no catálogo atende" to the case's own scenario throws away the one
+    Answering "nothing in the catalogue matches" to the case's own scenario throws away the one
     behaviour that makes the buyer an agent rather than a form.
     """
     bot, api, aval, _ = world
     bot.handle_update(message("/start"))
 
-    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
+    bot.handle_update(message("/buy a flight to Córdoba under $80"))
 
     screen = api.sent[-1][1]
     buttons = [button for row in screen.buttons for button in row]
     # The offer is the button: the text may explain, but the tap is what accepts.
-    assert any("vigiar" in label.lower() for label, _ in buttons)
+    assert any("watch" in label.lower() for label, _ in buttons)
     assert any(data.startswith(views.CALLBACK_WATCH) for _, data in buttons)
 
 
@@ -1267,15 +1272,15 @@ def test_watching_is_registered_only_when_the_person_asks_for_it(world) -> None:
     bot.handle_update(message("/start"))
     mandate_id = identities.get(MARTA).mandate_id
 
-    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
-    assert aval.watches == {}, "oferecer não é registrar"
+    bot.handle_update(message("/buy a flight to Córdoba under $80"))
+    assert aval.watches == {}, "offering is not registering"
 
     bot.handle_update(tap(f"{views.CALLBACK_WATCH}:{mandate_id}"))
 
     assert [watch["instruction"] for watch in aval.watches.values()] == [
-        "um voo pra Córdoba abaixo de $80"
+        "a flight to Córdoba under $80"
     ]
-    assert "vigiando" in api.sent[-1][1].text.lower()
+    assert "keep watching" in api.sent[-1][1].text.lower()
 
 
 def test_the_agent_reports_a_purchase_nobody_asked_it_to_make_now(world) -> None:
@@ -1303,7 +1308,7 @@ def test_the_agent_reports_a_purchase_nobody_asked_it_to_make_now(world) -> None
 
     assert bot.push_watch_results() == 1
     delivered = api.sent[before][1].text
-    assert "sozinho" in delivered.lower(), "a mensagem tem de dizer que ninguém pediu"
+    assert "on my own" in delivered.lower(), "the message must say nobody asked for it"
     assert "US$ 75,00" in delivered
 
 
@@ -1345,7 +1350,7 @@ def test_the_message_never_claims_an_order_reached_the_seller(world) -> None:
 
     bot.push_watch_results()
 
-    assert "Não enviei pedido ao vendedor" in api.sent[-1][1].text
+    assert "I placed no order with the seller" in api.sent[-1][1].text
 
 
 def test_a_revoked_mandate_makes_the_agent_report_the_attempt_not_the_purchase(world) -> None:
@@ -1369,7 +1374,7 @@ def test_a_revoked_mandate_makes_the_agent_report_the_attempt_not_the_purchase(w
     assert bot.push_watch_results() == 1
     delivered = api.sent[before][1].text
     assert "mandate_revoked" in delivered
-    assert "não comprei" in delivered.lower()
+    assert "did not buy" in delivered.lower()
 
 
 def test_a_fired_watch_is_reported_once(world) -> None:
@@ -1435,12 +1440,12 @@ def test_the_mandate_card_says_what_the_agent_is_watching(world) -> None:
     bot, api, aval, identities = world
     bot.handle_update(message("/start"))
     mandate_id = identities.get(MARTA).mandate_id
-    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
+    bot.handle_update(message("/buy a flight to Córdoba under $80"))
     bot.handle_update(tap(f"{views.CALLBACK_WATCH}:{mandate_id}"))
 
     bot.handle_update(message("/mandato"))
 
-    assert "abaixo de $80" in api.sent[-1][1].text
+    assert "under $80" in api.sent[-1][1].text
 
 
 def test_a_payment_in_confirmation_is_neither_bought_nor_refused():
@@ -1452,7 +1457,7 @@ def test_a_payment_in_confirmation_is_neither_bought_nor_refused():
         PurchaseView(
             outcome="in_doubt",
             reason_code="settlement_unreachable",
-            human_summary="Compra autorizada e em confirmação.",
+            human_summary="Purchase authorized and awaiting confirmation.",
             title="Voo GRU→COR",
             amount=MoneyView(minor_units=13000, currency="USD", scale=2),
             escalation_id=None,
@@ -1461,7 +1466,7 @@ def test_a_payment_in_confirmation_is_neither_bought_nor_refused():
         )
     )
 
-    assert "confirmação" in view.text.lower()
+    assert "confirmation" in view.text.lower()
     assert "comprado" not in view.text.lower()
     assert "recusado" not in view.text.lower()
 # ── the trail answers the dispute ───────────────────────────────────────────
@@ -1491,7 +1496,7 @@ def test_a_purchase_with_no_proof_behind_it_resolves_for_the_holder(world) -> No
     bot.handle_update(tap("dsp:rsv_1"))
 
     assert "MANDATE_FAILED" in api.last_text
-    assert "estorno é seu" in api.last_text
+    assert "refund is yours" in api.last_text
 
 
 def test_the_dispute_button_survives_a_restart_of_the_bot(world, restart) -> None:
@@ -1517,8 +1522,8 @@ def test_the_extract_says_the_chain_was_checked(world) -> None:
 
     bot.handle_update(message("/extrato"))
 
-    assert "Trilha íntegra" in api.last_text
-    assert "3 evento(s) conferidos" in api.last_text
+    assert "Trail intact" in api.last_text
+    assert "3 event(s) checked" in api.last_text
 
 
 def test_a_broken_chain_is_reported_instead_of_being_claimed_intact(world) -> None:
@@ -1529,7 +1534,7 @@ def test_a_broken_chain_is_reported_instead_of_being_claimed_intact(world) -> No
 
     bot.handle_update(message("/extrato"))
 
-    assert "TRILHA VIOLADA" in api.last_text
+    assert "TRAIL TAMPERED" in api.last_text
     assert "#2" in api.last_text
 
 
@@ -1542,7 +1547,7 @@ def test_the_mandate_is_created_with_the_frequency_rule_and_shows_it(world) -> N
 
     created = next(body for route, body in aval.received if route == "POST /mandates")
     assert created["usage_limit"] == {"max_uses": 3, "window_seconds": 30 * 86_400}
-    assert "3 de 3</b> compra(s) livres nos últimos 30 dia(s)" in api.last_text
+    assert "3 of 3</b> purchase(s) left in the last 30 day(s)" in api.last_text
 
 
 # ── two identities, two keys ────────────────────────────────────────────────
@@ -1571,7 +1576,7 @@ def test_the_agent_card_holds_when_the_core_cannot_name_the_agent(world) -> None
 
     bot.handle_update(message("/agente"))
 
-    assert "perfil indisponível" in api.last_text
+    assert "profile unavailable" in api.last_text
 
 
 # ── a room of judges, not a queue ───────────────────────────────────────────
@@ -1602,7 +1607,7 @@ def test_a_slow_purchase_in_one_chat_does_not_hold_up_another(world) -> None:
     aval.hold.set()
 
     assert handed_off < 1, "dispatch segurou a thread que faz o polling"
-    assert answered_while_held, "o outro chat só foi atendido depois da compra lenta"
+    assert answered_while_held, "the other chat was only served after the slow purchase"
 
 
 def test_one_chat_is_still_answered_in_the_order_it_typed(world) -> None:
@@ -1617,7 +1622,7 @@ def test_one_chat_is_still_answered_in_the_order_it_typed(world) -> None:
     while time.monotonic() < deadline and len(api.sent) < 3:
         time.sleep(0.01)
     assert "AVAL" in api.sent[0][1].text
-    assert "Extrato" in api.sent[2][1].text
+    assert "Statement" in api.sent[2][1].text
 
 
 # ── the person defines the mandate, not the environment ─────────────────────
@@ -1630,7 +1635,7 @@ def test_the_spec_reads_what_how_much_and_until_when(world) -> None:
     bot, _, _, _ = world
     defaults = bot._config.mandate_defaults
 
-    spec = views.parse_mandate_spec("hotel até 300 por 7 dias, 2x", defaults=defaults)
+    spec = views.parse_mandate_spec("hotel up to 300 for 7 days, 2x", defaults=defaults)
 
     assert spec.categories == ("lodging",)
     assert spec.limit.minor_units == 30_000
@@ -1662,10 +1667,10 @@ def test_a_new_mandate_is_previewed_before_anything_is_issued(world) -> None:
     first = identities.get(MARTA).mandate_id
     api.sent.clear()
 
-    bot.handle_update(message("/novo hotel até 300 por 7 dias"))
+    bot.handle_update(message("/new hotel up to 300 for 7 days"))
 
-    assert "confira antes" in api.last_text
-    assert "revoga" in api.last_text
+    assert "check it first" in api.last_text
+    assert "revokes" in api.last_text
     assert identities.get(MARTA).mandate_id == first
     assert aval.mandates[first]["status"] == "ACTIVE"
 
@@ -1674,7 +1679,7 @@ def test_confirming_revokes_the_old_mandate_and_issues_the_described_one(world) 
     bot, api, aval, identities = world
     bot.handle_update(message("/start"))
     first = identities.get(MARTA).mandate_id
-    bot.handle_update(message("/novo hotel até 300 por 7 dias, 2x"))
+    bot.handle_update(message("/new hotel up to 300 for 7 days, 2x"))
 
     bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
 
@@ -1699,7 +1704,7 @@ def test_confirming_a_spec_the_bot_no_longer_holds_issues_nothing(world) -> None
     bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
 
     assert identities.get(MARTA).mandate_id == first
-    assert "Descreva o mandato de novo" in api.last_text
+    assert "Describe the mandate again" in api.last_text
 
 
 # ── conversation ────────────────────────────────────────────────────────────
@@ -1720,9 +1725,9 @@ class ScriptedTalker:
 def test_free_text_is_answered_in_chat_until_the_mandate_is_complete(tmp_path) -> None:
     """The bot converses, then always lands on a spec the person can sign."""
     talker = ScriptedTalker(
-        conversation.Draft("Até quanto você quer poder gastar?", None),
+        conversation.Draft("Up to how much do you want to be able to spend?", None),
         conversation.Draft(
-            "Hotel até 300 dólares, por 7 dias.",
+            "Hotel up to 300 dollars, for 7 days.",
             views.MandateSpec(("lodging",), MoneyView(30_000, "USD", 2), 7, 2),
         ),
     )
@@ -1733,25 +1738,25 @@ def test_free_text_is_answered_in_chat_until_the_mandate_is_complete(tmp_path) -
     api.sent.clear()
 
     bot.handle_update(message("queria poder reservar hotel"))
-    assert api.last_text == "Até quanto você quer poder gastar?"
+    assert api.last_text == "Up to how much do you want to be able to spend?"
     assert not api.sent[-1][1].buttons
     # Nothing was granted from words alone.
     assert aval.mandates[first]["status"] == "ACTIVE"
     assert identities.get(MARTA).mandate_id == first
 
     api.sent.clear()
-    bot.handle_update(message("até 300, por uma semana"))
+    bot.handle_update(message("up to 300, for a week"))
     preview = api.sent[-1][1]
-    assert "confira antes" in preview.text
-    assert "US$ 300,00" in preview.text and "7 dia" in preview.text
+    assert "check it first" in preview.text
+    assert "US$ 300,00" in preview.text and "7 day" in preview.text
     confirm = [label for row in preview.buttons for label, _ in row]
-    assert confirm == ["✅ Emitir este mandato"]
+    assert confirm == ["✅ Issue this mandate"]
 
     # The whole exchange, and only the catalogue's own categories, reached the model.
     assert talker.seen[-1] == (
         "queria poder reservar hotel",
-        "Até quanto você quer poder gastar?",
-        "até 300, por uma semana",
+        "Up to how much do you want to be able to spend?",
+        "up to 300, for a week",
     )
     assert "lodging" in talker.categories
 
@@ -1768,7 +1773,7 @@ def _shopping_draft(days: int = 30):
         "Entendi: vou acompanhar um notebook.",
         views.MandateSpec(("shopping",), MoneyView(200_000, "USD", 2), 30, 1),
         conversation.ShoppingDraft(
-            query="notebook para faculdade",
+            query="laptop for university",
             category="shopping",
             max_minor_units=200_000,
             currency="USD",
@@ -1788,14 +1793,14 @@ def test_the_search_is_previewed_as_its_own_decision(tmp_path) -> None:
     bot.handle_update(message("/start"))
     api.sent.clear()
 
-    bot.handle_update(message("acompanhe um notebook até 2000 por 30 dias"))
+    bot.handle_update(message("watch a laptop up to 2000 for 30 days"))
 
     preview = api.sent[-1][1].text
-    assert "notebook para faculdade" in preview
+    assert "laptop for university" in preview
     assert "US$ 2.000,00" in preview
-    assert "30 dia" in preview
-    assert "compro sozinho" in preview
-    assert "Não enviei pedido ao vendedor" in preview
+    assert "30 day" in preview
+    assert "I buy it on my own" in preview
+    assert "I placed no order with the seller" in preview
 
 
 def test_confirming_arms_the_watch_with_a_structured_request(tmp_path) -> None:
@@ -1804,19 +1809,19 @@ def test_confirming_arms_the_watch_with_a_structured_request(tmp_path) -> None:
     bot._talker = ScriptedTalker(_shopping_draft())
     bot.handle_update(message("/start"))
     first = identities.get(MARTA).mandate_id
-    bot.handle_update(message("acompanhe um notebook até 2000 por 30 dias"))
+    bot.handle_update(message("watch a laptop up to 2000 for 30 days"))
 
-    assert aval.watches == {}, "nada é vigiado antes da confirmação"
+    assert aval.watches == {}, "nothing is watched before confirmation"
 
     bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
 
     watch = next(iter(aval.watches.values()))
     request = decode_shopping_request(watch["instruction"])
-    assert request is not None, "a vigília guarda um pedido estruturado, não uma frase"
-    assert request.query == "notebook para faculdade"
+    assert request is not None, "the watch stores a structured request, not a sentence"
+    assert request.query == "laptop for university"
     assert request.max_minor_units == 200_000
     assert request.currency == "USD"
-    assert "Vigilância ligada" in api.sent[-1][1].text
+    assert "Watch armed" in api.sent[-1][1].text
 
 
 def test_a_shopping_mandate_names_the_marketplace_that_signs_discovered_pages(tmp_path) -> None:
@@ -1826,7 +1831,7 @@ def test_a_shopping_mandate_names_the_marketplace_that_signs_discovered_pages(tm
     bot._talker = ScriptedTalker(_shopping_draft())
     bot.handle_update(message("/start"))
     first = identities.get(MARTA).mandate_id
-    bot.handle_update(message("acompanhe um notebook até 2000 por 30 dias"))
+    bot.handle_update(message("watch a laptop up to 2000 for 30 days"))
 
     bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
 
@@ -1840,13 +1845,13 @@ def test_a_mandate_without_a_search_arms_nothing(tmp_path) -> None:
     bot, api, aval, identities = _build(tmp_path, FakeAval())
     bot._talker = ScriptedTalker(
         conversation.Draft(
-            "Hotel até 300 dólares, por 7 dias.",
+            "Hotel up to 300 dollars, for 7 days.",
             views.MandateSpec(("lodging",), MoneyView(30_000, "USD", 2), 7, 2),
         )
     )
     bot.handle_update(message("/start"))
     first = identities.get(MARTA).mandate_id
-    bot.handle_update(message("hotel até 300 por 7 dias"))
+    bot.handle_update(message("hotel up to 300 for 7 days"))
 
     bot.handle_update(tap(f"{views.CALLBACK_NEW_CONFIRM}:{first}"))
 
@@ -1865,3 +1870,23 @@ def test_shopping_is_offered_even_though_no_catalogue_row_carries_it(tmp_path) -
     bot.handle_update(message("acompanhe um notebook"))
 
     assert "shopping" in talker.categories
+
+
+def test_a_tap_still_answers_when_telegram_will_not_acknowledge_it(world) -> None:
+    """A stale callback must not swallow the screen the person is waiting for.
+
+    `answerCallbackQuery` only stops the button spinning, and Telegram refuses it with
+    400 once the query is old — the state every queued tap is in after the bot restarts
+    and drains its backlog. That refusal used to escape before the screens were sent,
+    so the core had already decided and the person saw nothing come back.
+    """
+    bot, api, _, _ = world
+    bot.handle_update(message("/start"))
+    mandate_id = api.sent[0][1].buttons[1][0][1].split(":", 1)[1]
+    api.edited.clear()
+
+    api.stale_callbacks = True
+    bot.handle_update(tap(f"{views.CALLBACK_MANDATE}:{mandate_id}"))
+
+    assert api.edited, "the mandate card has to arrive even when the tap is not acknowledged"
+    assert "ACTIVE" in api.edited[-1][2].text

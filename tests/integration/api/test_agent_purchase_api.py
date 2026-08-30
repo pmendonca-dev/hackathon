@@ -36,7 +36,7 @@ def instruct(harness, mandate_id: str, instruction: str):
 def test_the_agent_finds_and_buys_a_flight_inside_the_mandate(harness):
     mandate_id = harness.create_mandate()
 
-    response = instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $150")
+    response = instruct(harness, mandate_id, "buy a flight to Córdoba under $150")
 
     body = response.json()
     assert response.status_code == 200, response.text
@@ -51,7 +51,7 @@ def test_the_agent_finds_and_buys_a_flight_inside_the_mandate(harness):
 def test_the_agent_holds_its_own_target_price(harness):
     mandate_id = harness.create_mandate()
 
-    response = instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $100")
+    response = instruct(harness, mandate_id, "buy a flight to Córdoba under $100")
 
     assert response.json()["outcome"] == "no_offer"
     assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 0
@@ -71,7 +71,7 @@ def test_the_agent_cannot_talk_its_way_past_the_ceiling(harness):
 def test_the_agent_asking_for_a_hotel_is_escalated_not_served(harness):
     mandate_id = harness.create_mandate()
 
-    response = instruct(harness, mandate_id, "reserve um hotel em Córdoba")
+    response = instruct(harness, mandate_id, "book a hotel in Córdoba")
 
     body = response.json()
     assert body["outcome"] == "awaiting_human"
@@ -81,9 +81,9 @@ def test_the_agent_asking_for_a_hotel_is_escalated_not_served(harness):
 
 def test_buying_again_runs_into_the_accumulated_budget(harness):
     mandate_id = harness.create_mandate()
-    instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $150")
+    instruct(harness, mandate_id, "buy a flight to Córdoba under $150")
 
-    second = instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $150")
+    second = instruct(harness, mandate_id, "buy a flight to Córdoba under $150")
 
     assert second.json()["reason_code"] == "budget_exceeded"
     assert harness.read_mandate(mandate_id).json()["spent"]["minor_units"] == 11800
@@ -102,7 +102,7 @@ def test_a_revoked_mandate_stops_the_agent(harness):
         },
     )
 
-    response = instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $150")
+    response = instruct(harness, mandate_id, "buy a flight to Córdoba under $150")
 
     assert response.json()["outcome"] == "rejected"
     assert response.json()["reason_code"] == "mandate_revoked"
@@ -112,14 +112,14 @@ def test_a_live_limit_change_binds_the_agent_without_a_restart(harness):
     mandate_id = harness.create_mandate()
     harness.change_limit(mandate_id, 10000)
 
-    response = instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $150")
+    response = instruct(harness, mandate_id, "buy a flight to Córdoba under $150")
 
     assert response.json()["reason_code"] == "budget_exceeded"
 
 
 def test_the_trail_names_the_agent_that_bought(harness):
     mandate_id = harness.create_mandate()
-    instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $150")
+    instruct(harness, mandate_id, "buy a flight to Córdoba under $150")
 
     entries = harness.client.get(
         "/ledger", params={"mandate_id": mandate_id, "view": "auditor"}
@@ -147,7 +147,7 @@ def test_an_untrusted_agent_profile_stops_every_purchase(harness):
         },
     )
 
-    response = instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $150")
+    response = instruct(harness, mandate_id, "buy a flight to Córdoba under $150")
 
     assert response.status_code == 403
     assert response.json()["reason_code"] == "profile_not_trusted"
@@ -155,7 +155,7 @@ def test_an_untrusted_agent_profile_stops_every_purchase(harness):
 
 def test_the_purchase_the_agent_made_verifies_at_the_merchant(harness):
     mandate_id = harness.create_mandate()
-    run = instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $150").json()
+    run = instruct(harness, mandate_id, "buy a flight to Córdoba under $150").json()
 
     verification = harness.client.post(
         "/merchant/verify",
@@ -242,7 +242,7 @@ def test_an_unreachable_model_still_buys(harness, model):
     model(TimeoutError("upstream slow"))
     mandate_id = harness.create_mandate()
 
-    body = instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $150").json()
+    body = instruct(harness, mandate_id, "buy a flight to Córdoba under $150").json()
 
     assert body["outcome"] == "settled", body
     assert body["proposed_by"] == "rules"
@@ -254,7 +254,7 @@ def test_a_model_naming_something_nobody_sells_decides_nothing(harness, model):
     model({"sku": "FL-SAO-COR-9999", "reason": "Achei uma promoção melhor.", "rejected": []})
     mandate_id = harness.create_mandate()
 
-    body = instruct(harness, mandate_id, "compre um voo para Córdoba abaixo de $150").json()
+    body = instruct(harness, mandate_id, "buy a flight to Córdoba under $150").json()
 
     assert body["outcome"] == "settled", body
     assert body["proposed_by"] == "rules"
@@ -270,7 +270,7 @@ def test_an_instruction_that_names_nothing_asks_instead_of_buying(harness):
     """
     mandate_id = harness.create_mandate()
 
-    body = instruct(harness, mandate_id, "compre uma passagem").json()
+    body = instruct(harness, mandate_id, "buy a ticket").json()
 
     assert body["outcome"] == "needs_clarification"
     assert body["reason_code"] == "instruction_ambiguous"
@@ -281,9 +281,9 @@ def test_an_instruction_that_names_nothing_asks_instead_of_buying(harness):
 def test_answering_the_question_buys(harness):
     """Ambiguity asks, and the answer is an ordinary purchase."""
     mandate_id = harness.create_mandate()
-    assert instruct(harness, mandate_id, "compre um voo").json()["outcome"] == "needs_clarification"
+    assert instruct(harness, mandate_id, "buy a flight").json()["outcome"] == "needs_clarification"
 
-    body = instruct(harness, mandate_id, "compre um voo pra Córdoba").json()
+    body = instruct(harness, mandate_id, "buy a flight to Córdoba").json()
 
     assert body["outcome"] == "settled", body
 

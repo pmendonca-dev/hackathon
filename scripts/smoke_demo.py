@@ -140,7 +140,7 @@ class Smoke:
         mandate_id = self.create_mandate()
         self.check("mandate created", mandate_id.startswith("mandate_"), mandate_id)
 
-        unfunded = self.buy(mandate_id, "compre um voo para Córdoba abaixo de $150")
+        unfunded = self.buy(mandate_id, "buy a flight to Córdoba under $150")
         self.check(
             "a mandate with no card cannot pay",
             unfunded["reason_code"] == "instrument_not_in_mandate",
@@ -150,7 +150,7 @@ class Smoke:
         label = self.register_card(mandate_id)
         self.check("the card is registered at the processor", label.startswith("••••"), label)
 
-        bought = self.buy(mandate_id, "compre um voo para Córdoba abaixo de $150")
+        bought = self.buy(mandate_id, "buy a flight to Córdoba under $150")
         self.check(
             "agent buys inside the mandate",
             bought["outcome"] == "settled",
@@ -168,7 +168,7 @@ class Smoke:
         raw = str(verified)
         self.check("merchant never sees the mandate", mandate_id not in raw and "usr_marta" not in raw)
 
-        hotel = self.buy(mandate_id, "reserve um hotel em Córdoba")
+        hotel = self.buy(mandate_id, "book a hotel in Córdoba")
         self.check(
             "out of scope escalates instead of passing",
             hotel["outcome"] == "awaiting_human" and hotel["reason_code"] == "category_not_allowed",
@@ -199,7 +199,7 @@ class Smoke:
 
         stranger = KeyCustodyService()
         stranger.generate_es256("stranger_k1")
-        forged_escalation = self.buy(mandate_id, "reserve um hotel em Córdoba")
+        forged_escalation = self.buy(mandate_id, "book a hotel in Córdoba")
         forged = self.client.post(
             f"/escalations/{forged_escalation.get('escalation_id')}/decision",
             json={
@@ -223,7 +223,7 @@ class Smoke:
             str(forged.status_code),
         )
 
-        ceiling = self.buy(mandate_id, "compre a executiva para Córdoba de $900")
+        ceiling = self.buy(mandate_id, "buy the business class fare to Córdoba at $900")
         self.check(
             "the ceiling refuses and offers no approval",
             ceiling["reason_code"] == "mandate_ceiling" and ceiling["escalation_id"] is None,
@@ -271,7 +271,7 @@ class Smoke:
                 "authorization_jws": signed_limit(100, before_change),
             },
         )
-        after_change = self.buy(mandate_id, "compre um voo para Buenos Aires")
+        after_change = self.buy(mandate_id, "buy a flight to Buenos Aires")
         self.check(
             "a signed limit change binds the next decision",
             after_change["reason_code"] in ("budget_exceeded", "no_offer_matched"),
@@ -337,7 +337,7 @@ class Smoke:
             HOLDER_KID,
         )
         self.client.post(f"/mandates/{mandate_id}/revocation", json={"token": revocation})
-        after_revocation = self.buy(mandate_id, "compre um voo para Córdoba abaixo de $150")
+        after_revocation = self.buy(mandate_id, "buy a flight to Córdoba under $150")
         self.check(
             "revocation blocks the next attempt",
             after_revocation["reason_code"] == "mandate_revoked",
