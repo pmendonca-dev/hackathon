@@ -28,12 +28,29 @@ uv run python -m aval.interfaces.telegram
 Descobrir o próprio chat id: mande `/meuid` ao bot. Sem estar na allowlist,
 `/start` e `/meuid` respondem; todo o resto é recusado.
 
+### Modo demo aberta (para os juízes)
+
+Numa apresentação você não vai reiniciar o bot a cada jurado. Com
+`TELEGRAM_DEMO_MODE=1` qualquer pessoa pode falar com o bot e decidir —
+**cada chat recebe seu próprio conjunto de mandatos**, isolado dos demais. Um
+jurado revoga e vê 🔴; o do lado, no mesmo segundo, continua vendo 🟢.
+
+```powershell
+$env:TELEGRAM_DEMO_MODE = "1"     # dispensa TELEGRAM_ALLOWED_CHAT_IDS
+```
+
+Isso vale **apenas com fixtures**. Combinar `TELEGRAM_DEMO_MODE` com
+`AVAL_API_BASE_URL` é recusado na partida: contra um backend real não existe
+sandbox por pessoa, e abrir seria dar a qualquer estranho autoridade sobre o
+mandato de alguém. Para a apresentação com backend, volte à allowlist.
+
 ### Variáveis
 
 | Variável | Obrigatória | Padrão | Efeito |
 | --- | --- | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | sim | — | token do BotFather |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | sim na prática | vazio | **vazio autoriza ninguém** (fail-closed) |
+| `TELEGRAM_DEMO_MODE` | não | desligado | `1` abre para qualquer pessoa, com sandbox por chat; incompatível com `AVAL_API_BASE_URL` |
 | `AVAL_API_BASE_URL` | não | — | definir liga o `HttpGateway` |
 | `AVAL_API_TOKEN` | não | — | vira `Authorization: Bearer` |
 | `TELEGRAM_POLL_TIMEOUT_SECONDS` | não | 30 | long poll do `getUpdates` |
@@ -123,6 +140,8 @@ nos handlers.
 - Dinheiro só entra e sai como `minor_units` inteiro; a formatação é aritmética
   inteira (`views.format_money`). Nenhum float em lugar nenhum.
 - Allowlist fail-closed: chat fora da lista não lê nem decide.
+- Modo demo abre a porta sem abrir o estado: cada chat decide só no próprio
+  sandbox, e ele é recusado se houver backend real configurado.
 - `callback_data` é entrada não confiável — validada em `views.parse_callback`
   antes de virar ação.
 - Chave de idempotência determinística por (ação, alvo, chat): toque duplo não

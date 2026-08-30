@@ -19,7 +19,7 @@ import urllib.request
 
 from aval.interfaces.telegram import views
 from aval.interfaces.telegram.config import BotConfig
-from aval.interfaces.telegram.gateway import AvalGateway, GatewayError, build_gateway
+from aval.interfaces.telegram.gateway import AvalGateway, GatewayError, MockGateway, build_gateway
 from aval.interfaces.telegram.views import View
 
 logger = logging.getLogger("aval.telegram")
@@ -113,7 +113,19 @@ class Bot:
         self._config = config
         self._gateway = gateway
         self._api = api
-        self._notified: set[str] = set()
+        self._sandboxes: dict[int, AvalGateway] = {}
+        self._notified: set[tuple[int, str]] = set()
+
+    def _gateway_for(self, chat_id: int) -> AvalGateway:
+        """Demo mode gives every chat its own fixtures, so judges never collide."""
+        if not self._config.demo_mode:
+            return self._gateway
+        return self._sandboxes.setdefault(chat_id, MockGateway())
+
+    def _audiences(self) -> Sequence[tuple[int, AvalGateway]]:
+        if self._config.demo_mode:
+            return tuple(self._sandboxes.items())
+        return tuple((chat_id, self._gateway) for chat_id in sorted(self._config.allowed_chat_ids))
 
     # ── update handling ────────────────────────────────────────────────────
     def handle_update(self, update: Mapping[str, Any]) -> None:
@@ -135,10 +147,12 @@ class Bot:
         logger.info("%s de %s", command, chat_id)
 
         if command == "/start":
+            self._gateway_for(chat_id)  # a sandbox is born the moment someone says hello
             self._send(chat_id, views.welcome(
                 chat_id=chat_id,
                 allowed=self._config.may_act(chat_id),
                 mock_mode=self._config.uses_mock_gateway,
+                demo_mode=self._config.demo_mode,
             ))
             return
         if command in {"/meuid", "/chatid"}:
@@ -149,35 +163,36 @@ class Bot:
             return
 
         try:
-            self._send_all(chat_id, self._command_views(command, argument))
+            self._send_all(chat_id, self._command_views(command, argument, self._gateway_for(chat_id)))
         except GatewayError as error:
             self._send(chat_id, views.unavailable(str(error)))
 
-    def _command_views(self, command: str, argument: str) -> Sequence[View]:
+    def _command_views(self, command: str, argument: str, gateway: AvalGateway) -> Sequence[View]:
         if command == "/ajuda" or command == "/help":
             return (views.help_text(),)
         if command == "/mandatos":
-            return (views.mandate_list(self._gateway.list_mandates()),)
+            return (views.mandate_list(gateway.list_mandates()),)
         if command == "/mandato":
-            mandate = self._gateway.get_mandate(argument) if argument else None
+            mandate = gateway.get_mandate(argument) if argument else None
             if mandate is None:
                 return (View("Informe um id válido: <code>/mandato mnd_...</code>"),)
             return (views.mandate_detail(mandate),)
         if command in {"/aprovacoes", "/aprovações"}:
-            return views.approval_list(self._gateway.list_pending_approvals())
+            return views.approval_list(gateway.list_pending_approvals())
         if command == "/atividade":
-            return (views.activity_list(self._gateway.activity(argument or None)),)
+            return (views.activity_list(gateway.activity(argument or None)),)
         if command == "/revogar":
-            mandate = self._gateway.get_mandate(argument) if argument else None
+            mandate = gateway.get_mandate(argument) if argument else None
             if mandate is None:
                 return (View("Informe um id válido: <code>/revogar mnd_...</code>"),)
             return (views.revoke_menu(mandate),)
         if command == "/status":
             return (
                 views.status(
-                    backend=self._gateway.health(),
+                    backend=gateway.health(),
                     mock_mode=self._config.uses_mock_gateway,
-                    pending=len(self._gateway.list_pending_approvals()),
+                    demo_mode=self._config.demo_mode,
+                    pending=len(gateway.list_pending_approvals()),
                 ),
             )
         return (views.help_text(),)
@@ -211,16 +226,17 @@ class Bot:
 
     def _callback_view(self, verb: str, argument: str, *, actor: str, chat_id: int) -> View:
         key = _idempotency_key(verb, argument, chat_id)
+        gateway = self._gateway_for(chat_id)
         if verb == views.CALLBACK_MANDATE_LIST:
-            return views.mandate_list(self._gateway.list_mandates())
+            return views.mandate_list(gateway.list_mandates())
         if verb == views.CALLBACK_MANDATE:
-            mandate = self._gateway.get_mandate(argument)
+            mandate = gateway.get_mandate(argument)
             return views.mandate_detail(mandate) if mandate else View("Mandato não encontrado.")
         if verb == views.CALLBACK_REVOKE_MENU:
-            mandate = self._gateway.get_mandate(argument)
+            mandate = gateway.get_mandate(argument)
             return views.revoke_menu(mandate) if mandate else View("Mandato não encontrado.")
         if verb in {views.CALLBACK_APPROVE, views.CALLBACK_DENY}:
-            result = self._gateway.resolve_approval(
+            result = gateway.resolve_approval(
                 argument,
                 approve=verb == views.CALLBACK_APPROVE,
                 actor=actor,
@@ -228,12 +244,12 @@ class Bot:
             )
             return views.action_result(result)
         if verb == views.CALLBACK_REVOKE_MANDATE:
-            result = self._gateway.revoke(
+            result = gateway.revoke(
                 argument, scope="mandate", reason="revoked_by_holder", actor=actor, idempotency_key=key
             )
             return views.action_result(result)
         if verb == views.CALLBACK_REVOKE_BUDGET:
-            result = self._gateway.revoke(
+            result = gateway.revoke(
                 argument, scope="budget:zero", reason="budget_zeroed_by_holder", actor=actor, idempotency_key=key
             )
             return views.action_result(result)
@@ -241,32 +257,34 @@ class Bot:
 
     # ── escalation push ────────────────────────────────────────────────────
     def push_pending_approvals(self) -> int:
-        """Deliver approvals the human has not seen yet. Returns how many went out.
+        """Deliver approvals each human has not seen yet; returns how many went out.
 
         ponytail: the seen-set is in memory, so a restart re-notifies whatever is
         still pending; persist it only if the bot starts restarting mid-demo.
         """
-        try:
-            pending = self._gateway.list_pending_approvals()
-        except GatewayError as error:
-            logger.warning("could not read pending approvals: %s", error)
-            return 0
         sent = 0
-        for approval in pending:
-            if approval.id in self._notified:
+        for chat_id, gateway in self._audiences():
+            try:
+                pending = gateway.list_pending_approvals()
+            except GatewayError as error:
+                logger.warning("could not read approvals for %s: %s", chat_id, error)
                 continue
-            card = views.approval_card(approval)
-            for chat_id in sorted(self._config.allowed_chat_ids):
-                self._send(chat_id, card)
-            self._notified.add(approval.id)
-            sent += 1
+            for approval in pending:
+                seen = (chat_id, approval.id)
+                if seen in self._notified:
+                    continue
+                self._send(chat_id, views.approval_card(approval))
+                self._notified.add(seen)
+                sent += 1
         return sent
 
     # ── runtime ────────────────────────────────────────────────────────────
     def run(self) -> None:
         logger.info(
             "AVAL Telegram bot online (%s)",
-            "mock gateway" if self._config.uses_mock_gateway else "backend gateway",
+            "demo aberta, um sandbox por chat" if self._config.demo_mode
+            else "mock gateway" if self._config.uses_mock_gateway
+            else "backend gateway",
         )
         # ponytail: one update at a time, so a slow gateway call holds the next
         # ones. One human, one demo. A per-chat queue is the upgrade path.
