@@ -94,6 +94,13 @@ export class GatewayError extends Error {
   }
 }
 
+export interface TelegramChat {
+  chat_id: number;
+  display_name: string;
+  principal_id: string;
+  mandate_id: string | null;
+}
+
 export interface AuthorizationGatewayOptions {
   baseUrl: string;
   fetch?: typeof globalThis.fetch;
@@ -188,6 +195,15 @@ export class AuthorizationGateway {
       `/mandates?principal_id=${encodeURIComponent(principalId)}` +
         `&authorization_jws=${encodeURIComponent(authorizationJws)}`,
     );
+  }
+
+  /**
+   * The chat directory the bot keeps on disk. Operator-gated, and deliberately thin:
+   * it never carries a chat's private key, so a screen built on it can follow a chat
+   * without ever being able to act as one.
+   */
+  listTelegramChats(): Promise<{ chats: TelegramChat[] }> {
+    return this.#request('/admin/telegram/chats', { operator: true });
   }
 
   readMandate(mandateId: string): Promise<MandateView> {

@@ -30,6 +30,9 @@ const DEFAULT_GATEWAY = new AuthorizationGateway({
   operatorToken: environment.VITE_AVAL_OPERATOR_TOKEN,
 });
 
+/** Fast enough that a judge sees their own tap land; slow enough to stay boring. */
+const LIVE_INTERVAL_MS = 4000;
+
 const DEFAULT_PRINCIPAL = environment.VITE_AVAL_PRINCIPAL_ID ?? 'usr_marta';
 
 function describe(error: unknown): { reasonCode: string | null; message: string } {
@@ -49,6 +52,7 @@ export function AvalProvider({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [wallet, setWallet] = useState<HolderWallet | null>(null);
+  const [live, setLive] = useState(true);
 
   const [mandates, setMandates] = useState<MandateView[]>([]);
   const [selectedMandateId, setSelectedMandateId] = useState<string | null>(null);
@@ -118,8 +122,11 @@ export function AvalProvider({
     };
   }, [principalId]);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
+  const reload = useCallback(async (silent = false) => {
+    // A timed re-read must not paint. Flipping `loading` every few seconds would spin
+    // the header button and blank the first paint's placeholder on a loop, which reads
+    // as an unstable page rather than a live one.
+    if (!silent) setLoading(true);
     setError(null);
     try {
       // Both principal-scoped listings are signed by the wallet: the id in the URL is a
@@ -167,7 +174,7 @@ export function AvalProvider({
     } catch (caught) {
       setError(describe(caught).message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
     // `wallet` belongs here: the listings are signed with it, so a reload captured
     // before it existed would hold a null key and the page would stay empty for good.
@@ -177,6 +184,19 @@ export function AvalProvider({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  /**
+   * Live mode. The demo is driven from a phone while this is on a projector, so the
+   * screen re-reads on its own — and stops while the tab is hidden, because a laptop
+   * left on a slide should not keep a connection warm for nothing.
+   */
+  useEffect(() => {
+    if (!live) return;
+    const timer = setInterval(() => {
+      if (!document.hidden) void reload(true);
+    }, LIVE_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [live, reload]);
 
   const requireWallet = useCallback((): HolderWallet => {
     if (!wallet) throw new Error('A carteira do titular ainda não está pronta.');
@@ -191,6 +211,8 @@ export function AvalProvider({
       view,
       loading,
       error,
+      live,
+      gateway,
       operatorAvailable: gateway.hasOperatorToken,
       mandates,
       selectedMandateId,
@@ -204,6 +226,7 @@ export function AvalProvider({
       receipts,
 
       setView,
+      setLive,
       setPrincipalId: (next: string) => {
         setPrincipalIdState(next);
         setSelectedMandateId(null);
@@ -383,6 +406,7 @@ export function AvalProvider({
       view,
       loading,
       error,
+      live,
       gateway,
       mandates,
       escalations,

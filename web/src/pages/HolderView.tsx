@@ -4,7 +4,7 @@ import { KeyRound, Send, ShieldOff, Sparkles } from 'lucide-react';
 import { useAval } from '../state/AvalContext.ts';
 import { EvaluationLadder } from '../components/EvaluationLadder.tsx';
 import { Badge, Button, EmptyNotice, Field, Panel } from '../components/ui.tsx';
-import { formatDateTime, formatMoney } from '../utils/format.ts';
+import { formatDateTime, formatMoney, toMoney } from '../utils/format.ts';
 
 const MONTH_SECONDS = 30 * 24 * 3600;
 
@@ -228,10 +228,6 @@ export function HolderView() {
       </section>
     </div>
   );
-}
-
-function toMoney(value: { minor_units: number; currency: string; scale: number }) {
-  return { minorUnits: value.minor_units, currency: value.currency, scale: value.scale };
 }
 
 function CreateMandateForm({

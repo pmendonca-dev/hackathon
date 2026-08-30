@@ -2,13 +2,14 @@ import { createContext, useContext } from 'react';
 
 import type {
   AgentRun,
+  AuthorizationGateway,
   Escalation,
   LedgerEntry,
   MandateView,
   Money,
 } from '../gateways/authorizationGateway.ts';
 
-export type View = 'human' | 'merchant' | 'auditor' | 'trial';
+export type View = 'human' | 'merchant' | 'auditor' | 'trial' | 'telegram';
 
 export interface ChainStatus {
   intact: boolean;
@@ -32,6 +33,12 @@ export interface AvalContextValue {
   walletReady: boolean;
   view: View;
   loading: boolean;
+  /**
+   * Whether the page re-reads the runtime on a timer. A demo is navigated while
+   * somebody else is typing into the bot, so a screen that only updates when clicked
+   * is a screen that shows the past.
+   */
+  live: boolean;
   error: string | null;
   /** Present only when an operator token was configured for this session. */
   operatorAvailable: boolean;
@@ -47,7 +54,11 @@ export interface AvalContextValue {
   chain: ChainStatus | null;
   receipts: CommandReceipt[];
 
+  /** Exposed so a read-only screen can follow a mandate this wallet does not hold. */
+  gateway: AuthorizationGateway;
+
   setView(view: View): void;
+  setLive(live: boolean): void;
   setPrincipalId(principalId: string): void;
   selectMandate(mandateId: string): void;
   reload(): Promise<void>;

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Gavel, KeyRound, RefreshCw, ScrollText, Store, UserRound } from 'lucide-react';
+import { Gavel, KeyRound, MessageSquare, Radio, RefreshCw, ScrollText, Store, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { useAval, type View } from '../state/AvalContext.ts';
@@ -10,6 +10,7 @@ const views: Array<{ id: View; label: string; context: string; icon: LucideIcon 
   { id: 'merchant', label: 'Merchant', context: 'O que verifiquei', icon: Store },
   { id: 'auditor', label: 'Auditor', context: 'Trilha completa', icon: ScrollText },
   { id: 'trial', label: 'Trial-by-fire', context: 'Mude ao vivo', icon: Gavel },
+  { id: 'telegram', label: 'Telegram', context: 'O chat, ao vivo', icon: MessageSquare },
 ];
 
 /**
@@ -18,7 +19,7 @@ const views: Array<{ id: View; label: string; context: string; icon: LucideIcon 
  * the two facts that decide whether anything else on screen can be trusted.
  */
 export function Shell({ children }: { children: ReactNode }) {
-  const { view, setView, loading, reload, principalId, holderKid, walletReady, chain } = useAval();
+  const { view, setView, loading, reload, principalId, holderKid, walletReady, chain, live, setLive } = useAval();
 
   return (
     <div className="min-h-full bg-ink-950 text-fg lg:grid lg:grid-cols-[252px_minmax(0,1fr)]">
@@ -85,6 +86,16 @@ export function Shell({ children }: { children: ReactNode }) {
                   {chain.intact ? `CADEIA OK · ${chain.checked}` : `QUEBRA EM ${chain.broken_at}`}
                 </Badge>
               )}
+              <Button
+                variant="ghost"
+                onClick={() => setLive(!live)}
+                aria-pressed={live}
+                aria-label={live ? 'Desligar atualização automática' : 'Ligar atualização automática'}
+                className={live ? 'text-verify' : ''}
+              >
+                <Radio size={13} aria-hidden="true" />
+                <span className="hidden sm:inline">{live ? 'Ao vivo' : 'Parado'}</span>
+              </Button>
               <Button variant="ghost" onClick={() => void reload()} disabled={loading} aria-label="Recarregar estado canônico">
                 <RefreshCw size={13} aria-hidden="true" />
                 <span className="hidden sm:inline">Recarregar</span>

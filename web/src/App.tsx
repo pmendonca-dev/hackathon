@@ -5,6 +5,7 @@ import { Button } from './components/ui.tsx';
 import { AuditorTrailView } from './pages/AuditorTrailView.tsx';
 import { HolderView } from './pages/HolderView.tsx';
 import { MerchantDeskView } from './pages/MerchantDeskView.tsx';
+import { TelegramWatchView } from './pages/TelegramWatchView.tsx';
 import { TrialByFireConsole } from './pages/TrialByFireConsole.tsx';
 import { useAval } from './state/AvalContext.ts';
 import { AvalProvider } from './state/AvalProvider.tsx';
@@ -50,6 +51,7 @@ function Workspace() {
       {view === 'merchant' && <MerchantDeskView />}
       {view === 'auditor' && <AuditorTrailView />}
       {view === 'trial' && <TrialByFireConsole />}
+      {view === 'telegram' && <TelegramWatchView />}
     </Shell>
   );
 }
