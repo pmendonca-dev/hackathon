@@ -10,6 +10,7 @@ from aval.domain.enums import (
     MandateStatus,
     ReservationStatus,
     RevocationRole,
+    WatchStatus,
 )
 from aval.domain.errors import DomainError
 from aval.domain.money import Money
@@ -280,6 +281,42 @@ class Escalation:
             raise DomainError("an escalation must carry the reason it was raised")
         if self.expires_at <= self.created_at:
             raise DomainError("an escalation must expire after it was created")
+
+    def is_expired_at(self, instant: datetime) -> bool:
+        return instant >= self.expires_at
+
+
+@dataclass(frozen=True)
+class Watch:
+    """A standing order: what to keep trying to buy, and until when.
+
+    This is the half of the case that no request/response surface can express — *buy me
+    a flight to Córdoba if it drops below $150* is not a purchase, it is an intention
+    that outlives the conversation. The agent re-reads `instruction` on every tick, so
+    the target price is whatever the person actually said rather than a number this row
+    froze and could disagree with.
+
+    It carries no authority of its own. Firing means asking the core, and the core
+    answers the same way it answers a person typing — which is why a watch that fires
+    against a revoked mandate is refused rather than honoured.
+    """
+
+    id: str
+    mandate_id: str
+    instruction: str
+    created_at: datetime
+    expires_at: datetime
+    status: WatchStatus = WatchStatus.OPEN
+    # What ended it: the reason code of the attempt that closed the watch.
+    outcome: str | None = None
+    settlement_reference: str | None = None
+    closed_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.instruction.strip():
+            raise DomainError("a watch must say what to look for")
+        if self.expires_at <= self.created_at:
+            raise DomainError("a watch must expire after it was created")
 
     def is_expired_at(self, instant: datetime) -> bool:
         return instant >= self.expires_at

@@ -17,8 +17,10 @@ to AVAL is exercised here; everything Telegram does to the bot is not.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
+import urllib.request
 from datetime import timedelta
 from pathlib import Path
 
@@ -27,14 +29,32 @@ from aval.interfaces.telegram.identity import IdentityStore
 
 
 CHAT_ID = 424242
+# Standing orders get mandates of their own: their story needs an untouched budget.
+WATCH_CHAT_ID = 424243
+REVOKED_CHAT_ID = 424244
 USD = lambda minor: MoneyView(minor, "USD", 2)  # noqa: E731 - a table of amounts reads better
 
 
 class Smoke:
     def __init__(self, base_url: str) -> None:
+        self.base_url = base_url.rstrip("/")
         self.store = IdentityStore(Path(tempfile.mkdtemp()) / "identities.json")
         self.gateway = AvalGateway(base_url, identities=self.store)
         self.failures = 0
+
+    def reprice(self, sku: str, minor_units: int) -> None:
+        """The world moving under the agent, which is what a standing order waits for."""
+        request = urllib.request.Request(
+            f"{self.base_url}/admin/catalog/price",
+            data=json.dumps({"sku": sku, "minor_units": minor_units}).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-Aval-Operator": os.environ.get("AVAL_OPERATOR_TOKEN", "demo-token"),
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=10):
+            return
 
     def check(self, label: str, ok: bool, detail: str = "") -> None:
         mark = "  ok  " if ok else " FAIL "
@@ -117,6 +137,84 @@ class Smoke:
         if pending:
             message = self.gateway.decide(identity, pending[0], approve=True)
             self.check("Aprovar assina com a chave do chat e retoma", bool(message), message[:60])
+
+        # ── the standing order ──────────────────────────────────────────────
+        # On a mandate of its own, because this is the one story where the budget has
+        # to be untouched: a watch that fires into an exhausted budget escalates, which
+        # is correct behaviour and a useless demonstration.
+        watcher = self.store.enrol(WATCH_CHAT_ID, "Marta Silva")
+        watch_mandate, _ = self.gateway.create_mandate(
+            watcher,
+            merchants=["vuelaya"],
+            categories=["travel"],
+            limit=USD(20_000),
+            ceiling=USD(50_000),
+            valid_for=timedelta(days=7),
+            card_number="4242424242424242",
+        )
+        watching = self.gateway.register_watch(
+            watch_mandate, "um voo para Córdoba abaixo de $100"
+        )
+        self.check(
+            "um alvo inalcançável vira vigília em vez de beco",
+            watching.status == "OPEN",
+            watching.instruction,
+        )
+        self.check(
+            "a vigília não compra enquanto o preço não cai",
+            self.gateway.tick_watches(watch_mandate) == (),
+            "nada disparou",
+        )
+        watch_view = self.gateway.mandate(watch_mandate)
+        self.check(
+            "a vigília nunca vive mais que o mandato",
+            watch_view is not None and watching.expires_at <= watch_view.expires_at,
+            watching.expires_at.date().isoformat(),
+        )
+
+        # The world moves. Nobody types anything after this line.
+        self.reprice("FL-SAO-COR-0918", 9_500)
+        fired = self.gateway.tick_watches(watch_mandate)
+        alone = fired[0].purchase if fired else None
+        self.check(
+            "o preço caiu e o agente comprou sozinho",
+            alone is not None and alone.outcome == "settled",
+            f"{alone.outcome} · {alone.settlement_reference}" if alone else "não disparou",
+        )
+        self.check(
+            "uma vigília gasta não compra de novo",
+            self.gateway.tick_watches(watch_mandate) == (),
+            "silêncio no segundo tick",
+        )
+
+        # The trial-by-fire order: revoked first, price dropped after. The agent still
+        # notices, still tries, and is refused — the authority ended, not the agent.
+        revoked_watcher = self.store.enrol(REVOKED_CHAT_ID, "Marta Silva")
+        revoked_mandate, _ = self.gateway.create_mandate(
+            revoked_watcher,
+            merchants=["vuelaya"],
+            categories=["travel"],
+            limit=USD(20_000),
+            ceiling=USD(50_000),
+            valid_for=timedelta(days=7),
+            card_number="4242424242424242",
+        )
+        self.gateway.register_watch(revoked_mandate, "um voo para Córdoba abaixo de $100")
+        revoked_view = self.gateway.mandate(revoked_mandate)
+        self.gateway.revoke(
+            revoked_watcher,
+            revoked_mandate,
+            epoch=revoked_view.revocation_epoch if revoked_view else 0,
+            reason="revogado antes do preço cair",
+        )
+        stopped = self.gateway.tick_watches(revoked_mandate)
+        refusal = stopped[0].purchase if stopped else None
+        self.check(
+            "mandato revogado para o agente que ninguém está olhando",
+            refusal is not None and refusal.reason_code == "mandate_revoked",
+            refusal.reason_code if refusal else "não reportou a tentativa",
+        )
+        self.reprice("FL-SAO-COR-0918", 11_800)
 
         # The ceiling refuses with no button at all.
         executive = self.gateway.purchase(mandate_id, "compre a passagem executiva de $900")

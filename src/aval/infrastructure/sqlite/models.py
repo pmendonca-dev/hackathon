@@ -256,6 +256,25 @@ escalations = Table(
     CheckConstraint("status IN ('OPEN', 'APPROVED', 'DENIED')", name="escalation_status"),
 )
 
+agent_watches = Table(
+    "agent_watches",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("mandate_id", ForeignKey("mandates.id"), nullable=False),
+    # The sentence the person said, re-read on every tick. Freezing a parsed target
+    # price here would let the row and the instruction disagree about what was asked.
+    Column("instruction", Text, nullable=False),
+    Column("status", String, nullable=False),
+    Column("outcome", String),
+    Column("settlement_reference", String),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("closed_at", DateTime(timezone=True)),
+    CheckConstraint(
+        "status IN ('OPEN', 'FIRED', 'EXPIRED', 'CANCELLED')", name="watch_status"
+    ),
+)
+
 payment_runtime_captures = Table(
     "payment_runtime_captures",
     metadata,
@@ -286,5 +305,6 @@ CORE_TABLE_NAMES = (
     "vault_tokens",
     "disputes",
     "escalations",
+    "agent_watches",
     "payment_runtime_captures",
 )

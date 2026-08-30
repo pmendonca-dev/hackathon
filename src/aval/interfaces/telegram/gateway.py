@@ -88,6 +88,19 @@ class PurchaseView:
 
 
 @dataclass(frozen=True)
+class WatchView:
+    """A standing order, and what happened when it stopped waiting."""
+
+    id: str
+    instruction: str
+    status: str
+    outcome: str | None
+    expires_at: datetime
+    # Absent while it is still watching, and when it expired without ever asking.
+    purchase: "PurchaseView | None" = None
+
+
+@dataclass(frozen=True)
 class OfferView:
     sku: str
     title: str
@@ -122,6 +135,8 @@ ENDPOINTS = {
     "decision": "/escalations/{escalation_id}/decision",
     "ledger": "/ledger",
     "purchase": "/agent/purchase",
+    "watches": "/agent/watches",
+    "watch_tick": "/agent/watches/tick",
     "offers": "/merchant/offers",
     "disputes": "/disputes",
 }
@@ -235,23 +250,34 @@ class AvalGateway:
         return str(payload["mandate_id"]), payload.get("instrument_revocation_scope")
 
     def purchase(self, mandate_id: str, instruction: str) -> PurchaseView:
-        payload = self._call(
-            "POST", ENDPOINTS["purchase"], body={"mandate_id": mandate_id, "instruction": instruction}
+        return _purchase(
+            self._call(
+                "POST",
+                ENDPOINTS["purchase"],
+                body={"mandate_id": mandate_id, "instruction": instruction},
+            )
         )
-        offer = payload.get("offer") or {}
-        item = offer.get("item") or {}
-        return PurchaseView(
-            outcome=str(payload.get("outcome", "unknown")),
-            reason_code=str(payload.get("reason_code", "unknown")),
-            human_summary=str(payload.get("human_summary", "")),
-            title=item.get("title"),
-            amount=_money(offer["total"]) if "total" in offer else None,
-            escalation_id=payload.get("escalation_id"),
-            reservation_id=payload.get("reservation_id"),
-            settlement_reference=payload.get("settlement_reference"),
-            proposed_by=str(payload.get("proposed_by", "rules")),
-            rationale=payload.get("rationale"),
+
+    def register_watch(self, mandate_id: str, instruction: str) -> WatchView:
+        """Start watching. Registering authorizes nothing — firing still asks the core."""
+        return _watch(
+            self._call(
+                "POST",
+                ENDPOINTS["watches"],
+                body={"mandate_id": mandate_id, "instruction": instruction},
+            )
         )
+
+    def open_watches(self, mandate_id: str) -> Sequence[WatchView]:
+        payload = self._call("GET", ENDPOINTS["watches"], query={"mandate_id": mandate_id})
+        return tuple(
+            _watch(item) for item in payload.get("watches", []) if item.get("status") == "OPEN"
+        )
+
+    def tick_watches(self, mandate_id: str) -> Sequence[WatchView]:
+        """Give every open watch one try. Returns only the ones that stopped waiting."""
+        payload = self._call("POST", ENDPOINTS["watch_tick"], body={"mandate_id": mandate_id})
+        return tuple(_watch(item) for item in payload.get("fired", []))
 
     def decide(self, identity: ChatIdentity, escalation: EscalationView, *, approve: bool) -> str:
         """Sign the tap, then send it. The signature is the evidence, not the button."""
@@ -420,6 +446,35 @@ def _mandate(payload: Mapping[str, Any]) -> MandateView:
         revocation_epoch=int(payload.get("revocation_epoch", 0)),
         instrument_label=payload.get("instrument_label"),
         instrument_revoked=bool(payload.get("instrument_revoked", False)),
+    )
+
+
+def _purchase(payload: Mapping[str, Any]) -> PurchaseView:
+    offer = payload.get("offer") or {}
+    item = offer.get("item") or {}
+    return PurchaseView(
+        outcome=str(payload.get("outcome", "unknown")),
+        reason_code=str(payload.get("reason_code", "unknown")),
+        human_summary=str(payload.get("human_summary", "")),
+        title=item.get("title"),
+        amount=_money(offer["total"]) if "total" in offer else None,
+        escalation_id=payload.get("escalation_id"),
+        reservation_id=payload.get("reservation_id"),
+        settlement_reference=payload.get("settlement_reference"),
+        proposed_by=str(payload.get("proposed_by", "rules")),
+        rationale=payload.get("rationale"),
+    )
+
+
+def _watch(payload: Mapping[str, Any]) -> WatchView:
+    purchase = payload.get("purchase")
+    return WatchView(
+        id=str(payload["watch_id"]),
+        instruction=str(payload.get("instruction", "")),
+        status=str(payload.get("status", "OPEN")),
+        outcome=payload.get("outcome"),
+        expires_at=_instant(payload["expires_at"]),
+        purchase=None if not isinstance(purchase, Mapping) else _purchase(purchase),
     )
 
 

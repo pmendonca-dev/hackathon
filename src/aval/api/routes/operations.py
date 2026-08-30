@@ -18,6 +18,7 @@ from aval.api.errors import ApiError
 from aval.api.operator_auth import require_operator
 from aval.domain.errors import DomainError
 from aval.infrastructure.psp import MODES
+from aval.merchant.catalog import CATALOG
 
 router = APIRouter(tags=["operations"])
 
@@ -32,9 +33,31 @@ class AdvanceClockRequest(BaseModel):
     advance_seconds: int
 
 
+class RepriceRequest(BaseModel):
+    """A seller changing its own price, which is the world moving under the agent."""
+
+    sku: str = Field(min_length=1)
+    minor_units: int = Field(gt=0)
+
+
 class OpenDisputeRequest(BaseModel):
     reservation_id: str = Field(min_length=1)
     reason: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/admin/catalog/price", dependencies=[Depends(require_operator)])
+def reprice(request: Request, body: RepriceRequest) -> dict[str, Any]:
+    """Drop a price and watch what the agent does about it.
+
+    This is the judge surface the standing order needs: the case's scenario begins with
+    a price that has not fallen yet, and there is no way to demonstrate an agent that
+    waits without something that makes the waiting end.
+    """
+    runtime = runtime_of(request)
+    if not any(item.sku == body.sku for item in CATALOG):
+        raise ApiError(404, "sku_not_found", "SKU não existe no catálogo.")
+    runtime.offers.reprice(body.sku, body.minor_units)
+    return {"sku": body.sku, "minor_units": body.minor_units}
 
 
 @router.post("/admin/psp", dependencies=[Depends(require_operator)])
