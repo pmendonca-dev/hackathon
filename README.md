@@ -16,6 +16,10 @@ falta é o **mandato** — a autorização verificável que uma pessoa dá ao se
 
 Requer Python 3.12 ou 3.13.
 
+O ensaio formal em ambiente limpo — clone do zero, migration e inspeção do browser —
+fica em [clean-environment-rehearsal](docs/verification/clean-environment-rehearsal.md).
+Ele é o gate antes da entrega; o que vem abaixo é o caminho curto para rodar.
+
 O caminho curto usa [uv](https://docs.astral.sh/uv/), que é o que o
 [roteiro da demo](docs/demo-runbook.md) também usa:
 
@@ -83,7 +87,6 @@ revogado é recusada igualzinho. A autonomia está em *quando* o agente age, nun
 confere, e toda chamada é recusada com `403 operator_token_invalid`. A instância nasce
 fechada, não aberta, e nunca sorteia uma credencial para você.
 
-Documentação interativa da API em <http://127.0.0.1:8099/docs>.
 
 Com o servidor de pé, em outro terminal:
 
@@ -115,6 +118,9 @@ Para conferir a jornada inteira sem clicar, com o servidor de pé:
 ```bash
 cd web && AVAL_OPERATOR_TOKEN=demo-token   node --experimental-strip-types tests/live-browser-journey.mjs http://127.0.0.1:8099
 ```
+
+`x402` não faz parte desta entrega. Não adicione Web3, cadeia ou facilitator ao caminho
+de demonstração.
 
 ---
 
@@ -229,9 +235,24 @@ o dinheiro dos outros. Ver [modelo de segurança](docs/security-model.md).
 
 ### 6. Identidade do agente ≠ identidade do humano
 
-Toda requisição de agente carrega assinatura RFC 9421 (ES256) cobrindo método, caminho e
-digest do corpo. Os componentes cobertos são **fixos** — deixar o chamador escolher o que
-sua própria assinatura cobre é como corpos assinados são trocados.
+O sistema tem duas lanes HTTP, e elas respondem a perguntas diferentes:
+
+| lane | rotas | exige |
+|---|---|---|
+| **protocolo** | `/authorize`, `/capture`, `/payment-captures`, UCP, ACP, revogações | assinatura RFC 9421 ES256 |
+| **agente** | `/agent/purchase`, `/agent/watches` | nada |
+
+Na lane de protocolo o chamador está **afirmando ser um agente registrado**, e essa
+afirmação tem que ser provada. A lane de agente é a que o navegador e o bot apontam:
+ela não carrega autoridade nenhuma, só conversa com o agente. É deliberadamente a rota
+mais fracamente autenticada do sistema, e isso é seguro porque **convencer o agente a
+querer algo não é o mesmo que poder fazê-lo** — tudo que ela pede ainda tem que
+sobreviver ao mandato. Autenticar essa rota esconderia justamente o ataque que a demo
+existe para mostrar.
+
+Na lane de protocolo, a assinatura cobre método, caminho e digest do corpo. Os
+componentes cobertos são **fixos** — deixar o chamador escolher o que sua própria
+assinatura cobre é como corpos assinados são trocados.
 
 | situação | resposta |
 |---|---|
@@ -379,6 +400,8 @@ pagamento que pode ter acontecido é exatamente a mentira que este estado remove
 | derrubar o PSP | `POST /admin/psp` `{"mode":"offline"}` | token de operador |
 | reconciliar | `POST /reconcile` | token de operador |
 | **avançar o relógio** | `POST /admin/clock` | token de operador |
+| **derrubar um preço** | `POST /admin/catalog/price` | token de operador |
+| **ver o agente comprar sozinho** | `POST /agent/watches` + preço cai | o mesmo mandato de sempre |
 | **adulterar a trilha** | `POST /admin/ledger/{id}/tamper` | token de operador + `AVAL_DEMO_TAMPER` |
 | **congelar o orçamento** | `POST /agent/purchase` × N com o PSP fora | teto de reservas vivas |
 | atacar em texto livre | `POST /agent/purchase` | ninguém: o núcleo recusa |
@@ -479,13 +502,16 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
   prompt injetado não tem número privado para repetir — e tampouco consegue se
   autocensurar para dentro do mandato, que é o que mantém a recusa demonstrável.
 - **O agente continua trabalhando depois que você para de digitar.** *"Compre um voo
-  pra Córdoba abaixo de US$ 100"* quando nada atende não é um beco: vira uma **vigília**.
-  O agente fica olhando o catálogo e, quando o preço cai, **compra sozinho** e te avisa
-  no Telegram sem você ter pedido. É a única parte do sistema onde o comprador não é uma
-  pessoa apertando pagar — que é a premissa do case. A vigília não carrega autoridade
-  nenhuma: disparar significa chamar o mesmo `/authorize` e `/capture` de sempre, então
-  uma ordem permanente contra um mandato revogado é recusada igualzinho. **A autonomia
-  está em *quando* o agente age, nunca no *que* ele pode fazer.**
+  pra Córdoba abaixo de US$ 100"* quando nada atende não é um beco: o agente devolve
+  `no_offer` e **oferece** ficar olhando. Quem aceita é o titular, com um toque — abrir
+  uma ordem de gasto permanente que ninguém pediu seria pior do que um "não". Aceita a
+  vigília, o agente fica no catálogo e, quando o preço cai, **compra sozinho** e te
+  avisa. É a única parte do sistema onde o comprador não é uma pessoa apertando pagar —
+  que é a premissa do case. A vigília não carrega autoridade nenhuma: disparar significa
+  chamar o mesmo `/authorize` e `/capture` de sempre, então uma ordem permanente contra
+  um mandato revogado é recusada igualzinho — há passo na jornada do navegador que falha
+  se deixar de ser. **A autonomia está em *quando* o agente age, nunca no *que* ele pode
+  fazer.**
 - **Pedido incompleto vira pergunta, não compra.** *"compre uma passagem"* não nomeia
   nada à venda, e comprar o voo mais barato do catálogo seria aprovar em silêncio algo
   que ninguém pediu. O agente tem uma terceira saída além de propor e não achar: ele

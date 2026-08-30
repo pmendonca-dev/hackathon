@@ -708,6 +708,97 @@ Declare Uvicorn as a runtime dependency and resolve it in the committed lockfile
 
 **Why:** The published same-origin launch command is part of the application delivery path. A clean `uv sync` must make that command available without an operator adding an undeclared, unreviewed package at launch time.
 
+## Browser authentication remains fail-closed
+
+**Status:** Historical decision, superseded by the approved browser-safe BFF and same-origin build delivery decisions above.
+
+**Decision:** Final UI validation without a published browser signing boundary
+
+**Options considered (one per line):**
+
+Embed an RFC 9421 private key in the Vite application
+Add an unsigned proxy or relax runtime signature verification
+Keep the direct browser unavailable and record an architecture blocker
+
+**What we chose:** Keep live browser reads and commands unavailable until a
+browser-safe authenticated boundary is explicitly designed. The final
+validation does not add a proxy, ship a key, or bypass RFC 9421.
+
+**Why:** The corrected runtime correctly rejects unsigned audit reads with
+`422 ucp_agent_invalid`. Converting that safe rejection into browser success
+would create a second trust boundary without an approved custody or identity
+model. The public signed E2E client remains the runtime evidence while the
+browser blocker is tracked separately.
+
+## Production browser projection excludes credential-shaped fixture fields
+
+**Decision:** How the development fixture and defensive redaction coexist with a production bundle that must contain no `vt_` literal
+
+**Options considered (one per line):**
+
+Rely only on dead-code elimination to hide credential-shaped fixture fields
+Remove defensive runtime redaction so its pattern does not appear in the bundle
+Remove sensitive fields from browser projection types and encode defensive patterns without embedding credential-shaped literals
+
+**What we chose:** Browser projection types and the development fixture no longer model vault-token or authorization-proof references. Defensive presentation redaction remains, but its prefix match is represented without placing a credential-shaped literal in the emitted artifact. The artifact test scans every emitted file for any `vt_` occurrence.
+
+**Why:** A development fixture should model the same safe projection boundary as the live BFF, and production safety must be proven on emitted bytes rather than inferred from source imports. Keeping the redactor preserves fail-safe presentation while avoiding a forbidden credential-shaped marker in production assets.
+
+## Browser BFF same-origin delivery gate
+
+**Decision:** Final browser validation after the browser-safe BFF exists
+
+**Options considered (one per line):**
+
+Add a Vite proxy without an approved deployment topology
+Make the browser call the BFF cross-origin and weaken cookie semantics
+Keep relative same-origin calls and report the missing SPA/BFF delivery seam
+
+**What we chose:** Keep `UiBffGateway` on relative `/ui-api/v1/` routes with
+`credentials: "same-origin"`. Public HTTP E2E proves the BFF contract, while
+the production browser flow remains blocked until an approved server or
+development topology serves the SPA and BFF from one origin.
+
+**Why:** The BFF session cookie is intentionally `HttpOnly`, `Secure`, and
+`SameSite=Strict`. An ad-hoc cross-origin workaround or unapproved proxy would
+change the security architecture. A visible 404 with cleared credentials is
+safer and more truthful than fixture fallback or weakened cookie handling.
+
+## Mainline agent demonstrations remain visible but inactive at the BFF boundary
+
+**Decision:** How to preserve PRs #19 and #20 after rebasing the browser-safe UI
+
+**Options considered (one per line):**
+
+Restore the retired browser gateway and call `/agent/*` and `/admin/*` directly
+Delete the authority atlas, attack scenarios, and standing-order presentation
+Adapt the presentation to safe BFF projections and mark unpublished commands unavailable
+
+**What we chose:** The authority atlas and all attack scenarios remain in the
+holder view and now consume only role-scoped BFF workspace, audit, and dispute
+projections. Standing-order capability remains implemented in the runtime and
+is explained in the browser, but its create, list, tick, and catalogue controls
+stay disabled until an explicit `/ui-api/v1/` contract is approved.
+
+**Why:** The current BFF contract publishes no browser-safe purchase or watch
+intent. Restoring direct agent calls would require RFC 9421 material in the
+browser, while deleting the presentation would make the rebased UI incomplete.
+An explicit unavailable state preserves both the capability and the security
+boundary without inventing successful local behavior.
+## Head-stamped SQLite frequency-schema repair
+
+**Decision:** How to recover a legacy SQLite database that is marked at the Alembic head but lacks `mandates.max_uses`
+
+**Options considered (one per line):**
+
+Rewrite the historical frequency migration
+Reset or rebuild the durable database
+Add a forward-only compatibility migration that detects and restores the missing column
+
+**What we chose:** Add a new forward-only migration that inspects `mandates`, adds nullable `max_uses` only when missing, and backfills existing rows with `NULL`; its downgrade leaves the repaired column in place.
+
+**Why:** `NULL` is the current domain representation of `Mandate.usage_limit is None`, so a mandate written before frequency limits has no implicit usage cap. Historical migrations and durable facts remain untouched, while a no-op downgrade avoids recreating a schema that the current demonstration runtime cannot boot.
+
 ## Idempotency retention purge boundary
 
 **Decision:** Eligibility for explicit idempotency-record removal
@@ -721,3 +812,31 @@ Delete completed records only when an operator invokes maintenance at or after `
 **What we chose:** The explicit maintenance operation deletes only `COMPLETED` records with `retained_until <= now` and returns only the count removed.
 
 **Why:** A completed record must remain available for the full replay window, while an `IN_FLIGHT` record protects an unfinished side effect indefinitely. A caller-supplied UTC cutoff makes the operation deterministic and prevents retention cleanup from becoming an implicit startup side effect.
+
+## Alembic runtime database target
+
+**Decision:** Which SQLite database the documented Alembic upgrade command migrates
+
+**Options considered (one per line):**
+
+Keep Alembic's independent configured database path
+Require operators to override Alembic manually for every runtime database
+Make Alembic honor the same explicit runtime database environment variable
+
+**What we chose:** When `AVAL_DATABASE_PATH` is present, Alembic resolves and migrates that exact SQLite database; otherwise it retains its configured default.
+
+**Why:** A clean rehearsal must migrate the durable database that FastAPI will open. A separate implicit Alembic target can report a green migration while leaving a legacy runtime database structurally stale.
+
+## Browser session generation boundary
+
+**Decision:** How the BFF UI handles responses that complete after a session transition
+
+**Options considered (one per line):**
+
+Accept every completed BFF read into the current React state
+Clear state only when a session error is observed
+Associate reads with an in-memory session generation and ignore stale completions
+
+**What we chose:** The UI increments an in-memory session generation whenever protected state is cleared or a new login succeeds, and applies BFF projections only when the originating generation remains current.
+
+**Why:** A delayed response from an expired or logged-out session must not repopulate the next user's projection. The generation is transient browser control state, not an authority credential, and is never persisted or transmitted.

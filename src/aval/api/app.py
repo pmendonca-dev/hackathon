@@ -15,6 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError, api_error_response
 from aval.api.routes import (
     agent,
@@ -112,8 +113,16 @@ def create_app(runtime: AvalRuntime | None = None, *, lifespan=None) -> FastAPI:
         )
 
     @app.get("/health", tags=["ops"])
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    def health(request: Request) -> dict[str, str]:
+        """Alive, and the instant this instance reads validity against.
+
+        The clock is published because a page that computes `expires_at` from the
+        browser's wall clock creates an already-expired mandate the moment a judge
+        advances the demo clock — and then every creation is a 422 nobody asked for.
+        It is not a disclosure: the offset is already on the trial-by-fire console,
+        and only an operator can move it.
+        """
+        return {"status": "ok", "now": runtime_of(request).clock.now().isoformat()}
 
     app.include_router(agent.router)
     app.include_router(agents.router)
