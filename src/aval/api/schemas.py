@@ -46,6 +46,22 @@ class RevocationAuthorityIn(BaseModel):
     id: str | None = None
 
 
+class UsageLimitIn(BaseModel):
+    """The case's "up to 3 times a month", as a rolling window.
+
+    Both fields are positive; the domain refuses anything else, so a mandate cannot be
+    created carrying a frequency rule that authorizes nothing.
+    """
+
+    max_uses: int
+    window_seconds: int
+
+
+class UsageLimitOut(BaseModel):
+    max_uses: int
+    window_seconds: int
+
+
 class CreateMandateRequest(BaseModel):
     principal: PrincipalIn
     allowed_merchant_ids: list[str] = Field(min_length=1)
@@ -54,6 +70,7 @@ class CreateMandateRequest(BaseModel):
     expires_at: datetime
     authorities: list[RevocationAuthorityIn] = Field(min_length=1)
     ceiling: MoneyIn | None = None
+    usage_limit: UsageLimitIn | None = None
 
     @field_validator("expires_at")
     @classmethod
@@ -149,6 +166,10 @@ class MandateView(BaseModel):
     expires_at: datetime
     policy_version: int
     revocation_epoch: int
+    usage_limit: UsageLimitOut | None = None
+    # How many uses the live window has already consumed. Read at the same instant
+    # as the budget, so the two never disagree about what is left.
+    uses_in_window: int = 0
 
 
 class MandateListView(BaseModel):

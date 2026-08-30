@@ -23,7 +23,7 @@ from aval.api.schemas import (
     RevocationRequest,
     RevocationResponse,
 )
-from aval.domain.entities import Mandate, Principal, RevocationAuthority
+from aval.domain.entities import Mandate, Principal, RevocationAuthority, UsageLimit
 from aval.domain.enums import RevocationRole
 
 router = APIRouter(tags=["mandates"])
@@ -79,6 +79,11 @@ def create_mandate(request: Request, body: CreateMandateRequest) -> CreateMandat
         allowed_categories=frozenset(body.allowed_categories),
         limit=body.limit.to_money(),
         ceiling=None if body.ceiling is None else body.ceiling.to_money(),
+        usage_limit=(
+            None
+            if body.usage_limit is None
+            else UsageLimit(body.usage_limit.max_uses, body.usage_limit.window_seconds)
+        ),
         expires_at=body.expires_at,
         policy_version=1,
         revocation_metadata={"revocation_id": revocation_id, "epoch": 0},

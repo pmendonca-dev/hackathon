@@ -12,7 +12,7 @@ from fastapi import APIRouter, Query, Request
 
 from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError
-from aval.api.schemas import MandateListView, MandateView, MoneyOut
+from aval.api.schemas import MandateListView, MandateView, MoneyOut, UsageLimitOut
 from aval.application.authorization_core import MandateSnapshot
 from aval.application.ledger_views import (
     MERCHANT_REDACTIONS,
@@ -39,6 +39,15 @@ def mandate_view(snapshot: MandateSnapshot) -> MandateView:
         expires_at=mandate.expires_at,
         policy_version=mandate.policy_version,
         revocation_epoch=int(mandate.revocation_metadata.get("epoch", 0)),
+        usage_limit=(
+            None
+            if mandate.usage_limit is None
+            else UsageLimitOut(
+                max_uses=mandate.usage_limit.max_uses,
+                window_seconds=mandate.usage_limit.window_seconds,
+            )
+        ),
+        uses_in_window=snapshot.uses_in_window,
     )
 
 

@@ -137,6 +137,9 @@ class MandateSnapshot:
     mandate: Mandate
     limit: Money
     spent: Money
+    # Uses already consumed inside the frequency window, read at the same instant
+    # as the spend so a listing cannot show a budget and a count from two moments.
+    uses_in_window: int = 0
 
     @property
     def remaining(self) -> Money:
@@ -938,8 +941,13 @@ class AuthorizationCore:
             if mandate is None:
                 return None
             limit, _ = SqlitePolicyRepository(connection).active_limit_for(mandate_id, mandate.limit)
-            spent = SqliteLedgerRepository(connection).spent_for(mandate_id, limit)
-            return MandateSnapshot(mandate=mandate, limit=limit, spent=spent)
+            ledger = SqliteLedgerRepository(connection)
+            return MandateSnapshot(
+                mandate=mandate,
+                limit=limit,
+                spent=ledger.spent_for(mandate_id, limit),
+                uses_in_window=self._uses_in_window(ledger, mandate),
+            )
 
     def snapshots_for_principal(self, principal_id: str) -> list[MandateSnapshot]:
         """Every mandate one buyer holds, each already priced against its live limit.
@@ -955,10 +963,19 @@ class AuthorizationCore:
                 limit, _ = policies.active_limit_for(mandate.id, mandate.limit)
                 snapshots.append(
                     MandateSnapshot(
-                        mandate=mandate, limit=limit, spent=ledger.spent_for(mandate.id, limit)
+                        mandate=mandate,
+                        limit=limit,
+                        spent=ledger.spent_for(mandate.id, limit),
+                        uses_in_window=self._uses_in_window(ledger, mandate),
                     )
                 )
             return snapshots
+
+    def _uses_in_window(self, ledger: SqliteLedgerRepository, mandate: Mandate) -> int:
+        if mandate.usage_limit is None:
+            return 0
+        window = timedelta(seconds=mandate.usage_limit.window_seconds)
+        return ledger.uses_since(mandate.id, self._clock() - window)
 
     def timeline_for(self, mandate_id: str) -> list[LedgerEntry]:
         with self._engine.connect() as connection:
@@ -1139,7 +1156,28 @@ class AuthorizationCore:
             "below_ceiling",
             None if mandate.ceiling is None else f"teto {mandate.ceiling.minor_units}",
         )
-        spent = SqliteLedgerRepository(connection).spent_for(mandate.id, limit)
+        ledger = SqliteLedgerRepository(connection)
+        # Frequency sits between the ceiling and the budget on purpose. It is authority
+        # over *how often*, the way the budget is authority over *how much*, so it is
+        # approvable — a human may still say yes to a fourth purchase. The ceiling
+        # remains the only bound with no approval path at all.
+        if mandate.usage_limit is not None:
+            window = timedelta(seconds=mandate.usage_limit.window_seconds)
+            used = ledger.uses_since(mandate.id, self._clock() - window)
+            usage_detail = (
+                f"{used} uso{'s' if used != 1 else ''} em "
+                f"{mandate.usage_limit.window_seconds}s {{}} o máximo de "
+                f"{mandate.usage_limit.max_uses}"
+            )
+            if used >= mandate.usage_limit.max_uses and "usage_limit_exceeded" not in approved_reasons:
+                return AuthorizationResult(
+                    AuthorizationDecision.AWAITING_HUMAN,
+                    "usage_limit_exceeded",
+                    "Compra excede a frequência permitida pelo mandato.",
+                    trace=stopped("within_usage_window", usage_detail.format("atinge")),
+                ), mandate
+            cleared("within_usage_window", usage_detail.format("cabe no"))
+        spent = ledger.spent_for(mandate.id, limit)
         over_budget = spent.add(command.total).minor_units > limit.minor_units
         budget_detail = (
             f"gasto {spent.minor_units} + {command.total.minor_units} "
@@ -1223,7 +1261,7 @@ class AuthorizationCore:
                 canonical_payload=command.canonical_offer,
             )
             reservation = pending.commit(request_hash)
-            ledger.update(reservation)
+            ledger.update(reservation, at=self._clock())
             attempt_id = f"cap_{uuid4().hex}"
             SqliteCaptureRepository(connection).create(attempt_id=attempt_id, reservation_id=reservation.id, idempotency_key=command.idempotency_key)
             if self._authorization_proof_issuer:

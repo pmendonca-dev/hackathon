@@ -39,6 +39,25 @@ class RevocationAuthority:
 
 
 @dataclass(frozen=True)
+class UsageLimit:
+    """How often the agent may act — the case's "up to 3 times a month".
+
+    A rolling window rather than a calendar month, so the rule means the same thing on
+    the 1st and on the 31st. Frequency is authority, like the budget, so it is enforced
+    by the core and never by the agent.
+    """
+
+    max_uses: int
+    window_seconds: int
+
+    def __post_init__(self) -> None:
+        if self.max_uses <= 0:
+            raise DomainError("usage limit must allow at least one use")
+        if self.window_seconds <= 0:
+            raise DomainError("usage window must be positive")
+
+
+@dataclass(frozen=True)
 class Mandate:
     id: str
     principal: Principal
@@ -50,6 +69,7 @@ class Mandate:
     revocation_metadata: Mapping[str, object]
     authorities: tuple[RevocationAuthority, ...]
     ceiling: Money | None = None
+    usage_limit: UsageLimit | None = None
     status: MandateStatus = MandateStatus.ACTIVE
 
     def __post_init__(self) -> None:
