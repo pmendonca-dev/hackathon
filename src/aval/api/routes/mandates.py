@@ -104,6 +104,39 @@ def create_mandate(request: Request, body: CreateMandateRequest) -> CreateMandat
     return CreateMandateResponse(mandate_id=mandate_id, policy_version=1, revocation_id=revocation_id)
 
 
+@router.post("/principals/{principal_id}/revocations")
+def revoke_everything(request: Request, principal_id: str, body: RevocationRequest) -> dict:
+    """The panic button: one signature ends every mandate that key is an authority on.
+
+    The URL principal must match the signed one. Without that check a token could be
+    walked from the principal it names onto another, which is the same class of bug the
+    single-mandate route guards against by comparing `mandate_id`.
+
+    An empty result is a refusal, not a no-op: a signature that revoked nothing either
+    did not verify or names mandates this key holds no authority over, and answering
+    200 would tell a frightened person their agent had been stopped when it had not.
+    """
+    runtime = runtime_of(request)
+    if unverified_claims(body.token).get("principal_id") != principal_id:
+        raise ApiError(
+            400,
+            "revocation_principal_mismatch",
+            "A revogação não corresponde a este titular.",
+        )
+    try:
+        revoked = runtime.core.submit_principal_revocation(body.token)
+    except ValueError as error:
+        reason = REVOCATION_REASONS.get(str(error), "revocation_invalid")
+        raise ApiError(400, reason, "Revogação inválida.") from error
+    if not revoked:
+        raise ApiError(
+            403,
+            "revocation_authority_unknown",
+            "Nenhum mandato deste titular aceita esta assinatura.",
+        )
+    return {"principal_id": principal_id, "revoked_mandate_ids": revoked}
+
+
 @router.patch("/mandates/{mandate_id}/limit", response_model=ReplaceLimitResponse)
 def replace_limit(request: Request, mandate_id: str, body: ReplaceLimitRequest) -> ReplaceLimitResponse:
     runtime = runtime_of(request)

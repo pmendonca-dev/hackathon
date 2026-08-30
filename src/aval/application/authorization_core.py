@@ -392,6 +392,96 @@ class AuthorizationCore:
             raise ValueError("unknown revocation authority")
         run_in_write_transaction(self._engine, operation)
 
+    def submit_principal_revocation(self, token: str) -> list[str]:
+        """End every mandate this key is an authority on, under one signature.
+
+        Someone who thinks their agent has been taken over should not have to revoke
+        six mandates one at a time while it keeps spending. The reach of the token is
+        decided the same way a single revocation is — by verifying it against each
+        mandate's own registered authority — so it touches exactly the mandates that
+        key could already have ended one by one, and not one more. Holding a key for
+        one of a person's mandates never becomes authority over the rest of them.
+
+        Returns the mandates actually revoked. An empty list is a refusal, not a
+        success with nothing to do: it means no mandate accepted this signature.
+        """
+        try:
+            encoded_header = token.split(".")[0]
+            header = json.loads(
+                base64.urlsafe_b64decode(encoded_header + "=" * (-len(encoded_header) % 4))
+            )
+            kid = header["kid"]
+        except (IndexError, KeyError, ValueError, json.JSONDecodeError) as error:
+            raise ValueError("malformed revocation JWS") from error
+
+        revoked: list[str] = []
+
+        def operation(connection) -> None:
+            repository = SqliteMandateRepository(connection)
+            for mandate in repository.for_authority_kid(kid):
+                for authority in mandate.authorities:
+                    if authority.kid != kid:
+                        continue
+                    try:
+                        payload = verify_compact_jws(
+                            token, public_key_from_jwk(dict(authority.public_jwk))
+                        )
+                    except ValueError:
+                        continue
+                    if payload.get("principal_id") != mandate.principal.id:
+                        continue
+                    if "mandate" not in authority.allowed_scopes:
+                        continue
+                    if not payload.get("reason") or not isinstance(payload.get("epoch"), int):
+                        raise ValueError("revocation payload is incomplete")
+                    if mandate.status is not MandateStatus.ACTIVE:
+                        continue
+                    SqliteMandateLockRepository(connection).acquire(
+                        mandate.id, touched_at=self._clock()
+                    )
+                    revocation = Revocation(
+                        id=f"rev_{uuid4().hex}",
+                        mandate_id=mandate.id,
+                        authority_id=authority.id,
+                        scope="mandate",
+                        reason=str(payload["reason"]),
+                        epoch=int(payload["epoch"]),
+                        signed_jws=token,
+                        revoked_at=self._clock(),
+                    )
+                    SqliteRevocationRepository(connection).append(revocation)
+                    metadata = dict(mandate.revocation_metadata)
+                    metadata["epoch"] = revocation.epoch
+                    repository.put(
+                        replace(
+                            mandate,
+                            status=MandateStatus.REVOKED,
+                            revocation_metadata=metadata,
+                        )
+                    )
+                    # One entry per mandate, on that mandate's own chain. A shared
+                    # "everything was revoked" event would sit on no chain at all and
+                    # would be invisible to an auditor reading a single mandate.
+                    SqliteAuditLedger(connection).append(
+                        mandate_id=mandate.id,
+                        event_type=f"revocation.{authority.role.value}",
+                        human_summary="Revogação total do titular aceita.",
+                        actor=f"authority:{authority.kid}",
+                        detail={
+                            "scope": "mandate",
+                            "reason": revocation.reason,
+                            "epoch": revocation.epoch,
+                            "authority_role": authority.role.value,
+                            "principal_wide": True,
+                        },
+                        occurred_at=self._clock(),
+                    )
+                    revoked.append(mandate.id)
+                    break
+
+        run_in_write_transaction(self._engine, operation)
+        return revoked
+
     def open_dispute(self, *, reservation_id: str, reason: str) -> Dispute:
         """Record a later denial. Opening a dispute decides nothing on its own."""
 
