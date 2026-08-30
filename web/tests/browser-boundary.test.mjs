@@ -89,70 +89,42 @@ test('trial console enables only the published live revocation command', () => {
   assert.equal(trialSource.includes('Contrato futuro'), false);
 });
 
-test('a standing order is reachable from the holder page, not only over HTTP', () => {
-  // The agent that keeps working after you stop typing is the one part of the system
-  // where the buyer is not a person pressing pay — which is the premise of the case.
-  // Shipping it as endpoints nobody can reach from the demo hides the whole argument.
-  const holder = read(join(root, 'src/pages/HolderView.tsx'));
-  const provider = read(join(root, 'src/state/AvalProvider.tsx'));
+test('the authority atlas and every attack scenario remain visible on the holder BFF page', () => {
+  const holder = readFileSync(join(root, 'src/pages/HumanView.tsx'), 'utf8');
+  const attacks = readFileSync(join(root, 'src/components/AttackScenarios.tsx'), 'utf8');
 
-  assert.match(provider, /gateway\.registerWatch\(/);
-  assert.match(provider, /gateway\.listWatches\(/);
-  assert.match(provider, /gateway\.tickWatches\(/);
-  assert.match(holder, /watches/);
-});
-
-test('the standing order is offered, never opened on the buyer behalf', () => {
-  // "Nothing matches yet" must not silently become a live spending order. The system
-  // already refuses to guess an ambiguous instruction; guessing a standing one would
-  // be the same mistake with a longer fuse.
-  const provider = read(join(root, 'src/state/AvalProvider.tsx'));
-
-  const runAgent = provider.slice(provider.indexOf('async runAgent('));
-  const body = runAgent.slice(0, runAgent.indexOf('},\n\n'));
-  assert.equal(
-    body.includes('registerWatch'),
-    false,
-    'a purchase that found nothing opens a standing order by itself',
-  );
-});
-
-test('the mandate form dates itself from the runtime clock, not from this laptop', () => {
-  // A judge may move the demo clock forward at any moment. A form carrying a literal
-  // date would then create mandates that are already expired, and every creation after
-  // that is a 422 the judge did not cause and cannot explain.
-  const holder = read(join(root, 'src/pages/HolderView.tsx'));
-
-  assert.equal(holder.includes("'2026-09-30T23:59:59Z'"), false);
-  assert.match(holder, /serverNow|expiryDefault/);
-});
-
-test('watching costs no authority the typed instruction did not already have', () => {
-  const gatewaySource = read(join(root, 'src/gateways/authorizationGateway.ts'));
-
-  for (const method of ['registerWatch', 'tickWatches', 'listWatches']) {
-    const body = gatewaySource.slice(gatewaySource.indexOf(`  ${method}(`));
-    const request = body.slice(0, body.indexOf('}\n\n'));
-    assert.equal(request.includes('operator: true'), false, `${method} asks for operator authority`);
+  assert.match(holder, /<AuthorityAtlas/);
+  assert.match(holder, /<AttackScenarios/);
+  for (const scenario of ['within-mandate', 'category-scope', 'merchant-scope', 'ceiling', 'revoked']) {
+    assert.match(attacks, new RegExp(`id: '${scenario}'`));
   }
 });
 
-test('the judge can end the waiting from the console, on the operator side', () => {
-  // A standing order nobody can trigger is a claim, not a demonstration. The control
-  // that ends the waiting belongs with the processor switch: it moves the catalogue,
-  // which authorizes nothing — the woken watch still faces the same mandate.
-  const console_ = read(join(root, 'src/pages/TrialByFireConsole.tsx'));
-  const provider = read(join(root, 'src/state/AvalProvider.tsx'));
+test('adapted authority components consume safe BFF projections only', () => {
+  const atlas = readFileSync(join(root, 'src/components/AuthorityAtlas.tsx'), 'utf8');
+  const attacks = readFileSync(join(root, 'src/components/AttackScenarios.tsx'), 'utf8');
 
-  assert.match(provider, /gateway\.repriceOffer\(/);
-  assert.match(console_, /repriceOffer/);
-  // The two columns are the page's argument. Slice the holder one — between its own
-  // heading and the operator heading that follows it — and assert the control is not
-  // rendered there. Slicing from the top of the file would catch the destructuring,
-  // which says nothing about where the button ended up.
-  const holderColumn = console_.slice(
-    console_.indexOf('Provado pela chave do titular'),
-    console_.indexOf('Provado pelo token de operador'),
-  );
-  assert.equal(holderColumn.includes('repriceOffer'), false);
+  for (const source of [atlas, attacks]) {
+    assert.equal(source.includes('authorizationGateway'), false);
+    assert.equal(source.includes('authorization_proof'), false);
+    assert.equal(source.includes('settlement_reference'), false);
+    assert.equal(source.includes("'/agent/"), false);
+    assert.equal(source.includes("'/admin/"), false);
+  }
+  assert.match(atlas, /UiMandateProjection/);
+  assert.match(atlas, /UiAuditProjection/);
+});
+
+test('unpublished standing-order and purchase commands are visible but never simulated', () => {
+  const holder = readFileSync(join(root, 'src/pages/HumanView.tsx'), 'utf8');
+  const attacks = readFileSync(join(root, 'src/components/AttackScenarios.tsx'), 'utf8');
+  const provider = readFileSync(join(root, 'src/state/AvalProvider.tsx'), 'utf8');
+
+  assert.match(holder, /Vigília autônoma/);
+  assert.match(holder, /BFF ainda não publica/);
+  assert.match(attacks, /Indisponível no BFF/);
+  assert.equal(attacks.includes('onRun'), false);
+  for (const directCommand of ['registerWatch', 'listWatches', 'tickWatches', 'repriceOffer', 'runAgent']) {
+    assert.equal(provider.includes(directCommand), false, `provider exposes ${directCommand}`);
+  }
 });

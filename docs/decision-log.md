@@ -763,3 +763,25 @@ development topology serves the SPA and BFF from one origin.
 `SameSite=Strict`. An ad-hoc cross-origin workaround or unapproved proxy would
 change the security architecture. A visible 404 with cleared credentials is
 safer and more truthful than fixture fallback or weakened cookie handling.
+
+## Mainline agent demonstrations remain visible but inactive at the BFF boundary
+
+**Decision:** How to preserve PRs #19 and #20 after rebasing the browser-safe UI
+
+**Options considered (one per line):**
+
+Restore the retired browser gateway and call `/agent/*` and `/admin/*` directly
+Delete the authority atlas, attack scenarios, and standing-order presentation
+Adapt the presentation to safe BFF projections and mark unpublished commands unavailable
+
+**What we chose:** The authority atlas and all attack scenarios remain in the
+holder view and now consume only role-scoped BFF workspace, audit, and dispute
+projections. Standing-order capability remains implemented in the runtime and
+is explained in the browser, but its create, list, tick, and catalogue controls
+stay disabled until an explicit `/ui-api/v1/` contract is approved.
+
+**Why:** The current BFF contract publishes no browser-safe purchase or watch
+intent. Restoring direct agent calls would require RFC 9421 material in the
+browser, while deleting the presentation would make the rebased UI incomplete.
+An explicit unavailable state preserves both the capability and the security
+boundary without inventing successful local behavior.

@@ -1,10 +1,12 @@
-import { FileCheck2, ShieldCheck, WalletCards } from 'lucide-react';
+import { Clock3, FileCheck2, ShieldCheck, WalletCards } from 'lucide-react';
 
 import type {
   UiAuditProjection,
   UiDisputeProjection,
   UiWorkspaceProjection,
 } from '../contracts/avalGateway.ts';
+import { AttackScenarios } from '../components/AttackScenarios.tsx';
+import { AuthorityAtlas } from '../components/AuthorityAtlas.tsx';
 import { Badge, EmptyNotice, Field, Panel } from '../components/ui.tsx';
 import { formatDateTime } from '../utils/format.ts';
 import { safeDisplayText } from '../utils/safePresentation.ts';
@@ -55,6 +57,17 @@ export function HumanView({
           </Panel>
         </section>
       )}
+
+      <AuthorityAtlas mandate={mandate ?? null} audit={audit} dispute={dispute} />
+
+      <AttackScenarios mandate={mandate ?? null} />
+
+      <Panel eyebrow="Autonomia agendada" title="Vigília autônoma" action={<Clock3 size={18} className="text-hold" aria-hidden="true" />}>
+        <p className="text-sm leading-relaxed text-fg-dim">
+          O runtime preserva ordens permanentes para o agente continuar procurando dentro do mesmo mandato. O BFF ainda não publica as intenções de criar, listar ou disparar uma vigília; portanto esta sessão não apresenta controles que fingiriam executar essas ações.
+        </p>
+        <p className="safe-note mt-4"><ShieldCheck size={15} aria-hidden="true" />A capacidade permanece no runtime e nas interfaces autorizadas. O browser aguarda um contrato <code>/ui-api/v1/</code> específico.</p>
+      </Panel>
 
       <Panel eyebrow="Audit" title="Timeline autorizada" action={<WalletCards size={18} className="text-verify" aria-hidden="true" />}>
         {!audit || audit.timeline.length === 0 ? (
