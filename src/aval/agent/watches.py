@@ -14,16 +14,22 @@ in *when* the agent acts, never in *what it may do*.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from datetime import datetime
+from typing import Any
 from uuid import uuid4
 
+from aval.agent.proposer import ShoppingProposer
 from aval.agent.purchasing_agent import AgentRun, PurchasingAgent
+from aval.discovery.models import decode_shopping_request
 from aval.domain.entities import Watch
 from aval.domain.enums import WatchStatus
 from aval.infrastructure.sqlite.transaction import run_in_write_transaction
 from aval.infrastructure.sqlite.watch_repository import SqliteWatchRepository
 from aval.runtime import AvalRuntime
+
+logger = logging.getLogger("aval.watches")
 
 # The one outcome that means "not yet". Everything else is an answer, and an answer
 # ends the watch: an agent that kept retrying after a refusal would be an agent
@@ -47,6 +53,37 @@ class WatchService:
     def __init__(self, runtime: AvalRuntime, *, agent: PurchasingAgent) -> None:
         self._runtime = runtime
         self._agent = agent
+
+    def _attempt(self, watch: Watch) -> AgentRun:
+        """One try at this watch, against the catalogue or against the open web.
+
+        A real-offer watch stores a structured shopping request; anything else is the
+        free text the travel demo has always used. The search happens here, once per
+        watch, and everything it returns is re-issued as a signed marketplace offer
+        before the agent — let alone the core — is allowed to see it.
+
+        A search that fails is not an answer about prices, so it produces no candidates
+        and the watch keeps waiting. It must never raise: one unreachable edge would
+        otherwise end the tick that every other watch on this machine shares.
+        """
+        request = decode_shopping_request(watch.instruction)
+        if request is None:
+            return self._agent.run(mandate_id=watch.mandate_id, instruction=watch.instruction)
+        try:
+            candidates = self._runtime.discovery.find(request)
+        except Exception:
+            logger.exception("a busca da vigília %s falhou neste tick", watch.id)
+            candidates = []
+        return self._agent.run(
+            mandate_id=watch.mandate_id,
+            # The person's own words, not the encoded row. What reaches the agent is
+            # what they asked for.
+            instruction=request.query,
+            offers=[
+                self._runtime.discovered_offers.issue(candidate) for candidate in candidates
+            ],
+            proposer=ShoppingProposer(max_minor_units=request.max_minor_units),
+        )
 
     def _now(self) -> datetime:
         return self._runtime.clock.now()
@@ -93,7 +130,7 @@ class WatchService:
                     )
                 )
                 continue
-            run = self._agent.run(mandate_id=watch.mandate_id, instruction=watch.instruction)
+            run = self._attempt(watch)
             if run.outcome == STILL_WAITING:
                 continue
             closed = self._close(

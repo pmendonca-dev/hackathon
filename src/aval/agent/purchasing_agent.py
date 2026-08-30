@@ -82,9 +82,24 @@ class PurchasingAgent:
             self._runtime, method="POST", path=path, body=raw, headers=headers
         )
 
-    def run(self, *, mandate_id: str, instruction: str) -> AgentRun:
-        offers = self._runtime.offers.catalog()
-        proposal = self._proposer.propose(instruction, offers)
+    def run(
+        self,
+        *,
+        mandate_id: str,
+        instruction: str,
+        offers: list[dict[str, Any]] | None = None,
+        proposer: OfferProposer | None = None,
+    ) -> AgentRun:
+        # `offers` is how a real-offer watch hands over what a web search just found,
+        # already signed by the test marketplace. None keeps the original path: shop the
+        # seeded catalogue. Either way what arrives here is a list of signed offers, and
+        # nothing below this line can tell — or needs to tell — where they came from.
+        #
+        # `proposer` travels with them because *how to choose* differs: the catalogue is
+        # a table to be interpreted, while a search result is a shortlist the search
+        # already interpreted. Neither choice is a decision — the core makes that one.
+        offers = self._runtime.offers.catalog() if offers is None else offers
+        proposal = (proposer or self._proposer).propose(instruction, offers)
         if isinstance(proposal, Question):
             # Not a refusal and not a purchase. The mandate was never consulted,
             # because there is nothing yet to put to it.

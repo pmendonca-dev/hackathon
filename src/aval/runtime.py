@@ -23,10 +23,14 @@ from aval.infrastructure.sqlite.engine import create_sqlite_engine
 from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
 from aval.infrastructure.sqlite.models import metadata
 from aval.infrastructure.sqlite.transaction import run_in_write_transaction
+from aval.discovery.core_client import CoreDiscoveryClient
+from aval.discovery.openai_web import OfferDiscovery, build_discovery
 from aval.merchant.catalog import MERCHANTS
+from aval.merchant.discovered_offers import DiscoveredOfferIssuer
 from aval.merchant.offers import MerchantOfferService
 from aval.security.authorization_proof import AuthorizationProofService
 from aval.security.clock import ClockService
+from aval.security.edge_auth import EdgeAuthError
 from aval.security.http_signature import ReplayGuard
 from aval.security.jws import verify_compact_jws
 from aval.security.key_custody import KeyCustodyService
@@ -85,6 +89,11 @@ class AvalRuntime:
     pairwise_secret: bytes
     metrics: MetricsRegistry
     operator_token: str
+    # The open web, and the key that turns what it says into something the core reads.
+    # On a single machine `discovery` searches directly; split in two it is an HTTP
+    # client pointed at Computer A, which is the only half holding the OpenAI key.
+    discovery: OfferDiscovery
+    discovered_offers: DiscoveredOfferIssuer
 
 
 def _settlement_adapter(*, proof_verifier, mode_provider, mandate_for):
@@ -112,6 +121,32 @@ def _settlement_adapter(*, proof_verifier, mode_provider, mandate_for):
     )
 
 
+def _discovery_adapter(clock: ClockService) -> OfferDiscovery:
+    """Where this process looks for real offers.
+
+    With `AVAL_DISCOVERY_EDGE_URL` set, it does not look at all: it asks Computer A,
+    which is the half that holds the OpenAI key and may reach the open web. Without it,
+    a single machine searches for itself — the shape a clone with one laptop runs.
+
+    A remote edge without its credential is a startup failure rather than a quiet fall
+    back to searching locally, for the same reason `AVAL_PSP=stripe` without a key is:
+    a deployment that was told to keep the halves apart must not silently put them back
+    together on the computer that holds the money.
+    """
+    edge_url = os.environ.get("AVAL_DISCOVERY_EDGE_URL", "").strip()
+    if not edge_url:
+        return build_discovery()
+    secret = os.environ.get("AVAL_CORE_TO_EDGE_SECRET", "").strip()
+    if not secret:
+        raise EdgeAuthError("AVAL_DISCOVERY_EDGE_URL exige AVAL_CORE_TO_EDGE_SECRET")
+    return CoreDiscoveryClient(
+        base_url=edge_url,
+        secret=secret,
+        clock=clock.now,
+        timeout_seconds=float(os.environ.get("AVAL_DISCOVERY_TIMEOUT_SECONDS", "120")),
+    )
+
+
 def build_runtime(
     *,
     database_path: Path | None = None,
@@ -119,6 +154,7 @@ def build_runtime(
     operator_token: str | None = None,
     custody: KeyCustodyService | None = None,
     extra_key_ids: tuple[str, ...] = (),
+    discovery: OfferDiscovery | None = None,
 ) -> AvalRuntime:
     """Wire the system. Without a path the database is in memory, which is what the
     tests want and what a judge resetting the demo gets."""
@@ -229,4 +265,12 @@ def build_runtime(
         pairwise_secret=resolve_pairwise_secret(),
         metrics=MetricsRegistry(),
         operator_token=operator_token or resolve_operator_token(),
+        discovery=discovery or _discovery_adapter(clock),
+        # Signs with the marketplace key installed above, in `merchant_custody`. AVAL
+        # signing an offer and its own authorization with one key would collapse the
+        # separation this composition root keeps deliberately: the seller says what is
+        # for sale, AVAL says whether it may be bought.
+        discovered_offers=DiscoveredOfferIssuer(
+            clock=clock.now, custody=merchant_custody
+        ),
     )

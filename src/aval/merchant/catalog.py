@@ -27,12 +27,25 @@ from dataclasses import dataclass
 MERCHANT_ID = "vuelaya"
 MERCHANT_KID = "vuelaya-k1"
 
+# The one seller that is not a seller: AVAL's own test marketplace, under which a page
+# discovered on the open web is re-issued as a signed offer. It has no catalogue rows —
+# every offer it makes is minted from something a search just found.
+#
+# Its key lives in `merchant_custody` beside the real sellers', and deliberately **not**
+# in the authorization custody. AVAL signing the offer *and* the authorization with one
+# key would collapse the separation the rest of this file exists to maintain: the seller
+# says what is for sale, AVAL says whether it may be bought, and neither can produce the
+# other half of the exchange.
+TEST_MARKETPLACE_ID = "aval_test_marketplace"
+TEST_MARKETPLACE_KID = "aval-test-marketplace-k1"
+
 # Each seller signs with its own key. The verifier picks the key by the merchant the
 # offer claims to be from, and a lie there simply fails the signature check.
 MERCHANTS: dict[str, str] = {
     "vuelaya": MERCHANT_KID,
     "andesair": "andesair-k1",
     "posadas": "posadas-k1",
+    TEST_MARKETPLACE_ID: TEST_MARKETPLACE_KID,
 }
 
 

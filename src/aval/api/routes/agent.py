@@ -23,14 +23,20 @@ router = APIRouter(tags=["agent"])
 
 class AgentPurchaseRequest(BaseModel):
     mandate_id: str = Field(min_length=1)
-    instruction: str = Field(min_length=1, max_length=500)
+    # Wide enough for a structured shopping request, which a real-offer watch stores
+    # here instead of a sentence. Still bounded: an instruction is re-read on every
+    # tick, and an unbounded one would be a row that costs something forever.
+    instruction: str = Field(min_length=1, max_length=1000)
 
 
 class RegisterWatchRequest(BaseModel):
     """A standing order. Same free text a person would type, kept for later."""
 
     mandate_id: str = Field(min_length=1)
-    instruction: str = Field(min_length=1, max_length=500)
+    # Wide enough for a structured shopping request, which a real-offer watch stores
+    # here instead of a sentence. Still bounded: an instruction is re-read on every
+    # tick, and an unbounded one would be a row that costs something forever.
+    instruction: str = Field(min_length=1, max_length=1000)
 
 
 def _watches(request: Request) -> WatchService:

@@ -224,6 +224,57 @@ class RuleProposer:
         return None if offer is None else Proposal(offer=offer)
 
 
+class ShoppingProposer:
+    """Chooses among pages a web search already narrowed.
+
+    The catalogue proposers above read a sentence, because the catalogue is a fixed
+    table and the whole question is *which row did the person mean*. A real-offer watch
+    has already answered that: the search was given the query and the cap, and every
+    candidate that came back survived a normalizer that dropped anything over the
+    ceiling, in the wrong currency, or without a checkable price.
+
+    So there is nothing left to interpret, and interpreting anyway would be the agent
+    inventing a preference the person never expressed. It takes the cheapest page that
+    still fits — and says so, with the link, so the human reading the message can see
+    what it passed over.
+
+    Like every proposer here it only proposes. The offers were signed by the test
+    marketplace, and `AuthorizationCore` decides afterwards whether the mandate permits
+    any of this.
+    """
+
+    def __init__(self, *, max_minor_units: int) -> None:
+        self._cap = max_minor_units
+
+    def propose(
+        self, instruction: str, offers: list[dict[str, Any]]
+    ) -> Proposal | Question | None:
+        affordable = sorted(
+            (offer for offer in offers if offer["total"]["minor_units"] <= self._cap),
+            key=lambda offer: offer["total"]["minor_units"],
+        )
+        if not affordable:
+            return None
+        chosen, *rest = affordable
+        item = chosen["item"]
+        return Proposal(
+            offer=chosen,
+            rationale=(
+                f"Menor preço encontrado que cabe no teto, em {item['source_merchant']}."
+            ),
+            alternatives=tuple(
+                (other["item"]["sku"], f"{_amount(other)} em {other['item']['source_merchant']}")
+                for other in rest[:3]
+            ),
+            proposed_by="discovery",
+        )
+
+
+def _amount(offer: dict[str, Any]) -> str:
+    total = offer["total"]
+    return f"{total['minor_units'] / 10 ** total['scale']:.2f} {total['currency']}"
+
+
 # ── the model ───────────────────────────────────────────────────────────────
 def offer_line(offer: dict[str, Any]) -> str:
     """One offer as the model sees it: only the facts the seller signed.
