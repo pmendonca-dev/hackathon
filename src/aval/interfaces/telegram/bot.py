@@ -135,6 +135,11 @@ class Bot:
         # one — this is the only place that can.
         # ponytail: in memory, so a restart refuses dispute buttons from older
         # messages. Fail-closed, which is the right way to lose this state.
+        # ponytail: the last unmet request per chat, in memory. A restart forgets it and
+        # the person is asked to type again — the alternative is a standing order the
+        # bot registered from something it could not show them.
+        self._unmet: dict[int, str] = {}
+        self._watched: set[str] = set()
         self._own_reservations: dict[int, set[str]] = {}
 
     # ── updates ────────────────────────────────────────────────────────────
@@ -207,7 +212,7 @@ class Bot:
             return (views.no_mandate(),)
 
         if command == "/mandato":
-            return (views.mandate_card(mandate),)
+            return (views.mandate_card(mandate, self._gateway.open_watches(mandate_id)),)
         if command == "/extrato":
             return (views.receipt(self._gateway.receipt(mandate_id)),)
         if command in {"/aprovacoes", "/aprovações"}:
@@ -263,6 +268,14 @@ class Bot:
             return (views.plain("Diga o que comprar: /comprar um voo pra Córdoba"),)
         assert identity.mandate_id is not None
         result = self._gateway.purchase(identity.mandate_id, instruction)
+        if result.outcome == "no_offer":
+            # Not a dead end: the case's own scenario is a price that has not fallen
+            # yet. Offered, never registered on its own — an agent that starts buying
+            # without being told to is the silent approval the case forbids.
+            mandate = self._gateway.mandate(identity.mandate_id)
+            if mandate is not None:
+                self._unmet[identity.chat_id] = instruction
+                return (views.watch_offer(instruction, mandate),)
         if result.outcome == "needs_clarification":
             # One screen, not two: the question and the answers belong together.
             return (
@@ -358,6 +371,16 @@ class Bot:
             # says what the person wants; the agent still picks which offer.
             return self._purchase(identity, wish.instruction)
 
+        if verb == views.CALLBACK_WATCH:
+            if not self._owns(identity, argument):
+                return (views.plain("Esse mandato não é seu."),)
+            instruction = self._unmet.get(identity.chat_id)
+            if instruction is None:
+                return (views.plain("Peça de novo o que quer, e eu ofereço vigiar."),)
+            watch = self._gateway.register_watch(argument, instruction)
+            self._unmet.pop(identity.chat_id, None)
+            return (views.watch_registered(watch),)
+
         if verb == views.CALLBACK_DISPUTE:
             if argument not in self._own_reservations.get(identity.chat_id, set()):
                 return (views.plain("Essa compra não é sua."),)
@@ -370,7 +393,9 @@ class Bot:
             return (views.plain("Esse mandato não é seu."),)
         if verb == views.CALLBACK_MANDATE:
             mandate = self._gateway.mandate(argument)
-            return (views.mandate_card(mandate) if mandate else views.no_mandate(),)
+            if mandate is None:
+                return (views.no_mandate(),)
+            return (views.mandate_card(mandate, self._gateway.open_watches(argument)),)
         if verb == views.CALLBACK_RECEIPT:
             return (views.receipt(self._gateway.receipt(argument)),)
         if verb == views.CALLBACK_CARD_MENU:
@@ -449,6 +474,36 @@ class Bot:
                 sent += 1
         return sent
 
+    def push_watch_results(self) -> int:
+        """Let every standing order try once, and report what it did.
+
+        This is the only place the system acts with nobody at the keyboard, which is
+        the case's actual premise. It reports refusals as loudly as purchases: an agent
+        that only announced its wins would hide the half the mandate exists for.
+        """
+        delivered = 0
+        for chat_id in self._identities.known_chats():
+            identity = self._identities.get(chat_id)
+            if identity is None or identity.mandate_id is None:
+                continue
+            try:
+                fired = self._gateway.tick_watches(identity.mandate_id)
+            except GatewayError as error:
+                if error.reason_code != "mandate_not_found":
+                    logger.warning("vigílias de %s: %s", chat_id, error)
+                continue
+            for watch in fired:
+                if watch.id in self._watched:
+                    continue
+                self._send(chat_id, views.watch_fired(watch))
+                self._watched.add(watch.id)
+                if watch.purchase is not None and watch.purchase.reservation_id:
+                    self._own_reservations.setdefault(chat_id, set()).add(
+                        watch.purchase.reservation_id
+                    )
+                delivered += 1
+        return delivered
+
     # ── runtime ────────────────────────────────────────────────────────────
     def run(self) -> None:
         logger.info(
@@ -477,6 +532,7 @@ class Bot:
                 last_push = time.monotonic()
                 try:
                     self.push_pending_approvals()
+                    self.push_watch_results()
                 except TelegramError as error:
                     logger.warning("push de escalações falhou: %s", error)
 

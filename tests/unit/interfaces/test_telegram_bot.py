@@ -8,7 +8,7 @@ import urllib.error
 
 import pytest
 
-from aval.agent.intent import fold
+from aval.agent.intent import fold, parse_intent
 from aval.interfaces.telegram import views
 from aval.interfaces.telegram.bot import Bot, TelegramApi, _display_name
 from aval.interfaces.telegram.config import BotConfig, ConfigError
@@ -35,6 +35,9 @@ class FakeAval:
         self.received: list[tuple[str, dict[str, Any]]] = []
         self.verified_claims: list[dict[str, Any]] = []
         self.disputes: list[dict[str, Any]] = []
+        self.watches: dict[str, dict[str, Any]] = {}
+        # What Córdoba costs right now. The judge's price knob moves this.
+        self.cordoba_price = 13000
         self.offline = False
         self._sequence = 0
 
@@ -108,6 +111,18 @@ class FakeAval:
             return 201, {"dispute_id": "dsp_1", "status": "OPEN", "reason": body["reason"]}
         if route == "/agent/purchase":
             return self._purchase(body)
+        if route == "/agent/watches" and method == "POST":
+            return 201, self._register_watch(body)
+        if route == "/agent/watches" and method == "GET":
+            return 200, {
+                "watches": [
+                    watch
+                    for watch in self.watches.values()
+                    if watch["mandate_id"] == params.get("mandate_id")
+                ]
+            }
+        if route == "/agent/watches/tick":
+            return 200, {"fired": self._tick_watches(body["mandate_id"])}
         return 404, {"reason_code": "not_found"}
 
     # behaviour ------------------------------------------------------------
@@ -198,6 +213,40 @@ class FakeAval:
             "capture": {"approved": approved, "reason_code": "settled" if approved else "denied"},
         }
 
+    def _register_watch(self, body: dict[str, Any]) -> dict[str, Any]:
+        self._sequence += 1
+        watch_id = f"wch_{self._sequence:04d}"
+        self.watches[watch_id] = {
+            "watch_id": watch_id,
+            "mandate_id": body["mandate_id"],
+            "instruction": body["instruction"],
+            "status": "OPEN",
+            "outcome": None,
+            "settlement_reference": None,
+            "created_at": datetime.now(UTC).isoformat(),
+            "expires_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
+            "closed_at": None,
+        }
+        return self.watches[watch_id]
+
+    def _tick_watches(self, mandate_id: str) -> list[dict[str, Any]]:
+        """The real service runs each open watch through the ordinary purchase path,
+        and so does this: a watch has no privilege a typed request would not have."""
+        fired = []
+        for watch in self.watches.values():
+            if watch["mandate_id"] != mandate_id or watch["status"] != "OPEN":
+                continue
+            _, purchase = self._purchase(
+                {"mandate_id": mandate_id, "instruction": watch["instruction"]}
+            )
+            if purchase["outcome"] == "no_offer":
+                continue
+            watch["status"] = "FIRED"
+            watch["outcome"] = purchase["reason_code"]
+            watch["settlement_reference"] = purchase.get("settlement_reference")
+            fired.append({**watch, "purchase": purchase})
+        return fired
+
     def _purchase(self, body: dict[str, Any]):
         mandate_id = body["mandate_id"]
         if self.mandates[mandate_id].get("_card_cancelled"):
@@ -255,11 +304,20 @@ class FakeAval:
                 "offer": _offer("Voo Santiago", 30000, "travel"),
                 "escalation_id": escalation_id,
             }
+        # The price the world is currently asking. A judge drops it; the standing
+        # order is what notices.
+        intent = parse_intent(body["instruction"])
+        if intent.max_minor_units is not None and intent.max_minor_units < self.cordoba_price:
+            return 200, {
+                "outcome": "no_offer",
+                "reason_code": "no_offer_matched",
+                "human_summary": "Nenhuma oferta do catálogo atende ao pedido.",
+            }
         return 200, {
             "outcome": "settled",
             "reason_code": "settled",
             "human_summary": "Compra concluída.",
-            "offer": _offer("Voo Córdoba", 13000, "travel"),
+            "offer": _offer("Voo Córdoba", self.cordoba_price, "travel"),
             "escalation_id": None,
             "reservation_id": "rsv_1",
             "settlement_reference": "psp_abc123",
@@ -925,3 +983,107 @@ def test_the_catalogue_leads_with_what_the_mandate_can_actually_buy(world) -> No
     assert all("⚠️" in buttons[index][0] for index in barred), (
         "um botão que o mandato vai barrar tem de avisar antes de ser tocado"
     )
+
+
+# ── the agent that keeps working after you stop typing ──────────────────────
+def test_an_unreachable_target_offers_to_watch_instead_of_giving_up(world) -> None:
+    """*Buy me a flight if it drops below X* is not a dead end, it is a standing order.
+
+    Answering "nada no catálogo atende" to the case's own scenario throws away the one
+    behaviour that makes the buyer an agent rather than a form.
+    """
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
+
+    screen = api.sent[-1][1]
+    buttons = [button for row in screen.buttons for button in row]
+    # The offer is the button: the text may explain, but the tap is what accepts.
+    assert any("vigiar" in label.lower() for label, _ in buttons)
+    assert any(data.startswith(views.CALLBACK_WATCH) for _, data in buttons)
+
+
+def test_watching_is_registered_only_when_the_person_asks_for_it(world) -> None:
+    """An agent that starts buying on its own without being told to is the failure the
+    case calls a silent approval. The tap is the consent."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    mandate_id = identities.get(MARTA).mandate_id
+
+    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
+    assert aval.watches == {}, "oferecer não é registrar"
+
+    bot.handle_update(tap(f"{views.CALLBACK_WATCH}:{mandate_id}"))
+
+    assert [watch["instruction"] for watch in aval.watches.values()] == [
+        "um voo pra Córdoba abaixo de $80"
+    ]
+    assert "vigiando" in api.sent[-1][1].text.lower()
+
+
+def test_the_agent_reports_a_purchase_nobody_asked_it_to_make_now(world) -> None:
+    """The moment the case is actually about: the price falls, and the phone buzzes."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    mandate_id = identities.get(MARTA).mandate_id
+    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
+    bot.handle_update(tap(f"{views.CALLBACK_WATCH}:{mandate_id}"))
+    before = len(api.sent)
+
+    aval.cordoba_price = 7500  # o jurado derruba o preço
+    assert bot.push_watch_results() == 1
+
+    delivered = api.sent[before][1].text
+    assert "sozinho" in delivered.lower(), "a mensagem tem de dizer que ninguém pediu"
+    assert "US$ 75,00" in delivered
+
+
+def test_a_revoked_mandate_makes_the_agent_report_the_attempt_not_the_purchase(world) -> None:
+    """The thesis, delivered by a machine acting alone: the agent kept working, the
+    authority did not."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    mandate_id = identities.get(MARTA).mandate_id
+    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
+    bot.handle_update(tap(f"{views.CALLBACK_WATCH}:{mandate_id}"))
+
+    aval.mandates[mandate_id]["status"] = "REVOKED"
+    aval.cordoba_price = 7500
+    before = len(api.sent)
+
+    assert bot.push_watch_results() == 1
+
+    delivered = api.sent[before][1].text
+    assert "mandate_revoked" in delivered
+    assert "não comprei" in delivered.lower()
+
+
+def test_a_fired_watch_is_reported_once(world) -> None:
+    """Nobody wants the same autonomous purchase announced twice."""
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    mandate_id = identities.get(MARTA).mandate_id
+    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
+    bot.handle_update(tap(f"{views.CALLBACK_WATCH}:{mandate_id}"))
+    aval.cordoba_price = 7500
+
+    assert bot.push_watch_results() == 1
+    assert bot.push_watch_results() == 0
+
+
+def test_the_mandate_card_says_what_the_agent_is_watching(world) -> None:
+    """An agent that may buy on its own has to show what it is waiting for.
+
+    Otherwise the standing order is invisible authority: the person consented once and
+    then has no way to see, or reconsider, what is still armed.
+    """
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    mandate_id = identities.get(MARTA).mandate_id
+    bot.handle_update(message("/comprar um voo pra Córdoba abaixo de $80"))
+    bot.handle_update(tap(f"{views.CALLBACK_WATCH}:{mandate_id}"))
+
+    bot.handle_update(message("/mandato"))
+
+    assert "abaixo de $80" in api.sent[-1][1].text

@@ -47,3 +47,12 @@ class EscalationStatus(str, Enum):
     OPEN = "OPEN"
     APPROVED = "APPROVED"
     DENIED = "DENIED"
+
+
+class WatchStatus(str, Enum):
+    """A standing order is open until something ends it, once."""
+
+    OPEN = "OPEN"
+    FIRED = "FIRED"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"

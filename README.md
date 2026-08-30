@@ -374,6 +374,14 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
   **O modelo nunca é informado do limite, do teto ou do saldo**, então um modelo com
   prompt injetado não tem número privado para repetir — e tampouco consegue se
   autocensurar para dentro do mandato, que é o que mantém a recusa demonstrável.
+- **O agente continua trabalhando depois que você para de digitar.** *"Compre um voo
+  pra Córdoba abaixo de US$ 100"* quando nada atende não é um beco: vira uma **vigília**.
+  O agente fica olhando o catálogo e, quando o preço cai, **compra sozinho** e te avisa
+  no Telegram sem você ter pedido. É a única parte do sistema onde o comprador não é uma
+  pessoa apertando pagar — que é a premissa do case. A vigília não carrega autoridade
+  nenhuma: disparar significa chamar o mesmo `/authorize` e `/capture` de sempre, então
+  uma ordem permanente contra um mandato revogado é recusada igualzinho. **A autonomia
+  está em *quando* o agente age, nunca no *que* ele pode fazer.**
 - **Pedido incompleto vira pergunta, não compra.** *"compre uma passagem"* não nomeia
   nada à venda, e comprar o voo mais barato do catálogo seria aprovar em silêncio algo
   que ninguém pediu. O agente tem uma terceira saída além de propor e não achar: ele
