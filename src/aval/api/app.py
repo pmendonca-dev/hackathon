@@ -28,6 +28,7 @@ from aval.api.routes import (
     operations,
     operator,
 )
+from aval.api.routes.demo_rogue import create_demo_rogue_router, rogue_charges_enabled
 from aval.api.routes.demo_tamper import create_demo_tamper_router, tampering_enabled
 from aval.domain.errors import DomainError
 from aval.infrastructure.psp import PspUnreachable
@@ -133,4 +134,8 @@ def create_app(runtime: AvalRuntime | None = None) -> FastAPI:
     # flag it does not exist, and does not appear in the OpenAPI document either.
     if tampering_enabled():
         app.include_router(create_demo_tamper_router())
+    # Same discipline, different demonstration: a charge that never passed the core, so
+    # a judge can watch the verdict give the money back instead of being told it would.
+    if rogue_charges_enabled():
+        app.include_router(create_demo_rogue_router())
     return app

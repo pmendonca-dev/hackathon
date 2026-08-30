@@ -831,9 +831,117 @@ class AuthorizationCore:
                 },
                 occurred_at=resolved.resolved_at,
             )
-            return resolved
+            return resolved, liability
 
-        return run_in_write_transaction(self._engine, operation)
+        resolved, liability = run_in_write_transaction(self._engine, operation)
+        # The verdict moves money, and it moves it outside the write transaction that
+        # produced it: the processor is I/O, and holding the single writer open across a
+        # network call is how a demo deadlocks in front of an audience.
+        if liability["verdict"] not in ("HOLDER_LIABLE", "NO_CHARGE"):
+            self._reverse(resolved.mandate_id, resolved.reservation_id, liability["verdict"])
+        # The verdict is handed back with the dispute because it is the verdict this
+        # resolution *acted on*. Recomputing it afterwards would read a world the
+        # reversal already changed — after money goes back the live answer is NO_CHARGE,
+        # which is true and is not what was decided here.
+        return resolved
+
+    def liability_recorded_for(self, dispute_id: str) -> dict[str, Any] | None:
+        """The verdict written into the trail when this dispute was resolved.
+
+        Read from the chain rather than recomputed, so a reversal that already happened
+        cannot rewrite the answer that caused it.
+        """
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                select(disputes.c.mandate_id).where(disputes.c.id == dispute_id)
+            ).mappings().one_or_none()
+            if row is None:
+                return None
+            for entry in reversed(SqliteAuditLedger(connection).timeline_for(row["mandate_id"])):
+                if (
+                    entry.event_type == "dispute_resolved"
+                    and entry.detail.get("dispute_id") == dispute_id
+                ):
+                    liability = entry.detail.get("liability")
+                    return liability if isinstance(liability, dict) else None
+        return None
+
+    def _reverse(self, mandate_id: str, reservation_id: str, verdict: str) -> None:
+        """Give back money this layer cannot justify holding.
+
+        Only reached for a verdict that does not put the charge on the holder. The
+        reservation is re-read at every step, so resolving the same dispute three times
+        reverses once: the second pass finds money already returned and has nothing to
+        do. A processor that does not answer leaves the money exactly where it is and
+        says so in the trail — silence is not a refund, the same way it is not a decline.
+        """
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                select(reservations.c.status, reservations.c.amount_minor_units).where(
+                    reservations.c.id == reservation_id
+                )
+            ).mappings().one_or_none()
+        if row is None or row["status"] not in (
+            ReservationStatus.COMMITTED.value,
+            ReservationStatus.SETTLED.value,
+        ):
+            return
+
+        refund = getattr(self._settlement_adapter, "refund", None)
+        outcome: str
+        reference: str | None = None
+        if refund is None:
+            outcome = "reversal_unsupported"
+        else:
+            try:
+                settlement = refund(
+                    Reservation(
+                        id=reservation_id,
+                        mandate_id=mandate_id,
+                        checkout_intent_id="",
+                        amount=Money(int(row["amount_minor_units"]), "USD", 2),
+                        status=ReservationStatus(row["status"]),
+                    )
+                )
+            except Exception:
+                outcome = "reversal_in_doubt"
+            else:
+                outcome = "purchase_reversed" if settlement.approved else "reversal_refused"
+                reference = settlement.reference
+
+        def commit(connection) -> None:
+            fresh = SqliteLedgerRepository(connection).get(
+                reservation_id, Money(0, "USD", 2)
+            )
+            if fresh is None or fresh.status not in (
+                ReservationStatus.COMMITTED,
+                ReservationStatus.SETTLED,
+            ):
+                return
+            if outcome == "purchase_reversed":
+                SqliteLedgerRepository(connection).update(fresh.reverse(), at=self._clock())
+            SqliteAuditLedger(connection).append(
+                mandate_id=mandate_id,
+                event_type=outcome,
+                human_summary={
+                    "purchase_reversed": "Valor estornado: a trilha não sustenta esta cobrança.",
+                    "reversal_refused": "O processador recusou o estorno; o valor segue retido.",
+                    "reversal_in_doubt": "O processador não respondeu ao estorno; o valor segue retido.",
+                    "reversal_unsupported": "Nenhum processador para estornar; o valor segue retido.",
+                }[outcome],
+                actor="auditor:aval",
+                detail={
+                    "reservation_id": reservation_id,
+                    "amount_minor_units": int(row["amount_minor_units"]),
+                    "currency": "USD",
+                    "scale": 2,
+                    "verdict": verdict,
+                    "settlement_reference": reference,
+                },
+                occurred_at=self._clock(),
+            )
+
+        run_in_write_transaction(self._engine, commit)
 
     @staticmethod
     def _proof_payload(signed_proof: str) -> dict:

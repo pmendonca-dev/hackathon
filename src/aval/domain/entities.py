@@ -190,6 +190,19 @@ class Reservation:
             raise DomainError("only a pending or committed reservation may release")
         return replace(self, status=ReservationStatus.RELEASED)
 
+    def reverse(self) -> "Reservation":
+        """Give the money back after a dispute resolved against the charge.
+
+        Deliberately not `release`, though both land on RELEASED: releasing is what a
+        refused card does to money that was never taken, and reversing is what a verdict
+        does to money that *was*. Keeping the preconditions apart means the decline path
+        cannot quietly acquire the power to undo a settlement, and the trail names which
+        of the two happened.
+        """
+        if self.status not in (ReservationStatus.COMMITTED, ReservationStatus.SETTLED):
+            raise DomainError("only a committed or settled reservation may be reversed")
+        return replace(self, status=ReservationStatus.RELEASED)
+
 
 @dataclass(frozen=True)
 class AuthorizationProof:

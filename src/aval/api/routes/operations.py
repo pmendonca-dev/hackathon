@@ -157,7 +157,15 @@ def resolve_dispute(request: Request, dispute_id: str) -> dict[str, Any]:
         "resolution": dispute.resolution,
         # "Was this authorized?" and "who answers for it?" are different questions.
         # The first is the status above; this is the second.
-        "liability": runtime_of(request).core.liability_for(dispute.reservation_id),
+        #
+        # Read from the trail rather than recomputed: when the verdict does not put the
+        # charge on the holder it also gives the money back, and a fresh computation
+        # would then answer NO_CHARGE — true about the world after the reversal, and not
+        # what this resolution decided.
+        "liability": (
+            runtime_of(request).core.liability_recorded_for(dispute.id)
+            or runtime_of(request).core.liability_for(dispute.reservation_id)
+        ),
     }
 
 

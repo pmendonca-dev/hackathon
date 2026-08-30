@@ -70,3 +70,19 @@ class DemoPspAdapter:
             f"{reservation.id}:{reservation.transaction_hash}".encode("utf-8")
         ).hexdigest()[:24]
         return SettlementResult(approved=True, reference=f"psp_mock_{digest}")
+
+    def refund(self, reservation: Reservation) -> SettlementResult:
+        """Undo a charge, under the same knob as everything else.
+
+        The modes mean here what they mean everywhere: `offline` raises, because a
+        processor that did not answer has not refunded anything and the money must stay
+        exactly where it is; `decline` refuses, because a refusal to refund is a real
+        answer a real acquirer gives. Only the third case moves money back.
+        """
+        mode = self._mode_provider()
+        if mode == "offline":
+            raise PspUnreachable("o processador não respondeu ao estorno")
+        if mode == "decline":
+            return SettlementResult(approved=False)
+        digest = hashlib.sha256(f"refund:{reservation.id}".encode("utf-8")).hexdigest()[:24]
+        return SettlementResult(approved=True, reference=f"psp_refund_{digest}")
