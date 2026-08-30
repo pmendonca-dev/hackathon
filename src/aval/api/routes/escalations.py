@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, Request
+from fastapi import Depends, APIRouter, Request
 from pydantic import BaseModel, Field
 
 from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError
+from aval.api.holder_authority import read_authorization
 from aval.application.authorization_core import ApprovalError
 from aval.domain.entities import Escalation
 
@@ -54,7 +55,7 @@ def list_escalations(
     request: Request,
     mandate_id: str | None = None,
     principal_id: str | None = None,
-    authorization_jws: str | None = None,
+    authorization_jws: str | None = Depends(read_authorization),
 ) -> dict[str, Any]:
     """What is waiting on a person, by mandate or across every mandate they hold.
 

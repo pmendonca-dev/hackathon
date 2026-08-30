@@ -231,8 +231,10 @@ class AvalGateway:
         identity = self._identities.for_mandate(mandate_id)
         if identity is None:
             return {}
+        # Em cabeçalho, nunca na URL: uma query string acaba em log de acesso e no
+        # histórico, e este JWS é prova portável de autoridade sobre o mandato.
         return {
-            "authorization_jws": self._identities.sign(
+            "X-Aval-Authorization": self._identities.sign(
                 identity, {"principal_id": identity.principal_id}
             )
         }
@@ -242,7 +244,7 @@ class AvalGateway:
             payload = self._call(
                 "GET",
                 ENDPOINTS["mandate"].format(mandate_id=mandate_id),
-                query=self._read_authorization(mandate_id),
+                headers=self._read_authorization(mandate_id),
             )
         except GatewayError as error:
             # "Not found" and "not yours" are the same answer to a bot that holds no
@@ -276,8 +278,8 @@ class AvalGateway:
             query={
                 "mandate_id": mandate_id,
                 "view": "human",
-                **self._read_authorization(mandate_id),
             },
+            headers=self._read_authorization(mandate_id),
         )
         entries = [_entry(item) for item in payload.get("entries", [])]
         entries.sort(key=lambda item: item.sequence, reverse=True)
@@ -456,8 +458,8 @@ class AvalGateway:
             ENDPOINTS["card_session_read"].format(
                 mandate_id=mandate_id, session_id=session_id
             ),
-            query={
-                "authorization_jws": self._identities.sign(
+            headers={
+                "X-Aval-Authorization": self._identities.sign(
                     identity, {"mandate_id": mandate_id, "scope": "instrument_session"}
                 )
             },
@@ -608,6 +610,7 @@ class AvalGateway:
         *,
         query: Mapping[str, str] | None = None,
         body: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         url = f"{self._base_url}{path}"
         if query:
@@ -615,6 +618,8 @@ class AvalGateway:
         data = None if body is None else json.dumps(body).encode()
         request = urllib.request.Request(url, data=data, method=method)
         request.add_header("Accept", "application/json")
+        for name, value in (headers or {}).items():
+            request.add_header(name, value)
         if data is not None:
             request.add_header("Content-Type", "application/json")
         try:

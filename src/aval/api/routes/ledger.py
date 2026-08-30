@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import Depends, APIRouter, Query, Request
 
 from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError
-from aval.api.holder_authority import require_holder_authority
+from aval.api.holder_authority import require_holder_authority, read_authorization
 from aval.api.schemas import MandateListView, MandateView, MoneyOut, UsageLimitOut
 from aval.application.authorization_core import MandateSnapshot
 from aval.security.pairwise import pairwise_id
@@ -64,11 +64,7 @@ def list_mandates(
         min_length=1,
         description="Whose mandates to list. Required: there is no global listing.",
     ),
-    authorization_jws: str = Query(
-        ...,
-        min_length=1,
-        description="Compact JWS ES256 by a holder authority, over {principal_id}.",
-    ),
+    authorization_jws: str | None = Depends(read_authorization),
 ) -> MandateListView:
     """The mandates one buyer holds, scoped to the key that may see them.
 
@@ -84,6 +80,16 @@ def list_mandates(
     have created their first mandate — no refusal, and no oracle for which buyers exist.
     """
     core = runtime_of(request).core
+    # A assinatura deixou de ser um parâmetro obrigatório de query — ela vem em
+    # cabeçalho, e o framework não recusa mais por nós. Recusar aqui, com o mesmo código
+    # das outras leituras: ausente e inválida são coisas diferentes, e quem recebe
+    # precisa saber qual das duas.
+    if not authorization_jws:
+        raise ApiError(
+            403,
+            "read_authorization_required",
+            "Esta leitura exige autorização assinada pelo titular.",
+        )
     try:
         readable = set(core.mandates_readable_by(authorization_jws, principal_id))
     except ValueError as error:
@@ -125,10 +131,7 @@ def require_read_authority(request: Request, mandate_id: str, authorization_jws:
 def read_mandate(
     request: Request,
     mandate_id: str,
-    authorization_jws: str | None = Query(
-        default=None,
-        description="Compact JWS ES256 by a holder authority of this mandate.",
-    ),
+    authorization_jws: str | None = Depends(read_authorization),
 ) -> MandateView:
     return mandate_view(require_read_authority(request, mandate_id, authorization_jws))
 
@@ -139,10 +142,7 @@ def read_ledger(
     view: Literal["human", "merchant", "auditor"] = Query(...),
     mandate_id: str | None = None,
     merchant_id: str | None = None,
-    authorization_jws: str | None = Query(
-        default=None,
-        description="Holder signature, required by the human view and by nothing else.",
-    ),
+    authorization_jws: str | None = Depends(read_authorization),
 ) -> dict[str, Any]:
     core = runtime_of(request).core
     if view == "merchant":

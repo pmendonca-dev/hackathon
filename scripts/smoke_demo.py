@@ -102,7 +102,7 @@ class Smoke:
         session_id = session.json()["session_id"]
         card = self.client.get(
             f"/mandates/{mandate_id}/instrument/session/{session_id}",
-            params={"authorization_jws": self.sign(session_scope)},
+            headers={"X-Aval-Authorization": self.sign(session_scope)},
         )
         card.raise_for_status()
         registered = card.json()
@@ -258,7 +258,7 @@ class Smoke:
             return int(
                 self.client.get(
                     f"/mandates/{mandate_id}",
-                    params={"authorization_jws": self.read_token()},
+                    headers={"X-Aval-Authorization": self.read_token()},
                 ).json()["policy_version"]
             )
 
@@ -346,11 +346,8 @@ class Smoke:
 
         human = self.client.get(
             "/ledger",
-            params={
-                "mandate_id": mandate_id,
-                "view": "human",
-                "authorization_jws": self.read_token(),
-            },
+            params={"mandate_id": mandate_id, "view": "human"},
+            headers={"X-Aval-Authorization": self.read_token()},
         ).json()
         merchant = self.client.get(
             "/ledger", params={"merchant_id": "vuelaya", "view": "merchant"}

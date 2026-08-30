@@ -11,10 +11,11 @@ import logging
 import json
 from uuid import uuid4
 
-from fastapi import APIRouter, Request, status
+from fastapi import Depends, APIRouter, Request, status
 
 from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError
+from aval.api.holder_authority import read_authorization
 from aval.application.authorization_core import ApprovalError
 from aval.api.schemas import (
     BindInstrumentRequest,
@@ -266,7 +267,10 @@ def open_instrument_session(
     response_model=InstrumentSessionStatusResponse,
 )
 def read_instrument_session(
-    request: Request, mandate_id: str, session_id: str, authorization_jws: str | None = None
+    request: Request,
+    mandate_id: str,
+    session_id: str,
+    authorization_jws: str | None = Depends(read_authorization),
 ) -> InstrumentSessionStatusResponse:
     """The card the person registered, once they have finished registering it.
 

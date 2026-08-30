@@ -208,7 +208,8 @@ def test_disputes_can_be_listed_for_a_mandate(harness):
 
     listed = harness.client.get(
         "/disputes",
-        params={"mandate_id": mandate_id, "authorization_jws": harness.read_token()},
+        params={"mandate_id": mandate_id},
+        headers={"X-Aval-Authorization": harness.read_token()},
     ).json()
 
     assert len(listed["disputes"]) == 1

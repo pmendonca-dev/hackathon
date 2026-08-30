@@ -194,21 +194,30 @@ class Harness:
             {"principal_id": principal_id}, self.custody, kid or self.HOLDER_KID
         )
 
+    #: A assinatura de leitura viaja em cabeçalho: URL vai para log, histórico e
+    #: `Referer`, e este JWS é prova portável de autoridade sobre o mandato.
+    AUTHORIZATION_HEADER = "X-Aval-Authorization"
+
+    def read_headers(self, principal_id: str = "usr_marta", *, kid: str | None = None):
+        return {self.AUTHORIZATION_HEADER: self.read_token(principal_id, kid=kid)}
+
     def list_mandates(self, principal_id: str = "usr_marta", **overrides: Any):
-        params = {
-            "principal_id": principal_id,
-            "authorization_jws": self.read_token(principal_id),
-        }
+        params = {"principal_id": principal_id}
+        headers = self.read_headers(principal_id)
+        if "authorization_jws" in overrides:
+            token = overrides.pop("authorization_jws")
+            headers = {} if token is None else {self.AUTHORIZATION_HEADER: token}
         params.update(overrides)
-        return self.client.get("/mandates", params=params)
+        return self.client.get("/mandates", params=params, headers=headers)
 
     def list_escalations(self, principal_id: str = "usr_marta", **overrides: Any):
-        params = {
-            "principal_id": principal_id,
-            "authorization_jws": self.read_token(principal_id),
-        }
+        params = {"principal_id": principal_id}
+        headers = self.read_headers(principal_id)
+        if "authorization_jws" in overrides:
+            token = overrides.pop("authorization_jws")
+            headers = {} if token is None else {self.AUTHORIZATION_HEADER: token}
         params.update(overrides)
-        return self.client.get("/escalations", params=params)
+        return self.client.get("/escalations", params=params, headers=headers)
 
     def read_mandate(
         self, mandate_id: str, *, principal_id: str = "usr_marta", kid: str | None = None
@@ -218,8 +227,7 @@ class Harness:
         The id alone stopped being enough — it names limits, spend and history, and it
         was never a secret."""
         return self.client.get(
-            f"/mandates/{mandate_id}",
-            params={"authorization_jws": self.read_token(principal_id, kid=kid)},
+            f"/mandates/{mandate_id}", headers=self.read_headers(principal_id, kid=kid)
         )
 
     def human_ledger(
@@ -227,11 +235,8 @@ class Harness:
     ):
         return self.client.get(
             "/ledger",
-            params={
-                "mandate_id": mandate_id,
-                "view": "human",
-                "authorization_jws": self.read_token(principal_id, kid=kid),
-            },
+            params={"mandate_id": mandate_id, "view": "human"},
+            headers=self.read_headers(principal_id, kid=kid),
         )
 
     def policy_version(self, mandate_id: str) -> int:

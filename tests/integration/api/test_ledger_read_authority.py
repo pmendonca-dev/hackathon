@@ -17,9 +17,11 @@ from __future__ import annotations
 from tests.integration.api.conftest import Harness
 
 
-def human_view(harness: Harness, mandate_id: str, **params):
+def human_view(harness: Harness, mandate_id: str, *, authorization_jws: str | None = None):
+    """A assinatura vai em cabeçalho, não na query: URL vai para log e histórico."""
+    headers = {} if authorization_jws is None else {"X-Aval-Authorization": authorization_jws}
     return harness.client.get(
-        "/ledger", params={"mandate_id": mandate_id, "view": "human", **params}
+        "/ledger", params={"mandate_id": mandate_id, "view": "human"}, headers=headers
     )
 
 

@@ -188,7 +188,8 @@ def test_the_verdict_is_the_same_when_it_is_read_again(harness):
 
     listed = harness.client.get(
         "/disputes",
-        params={"mandate_id": mandate_id, "authorization_jws": harness.read_token()},
+        params={"mandate_id": mandate_id},
+        headers={"X-Aval-Authorization": harness.read_token()},
     ).json()
 
     assert listed["disputes"][0]["liability"] == at_resolution

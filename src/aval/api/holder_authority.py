@@ -50,3 +50,16 @@ def require_holder_authority(
     if mandate_id not in readable:
         raise ApiError(403, forbidden_code, forbidden_message)
     return core.signing_kid(authorization_jws)
+
+
+#: Where a read signature travels. A query string is the wrong place for a credential:
+#: URLs are written to access logs, kept in browser history, and handed to third parties
+#: in `Referer`. A holder JWS is a bearer proof of authority over a mandate — anyone who
+#: reads one out of a log can read that person's record for as long as it is valid. The
+#: body is not available on a GET, so it travels in a header, which none of those keep.
+AUTHORIZATION_HEADER = "X-Aval-Authorization"
+
+
+def read_authorization(request: Request) -> str | None:
+    """The holder signature presented for a read, or None."""
+    return request.headers.get(AUTHORIZATION_HEADER) or None

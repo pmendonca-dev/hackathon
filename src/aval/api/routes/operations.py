@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError
-from aval.api.holder_authority import require_holder_authority
+from aval.api.holder_authority import require_holder_authority, read_authorization
 from aval.api.operator_auth import require_operator
 from aval.domain.errors import DomainError
 from aval.infrastructure.psp import MODES
@@ -153,7 +153,7 @@ def open_dispute(request: Request, body: OpenDisputeRequest) -> dict[str, Any]:
 def list_disputes(
     request: Request,
     mandate_id: str,
-    authorization_jws: str | None = None,
+    authorization_jws: str | None = Depends(read_authorization),
 ) -> dict[str, Any]:
     """The disputes on one mandate, read by a key that mandate names.
 

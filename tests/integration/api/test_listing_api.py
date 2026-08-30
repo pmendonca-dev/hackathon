@@ -129,10 +129,8 @@ def test_guessing_the_name_does_not_read_another_buyers_mandates(harness: Harnes
     harness.custody.generate_es256("usr_stranger_k1")
     response = harness.client.get(
         "/mandates",
-        params={
-            "principal_id": "usr_bruno",
-            "authorization_jws": harness.read_token("usr_bruno", kid="usr_stranger_k1"),
-        },
+        params={"principal_id": "usr_bruno"},
+        headers={"X-Aval-Authorization": harness.read_token("usr_bruno", kid="usr_stranger_k1")},
     )
 
     assert response.status_code == 200, response.text
@@ -146,16 +144,27 @@ def test_a_listing_signed_for_one_buyer_does_not_answer_for_another(harness: Har
 
     lifted = harness.client.get(
         "/mandates",
-        params={"principal_id": "usr_marta", "authorization_jws": harness.read_token("usr_bruno")},
+        params={"principal_id": "usr_marta"},
+        headers={"X-Aval-Authorization": harness.read_token("usr_bruno")},
     )
 
     assert lifted.json()["mandates"] == []
 
 
 def test_the_mandate_listing_requires_a_signature_at_all(harness: Harness) -> None:
+    """Sem assinatura, a mesma recusa que qualquer outra leitura dá.
+
+    Era 422 porque a assinatura vinha como parâmetro obrigatório de query e quem recusava
+    era o framework. Agora ela viaja em cabeçalho — fora do log de acesso e do histórico —
+    e a recusa é da rota, com o código que as outras leituras já usavam. Ausente e
+    malformada continuam sendo respostas diferentes.
+    """
     harness.create_mandate()
 
-    assert harness.client.get("/mandates", params={"principal_id": "usr_marta"}).status_code == 422
+    response = harness.client.get("/mandates", params={"principal_id": "usr_marta"})
+
+    assert response.status_code == 403, response.text
+    assert response.json()["reason_code"] == "read_authorization_required"
 
 
 def test_pending_approvals_of_another_buyer_cannot_be_polled(harness: Harness) -> None:
@@ -166,10 +175,8 @@ def test_pending_approvals_of_another_buyer_cannot_be_polled(harness: Harness) -
 
     response = harness.client.get(
         "/escalations",
-        params={
-            "principal_id": "usr_bruno",
-            "authorization_jws": harness.read_token("usr_bruno", kid="usr_stranger_k2"),
-        },
+        params={"principal_id": "usr_bruno"},
+        headers={"X-Aval-Authorization": harness.read_token("usr_bruno", kid="usr_stranger_k2")},
     )
 
     assert response.status_code == 200, response.text
@@ -191,7 +198,9 @@ def test_a_malformed_read_authorization_is_refused_not_ignored(harness: Harness)
     harness.create_mandate()
 
     response = harness.client.get(
-        "/mandates", params={"principal_id": "usr_marta", "authorization_jws": "not-a-jws"}
+        "/mandates",
+        params={"principal_id": "usr_marta"},
+        headers={"X-Aval-Authorization": "not-a-jws"},
     )
 
     assert response.status_code == 422

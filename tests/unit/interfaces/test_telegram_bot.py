@@ -63,14 +63,18 @@ class FakeAval:
             self.hold.wait(timeout=10)
         path = request.full_url.split("127.0.0.1:9000", 1)[1]
         body = json.loads(request.data) if request.data else {}
-        status, payload = self._route(request.get_method(), path, body)
+        # A assinatura de leitura chega em cabeçalho, como no servidor de verdade. Um
+        # duplo que ainda a lesse da query deixaria o bot cego contra a API real com
+        # todos os testes daqui verdes.
+        read_token = request.get_header("X-aval-authorization")
+        status, payload = self._route(request.get_method(), path, body, read_token)
         if status >= 400:
             raise urllib.error.HTTPError(
                 request.full_url, status, "error", {}, _Payload(json.dumps(payload).encode())
             )
         return _Payload(json.dumps(payload).encode())
 
-    def _route(self, method: str, path: str, body: dict[str, Any]):
+    def _route(self, method: str, path: str, body: dict[str, Any], read_token: str | None = None):
         route, _, query = path.partition("?")
         params = dict(pair.split("=", 1) for pair in query.split("&") if "=" in pair)
         self.received.append((f"{method} {route}", body))
@@ -127,7 +131,7 @@ class FakeAval:
             mandate = self.mandates.get(mandate_id)
             if mandate is None:
                 return 404, {"reason_code": "mandate_not_found"}
-            return self._read(mandate_id, params, mandate)
+            return self._read(mandate_id, read_token, mandate)
         if route == "/escalations":
             if params.get("mandate_id") not in self.mandates:
                 return 404, {"reason_code": "mandate_not_found"}
@@ -146,7 +150,7 @@ class FakeAval:
         if route == "/ledger":
             mandate_id = params["mandate_id"]
             mandate = self.mandates[mandate_id]
-            refusal = self._read(mandate_id, params, mandate)
+            refusal = self._read(mandate_id, read_token, mandate)
             if refusal[0] != 200:
                 return refusal
             return 200, {
@@ -251,11 +255,10 @@ class FakeAval:
             "instrument_revocation_scope": scope,
         }
 
-    def _read(self, mandate_id: str, params: dict[str, str], mandate: dict[str, Any]):
+    def _read(self, mandate_id: str, token: str | None, mandate: dict[str, Any]):
         """Sight is authority here too: the live API refuses a read that no key signed,
         so a bot that stopped signing its reads would go blind against the real server
         while every fixture kept passing."""
-        token = params.get("authorization_jws")
         if not token:
             return 403, {"reason_code": "read_authorization_required"}
         claims = self._verify(mandate_id, token)

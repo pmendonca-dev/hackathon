@@ -52,7 +52,8 @@ def test_a_stranger_holding_the_id_reads_no_disputes(harness: Harness) -> None:
 
     response = harness.client.get(
         "/disputes",
-        params={"mandate_id": mandate_id, "authorization_jws": harness.read_token(kid="usr_bruno_k1")},
+        params={"mandate_id": mandate_id},
+        headers={"X-Aval-Authorization": harness.read_token(kid="usr_bruno_k1")},
     )
 
     assert response.status_code == 403, response.text
@@ -64,7 +65,9 @@ def test_the_holder_lists_their_own_disputes(harness: Harness) -> None:
     open_signed(harness, settled_reservation(harness, mandate_id))
 
     response = harness.client.get(
-        "/disputes", params={"mandate_id": mandate_id, "authorization_jws": harness.read_token()}
+        "/disputes",
+        params={"mandate_id": mandate_id},
+        headers={"X-Aval-Authorization": harness.read_token()},
     )
 
     assert response.status_code == 200, response.text

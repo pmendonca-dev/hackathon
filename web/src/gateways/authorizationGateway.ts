@@ -226,6 +226,17 @@ export class AuthorizationGateway {
     });
   }
 
+  /**
+   * A assinatura de leitura viaja em cabeçalho, nunca na URL. Uma query string acaba em
+   * log de acesso, no histórico do navegador e no `Referer` que sai para terceiros — e
+   * um JWS do titular é prova portável de autoridade sobre o mandato: quem o lê de um
+   * log lê o registro daquela pessoa enquanto ele valer. GET não tem corpo, então sobra
+   * o cabeçalho, que nenhum dos três guarda.
+   */
+  #signed(authorizationJws: string | undefined | null): Record<string, string> {
+    return authorizationJws ? { 'X-Aval-Authorization': authorizationJws } : {};
+  }
+
   async #request<T>(
     path: string,
     { method = 'GET', body, operator = false, headers: extraHeaders }: {
@@ -300,8 +311,8 @@ export class AuthorizationGateway {
     authorizationJws: string,
   ): Promise<{ principal_id: string; mandates: MandateView[] }> {
     return this.#request(
-      `/mandates?principal_id=${encodeURIComponent(principalId)}` +
-        `&authorization_jws=${encodeURIComponent(authorizationJws)}`,
+      `/mandates?principal_id=${encodeURIComponent(principalId)}`,
+      { headers: this.#signed(authorizationJws) },
     );
   }
 
@@ -315,8 +326,8 @@ export class AuthorizationGateway {
    */
   readMandate(mandateId: string, authorizationJws: string): Promise<MandateView> {
     return this.#request(
-      `/mandates/${encodeURIComponent(mandateId)}` +
-        `?authorization_jws=${encodeURIComponent(authorizationJws)}`,
+      `/mandates/${encodeURIComponent(mandateId)}`,
+      { headers: this.#signed(authorizationJws) },
     );
   }
 
@@ -325,8 +336,8 @@ export class AuthorizationGateway {
     authorizationJws: string,
   ): Promise<{ escalations: Escalation[] }> {
     return this.#request(
-      `/escalations?principal_id=${encodeURIComponent(principalId)}` +
-        `&authorization_jws=${encodeURIComponent(authorizationJws)}`,
+      `/escalations?principal_id=${encodeURIComponent(principalId)}`,
+      { headers: this.#signed(authorizationJws) },
     );
   }
 
@@ -337,8 +348,8 @@ export class AuthorizationGateway {
     authorizationJws: string,
   ): Promise<{ mandate: MandateView; entries: LedgerEntry[] }> {
     return this.#request(
-      `/ledger?view=human&mandate_id=${encodeURIComponent(mandateId)}` +
-        `&authorization_jws=${encodeURIComponent(authorizationJws)}`,
+      `/ledger?view=human&mandate_id=${encodeURIComponent(mandateId)}`,
+      { headers: this.#signed(authorizationJws) },
     );
   }
 
@@ -395,8 +406,8 @@ export class AuthorizationGateway {
    *  reasons a person wrote about their own purchases. */
   listDisputes(mandateId: string, authorizationJws: string): Promise<{ disputes: Dispute[] }> {
     return this.#request(
-      `/disputes?mandate_id=${encodeURIComponent(mandateId)}` +
-        `&authorization_jws=${encodeURIComponent(authorizationJws)}`,
+      `/disputes?mandate_id=${encodeURIComponent(mandateId)}`,
+      { headers: this.#signed(authorizationJws) },
     );
   }
 
@@ -595,8 +606,8 @@ export class AuthorizationGateway {
       body: { authorization_jws: await sign(sessionClaims) },
     });
     const registered = await this.#request<{ ready: boolean; token?: string; label?: string }>(
-      `${base}/session/${encodeURIComponent(opened.session_id)}` +
-        `?authorization_jws=${encodeURIComponent(await sign(sessionClaims))}`,
+      `${base}/session/${encodeURIComponent(opened.session_id)}`,
+      { headers: this.#signed(await sign(sessionClaims)) },
     );
     // Not ready is the normal answer while a person is still typing, not a failure.
     if (!registered.ready || !registered.token || !registered.label) return null;
