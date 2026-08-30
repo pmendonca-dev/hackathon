@@ -107,11 +107,22 @@ class CaptureRequest(PurchaseRequest):
     terms_hash: str | None = None
 
 
+class EvaluationStepOut(BaseModel):
+    """One rung of the authorization ladder as the core walked it."""
+
+    check: str
+    passed: bool
+    detail: str | None = None
+
+
 class AuthorizationResponse(BaseModel):
     decision: str
     reason_code: str
     human_summary: str
     escalation_id: str | None = None
+    # The ladder, in order, stopping where it stopped. It names the live limit and the
+    # ceiling, so it is served to the agent and the holder and never to the merchant.
+    evaluation_trace: list[EvaluationStepOut] = []
 
 
 class CaptureResponse(BaseModel):

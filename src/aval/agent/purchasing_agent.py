@@ -21,6 +21,7 @@ from aval.api.errors import ApiError
 from aval.api.purchase_flow import authorize_purchase, capture_purchase
 from aval.api.schemas import CaptureRequest, PurchaseRequest
 from aval.api.agent_auth import verify_signed_request
+from aval.application.authorization_core import EvaluationStep
 from aval.runtime import AvalRuntime
 from aval.security.http_signature import sign_request
 from aval.security.key_custody import KeyCustodyService
@@ -37,6 +38,9 @@ class AgentRun:
     settlement_reference: str | None = None
     authorization_proof: str | None = None
     considered: int = 0
+    # The authorization ladder the attempt ran into. Empty when no offer matched,
+    # because nothing was ever put to the core.
+    trace: tuple[EvaluationStep, ...] = ()
 
 
 def choose_offer(offers: list[dict[str, Any]], intent: PurchaseIntent) -> dict[str, Any] | None:
@@ -125,6 +129,7 @@ class PurchasingAgent:
                 offer=offer,
                 escalation_id=decision.escalation_id,
                 considered=len(offers),
+                trace=decision.trace,
             )
 
         capture_body = {**purchase, "idempotency_key": f"cap_{checkout_id}"}
@@ -146,4 +151,5 @@ class PurchasingAgent:
             authorization_proof=result.authorization_proof,
             escalation_id=result.escalation_id,
             considered=len(offers),
+            trace=decision.trace,
         )
