@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 import base64
 import hashlib
@@ -14,7 +14,6 @@ from sqlalchemy.pool import StaticPool
 from aval.application.ports import AuthorizationProofIssuer, SettlementAdapter
 from aval.domain.entities import (
     AgentIdentity,
-    AuditEvent,
     Dispute,
     Escalation,
     Mandate,
@@ -89,6 +88,7 @@ class CaptureCommand(AuthorizationCommand):
     terms_hash: str | None = None
     canonical_offer: str | None = None
     instrument_id: str | None = None
+    idempotency_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -133,7 +133,7 @@ class CaptureResult:
     # True when this result was replayed from a completed idempotency record rather than
     # computed now. The outcome is identical by construction; only the caller's framing
     # differs, and a protocol that advertises replays needs to know which it is.
-    replayed: bool = False
+    replayed: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -143,6 +143,13 @@ class LiveAuthorizationContext:
     mandate_ceiling: Money
     live_balance: Money
     expires_at: datetime
+
+
+@dataclass(frozen=True)
+class RevocationResult:
+    mandate_id: str | None
+    reason_code: str | None = None
+    replayed: bool = False
 
 
 class AuthorizationCore:
@@ -287,86 +294,141 @@ class AuthorizationCore:
         run_in_write_transaction(self._engine, operation)
 
     def submit_signed_revocation(self, token: str) -> None:
+        run_in_write_transaction(
+            self._engine, lambda connection: self._submit_signed_revocation(connection, token)
+        )
+
+    def submit_signed_revocation_idempotent(
+        self, *, mandate_id: str, token: str, idempotency_key: str, authenticated_kid: str | None,
+    ) -> RevocationResult:
+        """Apply a registered authority's JWS once, retaining the stable response durably."""
+        request_hash = hashlib.sha256(json.dumps(
+            {"mandate_id": mandate_id, "signed_revocation": token}, sort_keys=True
+        ).encode()).hexdigest()
+
+        def operation(connection) -> RevocationResult:
+            idem = SqliteIdempotencyRepository(connection)
+            try:
+                claim = idem.get_or_claim("mandate_revocation", idempotency_key, request_hash)
+            except Exception:
+                return RevocationResult(None, "idempotency_unavailable")
+            if claim.state == "REPLAY":
+                return self._deserialize_revocation_result(claim.response_body, replayed=True)
+            if claim.state == "MISMATCH":
+                return RevocationResult(None, "idempotency_key_reused")
+            if claim.state == "IN_FLIGHT":
+                return RevocationResult(None, "idempotency_in_flight")
+            try:
+                revoked_mandate_id = self._submit_signed_revocation(
+                    connection, token, expected_mandate_id=mandate_id, authenticated_kid=authenticated_kid,
+                )
+                result = RevocationResult(revoked_mandate_id)
+            except ValueError as error:
+                result = RevocationResult(None, self._stable_revocation_error(str(error)))
+            idem.complete("mandate_revocation", idempotency_key, self._serialize_revocation_result(result))
+            return result
+
+        try:
+            return run_in_write_transaction(self._engine, operation)
+        except Exception:
+            return RevocationResult(None, "idempotency_unavailable")
+
+    def _submit_signed_revocation(
+        self, connection, token: str, *, expected_mandate_id: str | None = None,
+        authenticated_kid: str | None = None,
+    ) -> str:
         try:
             encoded_header = token.split(".")[0]
             header = json.loads(base64.urlsafe_b64decode(encoded_header + "=" * (-len(encoded_header) % 4)))
             kid = header["kid"]
         except (IndexError, KeyError, ValueError, json.JSONDecodeError) as error:
             raise ValueError("malformed revocation JWS") from error
-        def operation(connection) -> None:
-            mandates = SqliteMandateRepository(connection).for_authority_kid(kid)
-            # One person may hold several mandates under the same key: renewing a mandate
-            # does not give someone a new phone. So a key id selects *candidates*, and the
-            # token itself says which one it is about. A candidate that is not the named
-            # mandate is simply not this token's business — skipping it is what keeps a
-            # revocation working when a sibling mandate happens to be scanned first.
-            signature_failure: ValueError | None = None
-            for mandate in mandates:
-                for authority in mandate.authorities:
-                    if authority.kid != kid:
-                        continue
-                    try:
-                        payload = verify_compact_jws(
-                            token, public_key_from_jwk(dict(authority.public_jwk))
-                        )
-                    except ValueError as error:
-                        # Two mandates may register different key material under the same
-                        # kid. Remember why this one failed and keep looking; if nothing
-                        # verifies, this is the answer the caller gets.
-                        signature_failure = error
-                        continue
-                    if payload.get("mandate_id") != mandate.id:
-                        continue
-                    scope = payload.get("scope")
-                    if not isinstance(scope, str) or not self._is_canonical_revocation_scope(scope):
-                        raise ValueError("invalid revocation scope")
-                    if scope not in authority.allowed_scopes:
-                        raise ValueError("revocation scope is not allowed")
-                    if authority.role in (RevocationRole.GUARDIAN, RevocationRole.ISSUER) and scope != "mandate":
-                        raise ValueError("guardian and issuer may only revoke the mandate")
-                    if not payload.get("reason") or not isinstance(payload.get("epoch"), int):
-                        raise ValueError("revocation payload is incomplete")
-                    SqliteMandateLockRepository(connection).acquire(
-                        mandate.id, touched_at=self._clock()
-                    )
-                    revocation = Revocation(
-                        id=f"rev_{uuid4().hex}", mandate_id=mandate.id, authority_id=authority.id,
-                        scope=scope, reason=str(payload["reason"]), epoch=int(payload["epoch"]),
-                        signed_jws=token, revoked_at=self._clock(),
-                    )
-                    SqliteRevocationRepository(connection).append(revocation)
-                    metadata = dict(mandate.revocation_metadata)
-                    metadata["epoch"] = revocation.epoch
-                    # Only a mandate-scoped revocation ends the mandate. An instrument
-                    # or merchant scope withdraws part of the authority and leaves the
-                    # rest standing, which is why the status is not touched here.
-                    if scope == "mandate":
-                        mandate = replace(mandate, status=MandateStatus.REVOKED, revocation_metadata=metadata)
-                    else:
-                        mandate = replace(mandate, revocation_metadata=metadata)
-                    SqliteMandateRepository(connection).put(mandate)
-                    # `revocation.{role}` names *who* withdrew the authority, which is
-                    # what makes an emergency operator revocation answerable later.
-                    SqliteAuditLedger(connection).append(
-                        mandate_id=mandate.id,
-                        event_type=f"revocation.{authority.role.value}",
-                        human_summary=f"Revogação de escopo {scope} por {authority.role.value} aceita.",
-                        actor=f"authority:{authority.kid}",
-                        detail={
-                            "scope": revocation.scope,
-                            "reason": revocation.reason,
-                            "epoch": revocation.epoch,
-                            "authority_role": authority.role.value,
-                        },
-                        occurred_at=self._clock(),
-                    )
-                    return
-            # Nothing verified. A forged signature is a more precise answer than an
-            # unknown authority, so report it when that is what actually happened.
-            if signature_failure is not None:
-                raise signature_failure
-            raise ValueError("unknown revocation authority")
-        run_in_write_transaction(self._engine, operation)
+        if not isinstance(kid, str):
+            raise ValueError("malformed revocation JWS")
+        if authenticated_kid is not None and kid != authenticated_kid:
+            raise ValueError("revocation authority does not match authenticated identity")
+        mandates = SqliteMandateRepository(connection).for_authority_kid(kid)
+        signature_failure: ValueError | None = None
+        signed_for_another_mandate = False
+        for mandate in mandates:
+            for authority in mandate.authorities:
+                if authority.kid != kid:
+                    continue
+                try:
+                    payload = verify_compact_jws(token, public_key_from_jwk(dict(authority.public_jwk)))
+                except ValueError as error:
+                    signature_failure = error
+                    continue
+                if payload.get("mandate_id") != mandate.id:
+                    signed_for_another_mandate = True
+                    continue
+                if expected_mandate_id is not None and mandate.id != expected_mandate_id:
+                    raise ValueError("revocation mandate does not match request path")
+                scope = payload.get("scope")
+                if not isinstance(scope, str) or not self._is_canonical_revocation_scope(scope):
+                    raise ValueError("invalid revocation scope")
+                if scope not in authority.allowed_scopes:
+                    raise ValueError("revocation scope is not allowed")
+                if authority.role in (RevocationRole.GUARDIAN, RevocationRole.ISSUER) and scope != "mandate":
+                    raise ValueError("guardian and issuer may only revoke the mandate")
+                if not payload.get("reason") or not isinstance(payload.get("epoch"), int):
+                    raise ValueError("revocation payload is incomplete")
+                SqliteMandateLockRepository(connection).acquire(
+                    mandate.id, touched_at=self._clock()
+                )
+                revocation = Revocation(
+                    id=f"rev_{uuid4().hex}", mandate_id=mandate.id, authority_id=authority.id,
+                    scope=scope, reason=str(payload["reason"]), epoch=int(payload["epoch"]),
+                    signed_jws=token, revoked_at=self._clock(),
+                )
+                SqliteRevocationRepository(connection).append(revocation)
+                metadata = dict(mandate.revocation_metadata)
+                metadata["epoch"] = revocation.epoch
+                if scope == "mandate":
+                    mandate = replace(mandate, status=MandateStatus.REVOKED, revocation_metadata=metadata)
+                else:
+                    mandate = replace(mandate, revocation_metadata=metadata)
+                SqliteMandateRepository(connection).put(mandate)
+                SqliteAuditLedger(connection).append(
+                    mandate_id=mandate.id,
+                    event_type="mandate.revoked" if scope == "mandate" else f"revocation.{authority.role.value}",
+                    human_summary=f"Revogação de escopo {scope} por {authority.role.value} aceita.",
+                    actor=f"authority:{authority.kid}",
+                    detail={
+                        "scope": revocation.scope,
+                        "reason": revocation.reason,
+                        "epoch": revocation.epoch,
+                        "authority_role": authority.role.value,
+                    },
+                    occurred_at=self._clock(),
+                )
+                return mandate.id
+        if signed_for_another_mandate:
+            if expected_mandate_id is not None:
+                raise ValueError("revocation mandate does not match request path")
+            raise ValueError("revocation mandate does not match authority")
+        if signature_failure is not None:
+            raise signature_failure
+        raise ValueError("unknown revocation authority")
+
+    @staticmethod
+    def _stable_revocation_error(error: str) -> str:
+        if "unknown revocation authority" in error or "does not match authenticated identity" in error:
+            return "revocation_authority_unknown"
+        if "mandate does not match" in error:
+            return "revocation_mandate_mismatch"
+        if "scope" in error:
+            return "revocation_scope_not_allowed"
+        return "revocation_invalid"
+
+    @staticmethod
+    def _serialize_revocation_result(result: RevocationResult) -> str:
+        return json.dumps({"mandate_id": result.mandate_id, "reason_code": result.reason_code})
+
+    @staticmethod
+    def _deserialize_revocation_result(body: str | None, *, replayed: bool) -> RevocationResult:
+        value = json.loads(body or "{}")
+        return RevocationResult(value.get("mandate_id"), value.get("reason_code"), replayed)
 
     def open_dispute(self, *, reservation_id: str, reason: str) -> Dispute:
         """Record a later denial. Opening a dispute decides nothing on its own."""
@@ -955,20 +1017,20 @@ class AuthorizationCore:
         mandate = SqliteMandateRepository(connection).get(command.mandate_id)
         if mandate is None:
             return self._reject("mandate_not_found", "Mandato não encontrado."), None
+        instrument_id = getattr(command, "instrument_id", None)
         try:
             revocations = SqliteRevocationRepository(connection)
             revoked = revocations.is_revoked(command.mandate_id)
             budget_zero = revocations.has_scope(command.mandate_id, "budget:zero")
             merchant_revoked = revocations.has_scope(command.mandate_id, f"merchant:{command.merchant_id}")
+            instrument_revoked = instrument_id is not None and revocations.has_scope(
+                command.mandate_id, f"instrument:{instrument_id}"
+            )
         except Exception:
             return self._reject("revocation_unavailable", "Revogação indisponível; captura recusada."), mandate
         limit, _ = SqlitePolicyRepository(connection).active_limit_for(command.mandate_id, mandate.limit)
         if revoked or mandate.status is MandateStatus.REVOKED:
             return self._reject("mandate_revoked", "Mandato revogado."), mandate
-        instrument_id = getattr(command, "instrument_id", None)
-        instrument_revoked = instrument_id is not None and revocations.has_scope(
-            command.mandate_id, f"instrument:{instrument_id}"
-        )
         if merchant_revoked:
             return self._reject("merchant_revoked", "Merchant revogado para este mandato."), mandate
         if instrument_revoked:
@@ -1032,7 +1094,14 @@ class AuthorizationCore:
     ) -> CaptureResult:
         # Every field that makes this a different purchase belongs in the hash: change
         # the category, the terms or the instrument and it is not the same charge.
-        request_hash = hashlib.sha256(json.dumps({"mandate": command.mandate_id, "checkout": command.checkout_id, "merchant": command.merchant_id, "amount": command.total.minor_units, "currency": command.total.currency, "scale": command.total.scale, "category": command.category, "terms": command.terms_hash, "instrument": command.instrument_id}, sort_keys=True).encode()).hexdigest()
+        transaction_hash = hashlib.sha256(json.dumps({
+            "mandate": command.mandate_id, "checkout": command.checkout_id,
+            "merchant": command.merchant_id, "amount": command.total.minor_units,
+            "currency": command.total.currency, "scale": command.total.scale,
+            "category": command.category, "terms": command.terms_hash,
+            "instrument": command.instrument_id,
+        }, sort_keys=True).encode()).hexdigest()
+        request_hash = command.idempotency_fingerprint or transaction_hash
         def prepare(connection):
             SqliteMandateLockRepository(connection).acquire(
                 command.mandate_id, touched_at=self._clock()
@@ -1075,7 +1144,7 @@ class AuthorizationCore:
                 return ("result", result)
             assert mandate is not None
             ledger = SqliteLedgerRepository(connection)
-            if ledger.find_by_transaction(command.mandate_id, request_hash, command.total) is not None:
+            if ledger.find_by_transaction(command.mandate_id, transaction_hash, command.total) is not None:
                 result = CaptureResult(False, "transaction_already_captured")
                 idem.complete("capture", command.idempotency_key, self._serialize_result(result))
                 return ("result", result)
@@ -1085,7 +1154,7 @@ class AuthorizationCore:
                 merchant_id=command.merchant_id,
                 canonical_payload=command.canonical_offer,
             )
-            reservation = pending.commit(request_hash)
+            reservation = pending.commit(transaction_hash)
             ledger.update(reservation)
             attempt_id = f"cap_{uuid4().hex}"
             SqliteCaptureRepository(connection).create(attempt_id=attempt_id, reservation_id=reservation.id, idempotency_key=command.idempotency_key)
@@ -1168,7 +1237,10 @@ class AuthorizationCore:
                     "reason_code": result.reason_code,
                     "settlement_reference": result.settlement_reference,
                     # The capture vocabulary the checkout adapters read.
-                    "capture_state": "capture.committed" if result.approved else "capture.declined",
+                    "capture_state": (
+                        "capture.settled" if result.approved and result.settlement_reference
+                        else "capture.committed" if result.approved else "capture.declined"
+                    ),
                 },
                 occurred_at=self._clock(),
             )

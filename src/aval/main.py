@@ -28,7 +28,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from aval.adapters.ap2.mandates import ClosedCheckoutMandateVerifier
 from aval.adapters.ap2.merchant_authorization import (
@@ -41,7 +43,7 @@ from aval.api.middleware.raw_body import RawBodyMiddleware
 from aval.api.routers.audit import create_audit_router
 from aval.api.routers.delegate_payment import create_delegate_payment_router
 from aval.api.routers.payment_capture import create_payment_capture_router
-from aval.api.routers.revocations import create_revocation_router
+from aval.api.routers.revocation import create_revocation_router
 from aval.api.routers.ucp_checkout import create_ucp_checkout_router
 from aval.api.routers.ucp_discovery import create_ucp_discovery_router
 from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
@@ -55,19 +57,6 @@ from aval.application.services.delegation import (
     DurableDelegationService,
 )
 from aval.application.services.vault import VaultService
-from aval.application.services.delegation import CoreDelegationAuthorizer, DurableDelegationService
-from aval.application.services.vault import VaultService
-from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
-from aval.adapters.settlement.mock_card_psp import MockCardPSP
-from aval.application.services.payment_runtime import PaymentRuntime
-from aval.application.services.receipts import ReceiptService
-from aval.application.services.dispute import DisputeService
-from aval.adapters.ap2.receipts import Ap2ReceiptIssuer
-from aval.infrastructure.sqlite.dispute_evidence_reader import SqliteDisputeEvidenceReader
-from aval.security.jws import verify_compact_jws
-from aval.security.key_custody import public_key_from_jwk
-from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
-from aval.security.authorization_proof import AuthorizationProofService
 from aval.domain.entities import AgentIdentity, Mandate, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
@@ -184,6 +173,7 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
             clock=clock,
         ),
         clock=clock,
+        engine=runtime.engine,
     )
     # The scoped payment credential: the agent is handed a token that works at this
     # merchant, for this checkout, up to this amount — never a card.
@@ -252,6 +242,7 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
             can_read=lambda identity_id, mandate_id: payment_runtime.can_read_mandate(
                 identity_id=identity_id, mandate_id=mandate_id
             ),
+            mandate_exists=payment_runtime.mandate_exists,
         )
     )
 
@@ -274,6 +265,11 @@ def create_app(
         extra_key_ids=PROTOCOL_KEY_IDS,
     )
     app = create_authorization_app(runtime)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(_: Request, __: RequestValidationError) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": {"code": "request_invalid"}})
+
     _seed_protocol_fixtures(runtime, clock)
     _mount_protocol_lane(app, runtime, clock)
     return app

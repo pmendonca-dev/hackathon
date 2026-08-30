@@ -31,7 +31,7 @@ def _serialize_verdict(verdict: DisputeVerdict) -> dict[str, object]:
 
 
 def create_audit_router(
-    service: DisputeService, *, verifier: Rfc9421Verifier | None = None, can_read=None
+    service: DisputeService, *, verifier: Rfc9421Verifier | None = None, can_read=None, mandate_exists=None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -40,6 +40,8 @@ def create_audit_router(
         if verifier is not None:
             assert request is not None
             identity = authenticate_rfc9421(request, verifier)
+            if mandate_exists is not None and not mandate_exists(mandate_id):
+                raise HTTPException(404, detail={"code": "mandate_not_found"})
             if identity is None or (can_read is not None and not can_read(identity.id, mandate_id)):
                 raise HTTPException(403, detail={"code": "reader_not_authorized"})
         return _serialize_verdict(service.reconstruct(mandate_id))
@@ -49,6 +51,8 @@ def create_audit_router(
         if verifier is not None:
             assert request is not None
             identity = authenticate_rfc9421(request, verifier)
+            if mandate_exists is not None and not mandate_exists(mandate_id):
+                raise HTTPException(404, detail={"code": "mandate_not_found"})
             if identity is None or (can_read is not None and not can_read(identity.id, mandate_id)):
                 raise HTTPException(403, detail={"code": "reader_not_authorized"})
         return _serialize_verdict(service.reconstruct(mandate_id))

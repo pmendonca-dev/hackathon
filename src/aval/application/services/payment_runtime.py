@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
+import json
 
 from sqlalchemy import Engine
 
@@ -80,10 +82,21 @@ class PaymentRuntime:
             merchant_id=checkout.command.merchant_id, total=checkout.command.total,
             category=checkout.command.category,
             idempotency_key=request.idempotency_key, instrument_id=request.token,
+            idempotency_fingerprint=self._capture_idempotency_fingerprint(request),
         ))
         if result.approved and result.reservation is not None and result.settlement_reference:
             self._persist_receipts(result, checkout_mandate=request.checkout_mandate)
         return result
+
+    @staticmethod
+    def _capture_idempotency_fingerprint(request: PaymentCaptureRequest) -> str:
+        return hashlib.sha256(json.dumps({
+            "checkout_session_id": request.checkout_id,
+            "token": request.token,
+            "audience": request.audience,
+            "nonce": request.nonce,
+            "checkout_mandate": request.checkout_mandate,
+        }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     def _persist_receipts(self, result: CaptureResult, *, checkout_mandate: str | None) -> None:
         assert result.reservation is not None and result.settlement_reference is not None
@@ -130,3 +143,7 @@ class PaymentRuntime:
         # The current audit projection has no per-event merchant column; fail closed
         # instead of exposing a multi-merchant mandate's combined timeline.
         return mandate is not None and mandate.allowed_merchant_ids == frozenset({"merchant_01"})
+
+    def mandate_exists(self, mandate_id: str) -> bool:
+        with self._engine.connect() as connection:
+            return SqliteMandateRepository(connection).get(mandate_id) is not None

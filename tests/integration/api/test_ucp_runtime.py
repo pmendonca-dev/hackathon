@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from aval.adapters.ucp.ap2_extension import AP2_MANDATE_CAPABILITY
 from aval.adapters.ucp.http_signatures import SignedRequest, signature_base
 from aval.main import create_app
+from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
 from aval.security.content_digest import content_digest_sha256
 from aval.security.jws import sign_compact_jws
 
@@ -87,9 +88,9 @@ def _create_checkout(client: TestClient, app, checkout_id: str = "chi_runtime_1"
     return response.json()
 
 
-def test_mounted_ucp_discovery_and_authenticated_checkout_creation() -> None:
+def test_mounted_ucp_discovery_and_authenticated_checkout_creation(tmp_path) -> None:
     """Catches a composition root that leaves the tested UCP routers or RFC 9421 boundary unmounted."""
-    app = create_app()
+    app = create_app(database_path=tmp_path / "runtime.sqlite3")
     body = _checkout_body()
 
     with TestClient(app, base_url="https://merchant.aval.local") as client:
@@ -107,9 +108,9 @@ def test_mounted_ucp_discovery_and_authenticated_checkout_creation() -> None:
     assert created.json()["ap2"]["merchant_authorization"].count(".") == 2
 
 
-def test_mounted_completion_loads_persisted_checkout_and_captures() -> None:
-    """Catches a runtime whose completion path relies on an in-memory checkout instead of SQLite."""
-    app = create_app()
+def test_mounted_completion_loads_persisted_checkout_and_leaves_settlement_for_capture(tmp_path) -> None:
+    """Completion verifies the persisted AP2 checkout but cannot commit or settle payment."""
+    app = create_app(database_path=tmp_path / "runtime.sqlite3")
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app)
         body = json.dumps(
@@ -136,11 +137,7 @@ def test_mounted_completion_loads_persisted_checkout_and_captures() -> None:
         )
 
     assert response.status_code == 200
-    assert response.json()["approved"] is True
-    # The merged runtime carries a settlement adapter, so an approved capture runs one
-    # step further than when the core had no processor behind it: committed and then
-    # settled. `approved` is the guarantee this test is about.
-    assert response.json()["reason_code"] == "settled"
+    assert response.json() == {"checkout_id": "chi_runtime_1", "status": "ready_for_capture"}
 
 
 def test_checkout_persists_when_the_runtime_is_recreated(tmp_path) -> None:
@@ -176,12 +173,12 @@ def test_checkout_persists_when_the_runtime_is_recreated(tmp_path) -> None:
         )
 
     assert response.status_code == 200
-    assert response.json()["approved"] is True
+    assert response.json() == {"checkout_id": "chi_runtime_1", "status": "ready_for_capture"}
 
 
-def test_mounted_completion_requires_ap2_mandate_and_idempotency_key() -> None:
+def test_mounted_completion_requires_ap2_mandate_and_idempotency_key(tmp_path) -> None:
     """Catches an AP2 downgrade or completion request that can bypass its required idempotency header."""
-    app = create_app()
+    app = create_app(database_path=tmp_path / "runtime.sqlite3")
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         _create_checkout(client, app)
         body = b'{"audience":"merchant_01","nonce":"challenge-1","ap2":{}}'
@@ -214,9 +211,9 @@ def test_mounted_completion_requires_ap2_mandate_and_idempotency_key() -> None:
     assert missing_idempotency.json() == {"detail": {"code": "signature_components_missing"}}
 
 
-def test_mounted_ucp_boundary_rejects_an_invalid_raw_signature() -> None:
+def test_mounted_ucp_boundary_rejects_an_invalid_raw_signature(tmp_path) -> None:
     """Catches a mounted route that accepts a forged RFC 9421 ES256 signature after raw-body capture."""
-    app = create_app()
+    app = create_app(database_path=tmp_path / "runtime.sqlite3")
     body = _checkout_body()
     headers = _signed_headers(app, body, path="/checkout-sessions")
     headers["signature"] = headers["signature"][:-3] + "A:"
@@ -228,9 +225,9 @@ def test_mounted_ucp_boundary_rejects_an_invalid_raw_signature() -> None:
     assert response.json() == {"detail": {"code": "signature_invalid"}}
 
 
-def test_mounted_ucp_boundary_hashes_the_original_raw_body_bytes() -> None:
+def test_mounted_ucp_boundary_hashes_the_original_raw_body_bytes(tmp_path) -> None:
     """Catches a route that verifies Content-Digest over reserialized JSON instead of the received byte stream."""
-    app = create_app()
+    app = create_app(database_path=tmp_path / "runtime.sqlite3")
     signed_body = _checkout_body()
     delivered_body = (
         b'{"mandate_id":"mandate_01","id":"chi_runtime_1","merchant_id":"merchant_01",'
@@ -247,9 +244,9 @@ def test_mounted_ucp_boundary_hashes_the_original_raw_body_bytes() -> None:
     assert response.json() == {"detail": {"code": "content_digest_invalid"}}
 
 
-def test_mounted_ucp_boundary_rejects_der_encoded_es256_signature() -> None:
+def test_mounted_ucp_boundary_rejects_der_encoded_es256_signature(tmp_path) -> None:
     """Catches a mounted RFC 9421 verifier that accidentally accepts cryptography's DER ECDSA output."""
-    app = create_app()
+    app = create_app(database_path=tmp_path / "runtime.sqlite3")
     body = _checkout_body()
     headers = _signed_headers(app, body, path="/checkout-sessions")
     raw_signature = base64.b64decode(headers["signature"].removeprefix("sig1=:").removesuffix(":"))
@@ -265,9 +262,9 @@ def test_mounted_ucp_boundary_rejects_der_encoded_es256_signature() -> None:
     assert response.json() == {"detail": {"code": "signature_invalid"}}
 
 
-def test_mounted_completion_rejects_invalid_ap2_audience_and_nonce() -> None:
+def test_mounted_completion_rejects_invalid_ap2_audience_and_nonce(tmp_path) -> None:
     """Catches a mounted completion route that ignores AP2 key-binding audience or nonce claims."""
-    app = create_app()
+    app = create_app(database_path=tmp_path / "runtime.sqlite3")
     with TestClient(app, base_url="https://merchant.aval.local") as client:
         checkout = _create_checkout(client, app)
         merchant_authorization = checkout["ap2"]["merchant_authorization"]
@@ -294,3 +291,26 @@ def test_mounted_completion_rejects_invalid_ap2_audience_and_nonce() -> None:
             )
             assert response.status_code == 422
             assert response.json() == {"detail": {"code": expected_code}}
+
+
+def test_completion_fails_closed_when_durable_idempotency_is_unavailable(tmp_path, monkeypatch) -> None:
+    """An unavailable completion idempotency store cannot silently execute a POST."""
+    app = create_app(database_path=tmp_path / "runtime.sqlite3")
+    with TestClient(app, base_url="https://merchant.aval.local") as client:
+        checkout = _create_checkout(client, app)
+        body = json.dumps({
+            "audience": "merchant_01", "nonce": "challenge-1",
+            "ap2": {"checkout_mandate": _closed_mandate(
+                app, checkout["ap2"]["merchant_authorization"], audience="merchant_01", nonce="challenge-1",
+            )},
+        }, separators=(",", ":")).encode()
+        monkeypatch.setattr(
+            SqliteIdempotencyRepository, "get_or_claim", lambda *_args: (_ for _ in ()).throw(OSError("down")),
+        )
+        response = client.post(
+            "/checkout-sessions/chi_runtime_1/complete", content=body,
+            headers=_signed_headers(app, body, path="/checkout-sessions/chi_runtime_1/complete", idempotency_key="complete-down"),
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "idempotency_unavailable"}}

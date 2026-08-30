@@ -11,12 +11,11 @@ from aval.security.ecdsa import verify_es256_raw
 from aval.security.key_custody import public_key_from_jwk
 
 
-_REQUIRED_COMPONENTS = (
+_BASE_REQUIRED_COMPONENTS = (
     "@method",
     "@authority",
     "@path",
     "ucp-agent",
-    "idempotency-key",
     "content-digest",
     "content-type",
 )
@@ -63,12 +62,26 @@ def _parse_ucp_agent(value: str | None) -> str:
     return match.group("profile")
 
 
-def _parse_signature_input(value: str | None) -> tuple[tuple[str, ...], str]:
+def _accepted_components(request: SignedRequest) -> tuple[tuple[str, ...], ...]:
+    post_components = (
+        "@method", "@authority", "@path", "ucp-agent", "idempotency-key",
+        "content-digest", "content-type",
+    )
+    if request.method.upper() == "POST":
+        return (post_components,)
+    # Readers do not require an idempotency key, but accept an older signed
+    # client that supplies one as an additional covered component.
+    return (_BASE_REQUIRED_COMPONENTS, post_components)
+
+
+def _parse_signature_input(
+    value: str | None, *, accepted_components: tuple[tuple[str, ...], ...],
+) -> tuple[tuple[str, ...], str]:
     match = _SIGNATURE_INPUT.fullmatch(value or "")
     if match is None or match.group("alg").lower() != "es256":
         raise UcpAuthenticationError("signature_input_invalid")
     components = tuple(re.findall(r'"([^"]+)"', match.group("components")))
-    if components != _REQUIRED_COMPONENTS:
+    if components not in accepted_components:
         raise UcpAuthenticationError("signature_components_missing")
     return components, match.group("kid")
 
@@ -94,7 +107,7 @@ def _component_value(request: SignedRequest, component: str) -> str:
 
 def signature_base(request: SignedRequest) -> bytes:
     signature_input = _signature_input_value(request)
-    components, _ = _parse_signature_input(signature_input)
+    components, _ = _parse_signature_input(signature_input, accepted_components=_accepted_components(request))
     lines = [f'"{component}": {_component_value(request, component)}' for component in components]
     lines.append(f'"@signature-params": {signature_input.partition("=")[2]}')
     return "\n".join(lines).encode("utf-8")
@@ -122,7 +135,9 @@ class Rfc9421Verifier:
         identity = self._registry.resolve(profile_url)
         if identity is None or not identity.trusted:
             raise UcpAuthenticationError("profile_not_trusted")
-        _, kid = _parse_signature_input(_signature_input_value(request))
+        _, kid = _parse_signature_input(
+            _signature_input_value(request), accepted_components=_accepted_components(request)
+        )
         if kid != identity.public_jwk.get("kid"):
             raise UcpAuthenticationError("key_not_found")
         digest = request.headers.get("content-digest")
