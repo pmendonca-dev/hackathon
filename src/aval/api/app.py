@@ -30,6 +30,7 @@ from aval.api.routes import (
     telegram_chats,
 )
 from aval.api.routes.demo_rogue import create_demo_rogue_router, rogue_charges_enabled
+from aval.api.routes.edge import create_edge_router, edge_to_core_secret
 from aval.api.routes.demo_tamper import create_demo_tamper_router, tampering_enabled
 from aval.domain.errors import DomainError
 from aval.infrastructure.psp import PspUnreachable
@@ -154,4 +155,10 @@ def create_app(runtime: AvalRuntime | None = None, *, lifespan=None) -> FastAPI:
     # a judge can watch the verdict give the money back instead of being told it would.
     if rogue_charges_enabled():
         app.include_router(create_demo_rogue_router())
+    # The outbox Computer A polls, mounted only when the halves were told they are on
+    # different machines. Without the credential these paths are a real 404 rather than
+    # an endpoint waiting to be found.
+    edge_secret = edge_to_core_secret()
+    if edge_secret:
+        app.include_router(create_edge_router(edge_secret))
     return app

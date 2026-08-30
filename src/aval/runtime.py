@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import Engine, create_engine
@@ -121,7 +121,7 @@ def _settlement_adapter(*, proof_verifier, mode_provider, mandate_for):
     )
 
 
-def _discovery_adapter(clock: ClockService) -> OfferDiscovery:
+def _discovery_adapter() -> OfferDiscovery:
     """Where this process looks for real offers.
 
     With `AVAL_DISCOVERY_EDGE_URL` set, it does not look at all: it asks Computer A,
@@ -142,7 +142,10 @@ def _discovery_adapter(clock: ClockService) -> OfferDiscovery:
     return CoreDiscoveryClient(
         base_url=edge_url,
         secret=secret,
-        clock=clock.now,
+        # Wall clock, not the demo clock. The edge signature is transport freshness
+        # between two machines, and A has no demo offset to match — signing with an
+        # advanced clock would make every discovery call look an hour stale to A.
+        clock=lambda: datetime.now(UTC),
         timeout_seconds=float(os.environ.get("AVAL_DISCOVERY_TIMEOUT_SECONDS", "120")),
     )
 
@@ -265,7 +268,7 @@ def build_runtime(
         pairwise_secret=resolve_pairwise_secret(),
         metrics=MetricsRegistry(),
         operator_token=operator_token or resolve_operator_token(),
-        discovery=discovery or _discovery_adapter(clock),
+        discovery=discovery or _discovery_adapter(),
         # Signs with the marketplace key installed above, in `merchant_custody`. AVAL
         # signing an offer and its own authorization with one key would collapse the
         # separation this composition root keeps deliberately: the seller says what is
