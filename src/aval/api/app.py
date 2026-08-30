@@ -47,8 +47,14 @@ def allowed_origins() -> list[str]:
     return [*DEFAULT_ORIGINS, *extra]
 
 
-def create_app(runtime: AvalRuntime | None = None) -> FastAPI:
-    app = FastAPI(title="AVAL")
+def create_app(runtime: AvalRuntime | None = None, *, lifespan=None) -> FastAPI:
+    """Build the authorization surfaces.
+
+    `lifespan` is accepted so the composition root can attach background work — the
+    standing-order scheduler — without this module learning what that work is. It has to
+    arrive at construction: FastAPI reads it when the app is built, not afterwards.
+    """
+    app = FastAPI(title="AVAL", lifespan=lifespan)
     app.state.runtime = runtime if runtime is not None else build_runtime()
 
     # The bot and the operator console are served from other origins during the demo,
