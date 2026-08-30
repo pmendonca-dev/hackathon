@@ -41,6 +41,7 @@ def test_clean_runtime_sync_installs_and_imports_uvicorn(tmp_path: Path) -> None
     runtime_bin = _runtime_bin_directory(runtime_environment)
     environment = os.environ.copy() | {
         "UV_PROJECT_ENVIRONMENT": str(runtime_environment),
+        "UV_LINK_MODE": "copy",
         "PATH": os.pathsep.join((str(runtime_bin), _system_path_without_global_python_scripts())),
     }
 
