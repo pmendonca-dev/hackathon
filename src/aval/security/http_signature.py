@@ -76,7 +76,7 @@ def parse_signature_input(header: str) -> SignatureInput:
     if label.strip() != LABEL or not rest.startswith("("):
         raise SignatureError("signature_malformed", "Signature-Input malformado.")
     if "," in rest:
-        raise SignatureError("signature_malformed", "Apenas uma assinatura é aceita.")
+        raise SignatureError("signature_malformed", "Only one signature is accepted.")
     close = rest.find(")")
     if close < 0:
         raise SignatureError("signature_malformed", "Signature-Input malformado.")
@@ -108,7 +108,7 @@ def parse_signature(header: str) -> bytes:
     try:
         return base64.b64decode(rest[1:-1], validate=True)
     except (ValueError, TypeError) as error:
-        raise SignatureError("signature_malformed", "Signature não é base64.") from error
+        raise SignatureError("signature_malformed", "Signature is not base64.") from error
 
 
 def sign_request(
@@ -148,7 +148,7 @@ def verify_request(
     signature_header = headers.get("signature")
     digest_header = headers.get("content-digest")
     if not signature_input_header or not signature_header or not digest_header:
-        raise SignatureError("signature_missing", "Requisição de agente não assinada.")
+        raise SignatureError("signature_missing", "Unsigned agent request.")
 
     spec = parse_signature_input(signature_input_header)
     if set(REQUIRED_COMPONENTS) - set(spec.components):
@@ -157,20 +157,20 @@ def verify_request(
             "A assinatura precisa cobrir método, caminho e corpo.",
         )
     if not verify_content_digest_sha256(body, digest_header):
-        raise SignatureError("content_digest_mismatch", "O corpo não confere com o digest assinado.")
+        raise SignatureError("content_digest_mismatch", "The body does not match the signed digest.")
     if abs(now_epoch - spec.created) > max_age_seconds:
-        raise SignatureError("signature_stale", "Assinatura fora da janela de validade.")
+        raise SignatureError("signature_stale", "Signature outside its validity window.")
 
     public_key = public_key_for(spec.keyid)
     base = signature_base(
         method=method, path=path, content_digest=digest_header, raw_params=spec.raw_params
     )
     if not verify_es256_raw(public_key, base, parse_signature(signature_header)):
-        raise SignatureError("signature_invalid", "Assinatura do agente inválida.")
+        raise SignatureError("signature_invalid", "Invalid agent signature.")
 
     # Verified last: an unverified nonce must never be able to burn a real one.
     if not seen.remember(spec.keyid, spec.nonce, now_epoch):
-        raise SignatureError("signature_replayed", "Assinatura já utilizada.")
+        raise SignatureError("signature_replayed", "Signature already used.")
     return spec
 
 

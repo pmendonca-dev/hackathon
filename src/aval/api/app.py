@@ -120,7 +120,7 @@ def create_app(runtime: AvalRuntime | None = None, *, lifespan=None) -> FastAPI:
             status_code=502,
             content={
                 "reason_code": "settlement_unreachable",
-                "human_summary": "O processador não respondeu; a compra ficou em dúvida.",
+                "human_summary": "The processor did not answer; the purchase is in doubt.",
             },
         )
 

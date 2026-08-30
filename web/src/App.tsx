@@ -17,7 +17,7 @@ function Workspace() {
       <Shell>
         <div className="flex min-h-[70vh] items-center justify-center" role="status">
           <LoaderCircle className="animate-spin text-allow" size={24} aria-hidden="true" />
-          <span className="ml-3 text-sm text-fg-mute">Lendo o estado canônico…</span>
+          <span className="ml-3 text-sm text-fg-mute">Reading the canonical state…</span>
         </div>
       </Shell>
     );
@@ -31,9 +31,9 @@ function Workspace() {
       <Shell>
         <div className="mx-auto flex min-h-[70vh] max-w-md flex-col items-center justify-center px-6 text-center" role="alert">
           <AlertTriangle className="text-deny" size={28} aria-hidden="true" />
-          <h1 className="mt-4 font-display text-xl font-semibold">Runtime indisponível</h1>
+          <h1 className="mt-4 font-display text-xl font-semibold">Runtime unreachable</h1>
           <p className="mt-2 text-sm leading-relaxed text-fg-mute">{error}</p>
-          <Button className="mt-5" onClick={() => void reload()}>Tentar novamente</Button>
+          <Button className="mt-5" onClick={() => void reload()}>Try again</Button>
         </div>
       </Shell>
     );

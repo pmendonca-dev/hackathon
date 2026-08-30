@@ -43,7 +43,7 @@ def open_session(request: Request) -> dict[str, Any]:
         raise ApiError(
             403,
             "operator_session_cannot_extend_itself",
-            "Uma sessão não abre outra sessão; apresente o token.",
+            "A session does not open another session; present the token.",
         )
     authenticated_operator(request)
     issued = run_in_write_transaction(
@@ -66,7 +66,7 @@ def close_session(request: Request, actor: str = Depends(require_operator)) -> d
         raise ApiError(
             400,
             "operator_session_absent",
-            "Não há sessão a encerrar: esta chamada usou o token.",
+            "There is no session to end: this call used the token.",
         )
     runtime = runtime_of(request)
     session_id = actor.split("operator:session:", 1)[1]

@@ -15,42 +15,42 @@ type Scenario = {
 const scenarios: Scenario[] = [
   {
     id: 'within-mandate',
-    eyebrow: 'compra legítima',
-    title: 'Voo direto para Córdoba · US$130',
-    detail: 'Oferta VuelaYa em travel, abaixo do orçamento e do teto.',
-    instruction: 'compre um voo direto para Córdoba abaixo de $150',
+    eyebrow: 'legitimate purchase',
+    title: 'Nonstop to Córdoba · under $150',
+    detail: 'A VuelaYa travel offer, inside both the budget and the per-purchase ceiling.',
+    instruction: 'buy a nonstop flight to Córdoba under $150',
     tone: 'allow',
   },
   {
     id: 'category-scope',
-    eyebrow: 'ataque de categoria',
-    title: 'Hotel em Córdoba',
-    detail: 'Parece parte da viagem, mas a oferta é lodging; o mandato permite somente travel.',
-    instruction: 'reserve um hotel em Córdoba para três noites',
+    eyebrow: 'category attack',
+    title: 'A hotel in Córdoba',
+    detail: 'It reads like part of the trip, but the offer is lodging; the mandate allows travel only.',
+    instruction: 'book a hotel in Córdoba for three nights',
     tone: 'deny',
   },
   {
     id: 'merchant-scope',
-    eyebrow: 'ataque de merchant',
-    title: 'Menor preço para Santiago',
-    detail: 'AndesAir oferece a tarifa tentadora, mas está fora do escopo do mandato.',
-    instruction: 'compre o voo mais barato para Santiago',
+    eyebrow: 'merchant attack',
+    title: 'Lowest fare to Santiago',
+    detail: 'AndesAir has the tempting price, and is a seller the mandate never named.',
+    instruction: 'buy the cheapest flight to Santiago',
     tone: 'deny',
   },
   {
     id: 'ceiling',
-    eyebrow: 'ataque de teto',
-    title: 'Executiva para Córdoba · US$900',
-    detail: 'Passa do teto fixo. Nem uma aprovação humana pode transformar isso em compra.',
-    instruction: 'compre o voo executivo para Córdoba',
+    eyebrow: 'ceiling attack',
+    title: 'Business class to Córdoba · $900',
+    detail: 'Past the fixed ceiling. Not even a human approval can turn this into a purchase.',
+    instruction: 'buy the business class flight to Córdoba',
     tone: 'deny',
   },
   {
     id: 'revoked',
-    eyebrow: 'ataque após revogação',
-    title: 'Tentar depois de encerrar',
-    detail: 'Revogue o mandato e teste a mesma rota: a próxima avaliação deve parar antes do orçamento.',
-    instruction: 'compre um voo direto para Córdoba abaixo de $150',
+    eyebrow: 'attack after revocation',
+    title: 'Try again after shutting it down',
+    detail: 'Revoke the mandate, then run the same route: the next evaluation must stop before the budget.',
+    instruction: 'buy a nonstop flight to Córdoba under $150',
     tone: 'escalate',
     requiresRevocation: true,
   },
@@ -69,10 +69,10 @@ export function AttackScenarios({
     <section className="attack-scenarios" aria-labelledby="attack-scenarios-title">
       <div className="attack-scenarios__heading">
         <div>
-          <p className="eyebrow">Cenários que o runtime realmente recebe</p>
-          <h2 id="attack-scenarios-title">Peça ataques plausíveis. Veja a regra responder.</h2>
+          <p className="eyebrow">Scenarios the runtime actually receives</p>
+          <h2 id="attack-scenarios-title">Ask for plausible attacks. Watch the rule answer.</h2>
         </div>
-        <p>Os cartões disparam instruções contra o catálogo e o núcleo reais. A interface não decide o resultado.</p>
+        <p>These cards fire instructions at the real catalogue and the real core. The interface does not decide the outcome.</p>
       </div>
 
       <div className="attack-grid">
@@ -90,7 +90,7 @@ export function AttackScenarios({
                 disabled={disabled}
                 onClick={() => void onRun(scenario.instruction)}
               >
-                {revocationMissing ? 'Revogue antes de testar' : busy ? 'Consultando o núcleo…' : 'Executar contra o runtime'}
+                {revocationMissing ? 'Revoke it first' : busy ? 'Asking the core…' : 'Run it against the runtime'}
                 <ArrowUpRight size={14} aria-hidden="true" />
               </button>
             </article>
@@ -100,9 +100,9 @@ export function AttackScenarios({
 
       <div className="protocol-note">
         <ShieldAlert size={17} aria-hidden="true" />
-        <p><strong>Defesas de borda não são teatro de UI.</strong> Assinatura ausente, digest alterado e nonce repetido são recusados no protocolo antes de qualquer compra. Esta tela não finge executar esses ataques sem uma requisição assinada de verdade.</p>
+        <p><strong>Edge defences are not UI theatre.</strong> A missing signature, an altered digest and a replayed nonce are refused at the protocol, before any purchase exists. This screen will not pretend to run those attacks without a genuinely signed request.</p>
         <LockKeyhole size={17} aria-hidden="true" />
-        <span><Route size={14} aria-hidden="true" />A escada exibida após cada cartão mostra exatamente onde a decisão real parou.</span>
+        <span><Route size={14} aria-hidden="true" />The ladder below each card shows exactly where the real decision stopped.</span>
       </div>
     </section>
   );

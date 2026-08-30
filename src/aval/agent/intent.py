@@ -16,14 +16,16 @@ from dataclasses import dataclass, field
 
 PRICE = re.compile(r"(?:R?\$|usd\s*)?\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?|\d+)", re.IGNORECASE)
 
-LODGING_WORDS = ("hotel", "hospedagem", "pousada", "lodging", "diaria", "noite")
+LODGING_WORDS = ("hotel", "hospedagem", "pousada", "lodging", "diaria", "noite", "night", "inn")
 
 STOP_WORDS = frozenset(
     {
         "a", "abaixo", "ate", "com", "compra", "comprar", "compre", "de", "do", "da", "das",
         "dos", "e", "em", "me", "meu", "minha", "na", "no", "o", "os", "para", "por", "que",
         "quero", "reserve", "reserva", "se", "um", "uma", "usd", "valor", "voo", "flight",
-        "buy", "book", "the", "to", "under", "below", "for", "me", "please",
+        "buy", "book", "the", "to", "under", "below", "for", "me", "please", "and", "with",
+        "want", "need", "find", "get", "from", "some", "any", "that", "this", "ticket",
+        "seat", "fare", "trip", "one", "two", "please",
     }
 )
 

@@ -67,7 +67,7 @@ def reprice(request: Request, body: RepriceRequest) -> dict[str, Any]:
     """
     runtime = runtime_of(request)
     if not any(item.sku == body.sku for item in CATALOG):
-        raise ApiError(404, "sku_not_found", "SKU não existe no catálogo.")
+        raise ApiError(404, "sku_not_found", "That SKU does not exist in the catalogue.")
     runtime.offers.reprice(body.sku, body.minor_units)
     return {"sku": body.sku, "minor_units": body.minor_units}
 
@@ -99,7 +99,7 @@ def advance_clock(request: Request, body: AdvanceClockRequest) -> dict[str, Any]
         raise ApiError(
             422,
             "clock_moves_forward_only",
-            "O relógio da demonstração só avança; rebobinar reviveria um mandato expirado.",
+            "The demo clock only moves forward; rewinding would revive an expired mandate.",
         ) from error
     return {"now": runtime.clock.now().isoformat(), "offset_seconds": int(offset.total_seconds())}
 
@@ -122,7 +122,7 @@ def reconcile(request: Request) -> dict[str, int]:
 def open_dispute(request: Request, body: OpenDisputeRequest) -> dict[str, Any]:
     """Deny a purchase, with the key that holds the mandate it was made under.
 
-    The trail records this as *"compra contestada pelo titular"* and names an actor. That
+    The trail records this as *"purchase disputed by the holder"* and names an actor. That
     sentence has to be true: an unsigned dispute would put a claim about who acted into
     the very evidence an arbitration reads months later. So the actor written here is the
     kid whose signature was verified, and nothing else.
@@ -130,22 +130,22 @@ def open_dispute(request: Request, body: OpenDisputeRequest) -> dict[str, Any]:
     core = runtime_of(request).core
     mandate_id = core.mandate_of_reservation(body.reservation_id)
     if mandate_id is None:
-        raise ApiError(404, "reservation_not_found", "Compra não encontrada.")
+        raise ApiError(404, "reservation_not_found", "Purchase not found.")
     kid = require_holder_authority(
         request,
         mandate_id,
         body.authorization_jws,
         unsigned_code="dispute_unsigned",
-        unsigned_message="Contestar uma compra exige a assinatura do titular.",
+        unsigned_message="Disputing a purchase requires the holder signature.",
         forbidden_code="dispute_forbidden",
-        forbidden_message="Esta chave não é autoridade sobre o mandato desta compra.",
+        forbidden_message="This key is not an authority over the mandate behind this purchase.",
     )
     try:
         dispute = core.open_dispute(
             reservation_id=body.reservation_id, reason=body.reason, disputant_kid=kid
         )
     except ValueError as error:
-        raise ApiError(404, "reservation_not_found", "Compra não encontrada.") from error
+        raise ApiError(404, "reservation_not_found", "Purchase not found.") from error
     return {"dispute_id": dispute.id, "status": dispute.status.value, "reason": dispute.reason}
 
 
@@ -197,22 +197,22 @@ def resolve_dispute(
     core = runtime_of(request).core
     mandate_id = core.mandate_of_dispute(dispute_id)
     if mandate_id is None:
-        raise ApiError(404, "dispute_not_found", "Disputa não encontrada.")
+        raise ApiError(404, "dispute_not_found", "Dispute not found.")
     require_holder_authority(
         request,
         mandate_id,
         None if body is None else body.authorization_jws,
         unsigned_code="dispute_unsigned",
-        unsigned_message="Resolver uma disputa exige a assinatura do titular.",
+        unsigned_message="Resolving a dispute requires the holder signature.",
         forbidden_code="dispute_forbidden",
-        forbidden_message="Esta chave não é autoridade sobre o mandato desta disputa.",
+        forbidden_message="This key is not an authority over the mandate behind this dispute.",
     )
     try:
         dispute = core.resolve_dispute(dispute_id)
     except DomainError as error:
-        raise ApiError(409, "dispute_already_resolved", "Disputa já resolvida.") from error
+        raise ApiError(409, "dispute_already_resolved", "Dispute already resolved.") from error
     except ValueError as error:
-        raise ApiError(404, "dispute_not_found", "Disputa não encontrada.") from error
+        raise ApiError(404, "dispute_not_found", "Dispute not found.") from error
     return {
         "dispute_id": dispute.id,
         "status": dispute.status.value,

@@ -94,7 +94,7 @@ test('the operator credential travels only on operator routes', async () => {
 test('an operator command without a configured token fails before it is sent', async () => {
   const { gateway, calls } = gatewayWith([]);
 
-  await assert.rejects(() => gateway.setPspMode('offline'), /operador/i);
+  await assert.rejects(() => gateway.setPspMode('offline'), /operator/i);
   assert.equal(calls.length, 0);
 });
 
@@ -185,13 +185,13 @@ test('a standing order carries the same free text a person would have typed', as
     { status: 201, body: { watch_id: 'wch_1', status: 'OPEN' } },
   ]);
 
-  await gateway.registerWatch('mandate_1', 'compre um voo para Córdoba abaixo de $100');
+  await gateway.registerWatch('mandate_1', 'buy a nonstop flight to Córdoba under $100');
 
   assert.equal(calls[0].url, 'http://api.test/agent/watches');
   assert.equal(calls[0].method, 'POST');
   assert.deepEqual(JSON.parse(calls[0].body), {
     mandate_id: 'mandate_1',
-    instruction: 'compre um voo para Córdoba abaixo de $100',
+    instruction: 'buy a nonstop flight to Córdoba under $100',
   });
 });
 

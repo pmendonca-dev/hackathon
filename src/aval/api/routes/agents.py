@@ -40,7 +40,7 @@ class RegisterAgentResponse(BaseModel):
 def register_agent(request: Request, body: RegisterAgentRequest) -> RegisterAgentResponse:
     kid = body.public_jwk.get("kid")
     if not kid:
-        raise ApiError(422, "agent_key_without_kid", "A chave do agente precisa de um kid.")
+        raise ApiError(422, "agent_key_without_kid", "The agent key needs a kid.")
     core = runtime_of(request).core
     # A key id is how a signature names itself. Letting a second profile claim one that
     # is already taken would make `agent_for_kid` answer with whichever row it happened
@@ -48,14 +48,14 @@ def register_agent(request: Request, body: RegisterAgentRequest) -> RegisterAgen
     existing = core.agent_for_kid(kid)
     if existing is not None and existing.id != body.id:
         raise ApiError(
-            409, "agent_kid_already_registered", "Este kid já pertence a outro perfil."
+            409, "agent_kid_already_registered", "That kid already belongs to another profile."
         )
     # The profile URL is unique in the store, so a second agent claiming one is answered
     # here rather than surfacing as a constraint violation from the database.
     claimed = core.agent_for_profile_url(body.profile_url)
     if claimed is not None and claimed.id != body.id:
         raise ApiError(
-            409, "agent_profile_url_taken", "Esta profile_url já pertence a outro perfil."
+            409, "agent_profile_url_taken", "That profile_url already belongs to another profile."
         )
     core.register_agent(
         AgentIdentity(
@@ -73,5 +73,5 @@ def read_agent(request: Request, agent_kid: str) -> RegisterAgentResponse:
     """Public on purpose: a key id and its trust status are what a verifier checks."""
     identity = runtime_of(request).core.agent_for_kid(agent_kid)
     if identity is None:
-        raise ApiError(404, "key_not_found", "Chave de agente desconhecida.")
+        raise ApiError(404, "key_not_found", "Unknown agent key.")
     return RegisterAgentResponse(agent_id=identity.id, kid=agent_kid, trusted=identity.trusted)

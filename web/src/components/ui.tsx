@@ -8,7 +8,7 @@ const toneClass: Record<Tone, string> = {
   deny: 'border-deny/35 bg-deny/10 text-deny',
   verify: 'border-verify/35 bg-verify/10 text-verify',
   hold: 'border-hold/35 bg-hold/10 text-hold',
-  neutral: 'border-line bg-white/3 text-fg-mute',
+  neutral: 'border-line bg-ink-750 text-fg-mute',
 };
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: Tone }) {

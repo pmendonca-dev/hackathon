@@ -46,9 +46,9 @@ def bind_offer(
         item = claims["item"]
         nonce = str(claims["nonce"])
     except (KeyError, TypeError, ValueError) as error:
-        raise ApiError(409, "offer_malformed", "Oferta incompleta.") from error
+        raise ApiError(409, "offer_malformed", "Incomplete offer.") from error
     if now >= not_after:
-        raise ApiError(409, "offer_expired", "Oferta fora da validade.")
+        raise ApiError(409, "offer_expired", "Offer outside its validity window.")
 
     # Everything the buyer told us must be what the seller signed. Anything else and
     # the signature is decorating a different purchase.
@@ -60,12 +60,12 @@ def bind_offer(
         and offered.get("scale") == scale
     )
     if not matches:
-        raise ApiError(409, "offer_mismatch", "A compra não corresponde à oferta assinada.")
+        raise ApiError(409, "offer_mismatch", "The purchase does not match the signed offer.")
 
     if spend_nonce and not runtime.spent_offer_nonces.remember(
         "offer", nonce, int(now.timestamp())
     ):
-        raise ApiError(409, "offer_replayed", "Esta oferta já foi utilizada.")
+        raise ApiError(409, "offer_replayed", "This offer has already been used.")
 
     canonical = canonicalize(claims)
     return BoundOffer(
@@ -90,11 +90,11 @@ def _verified_offer(token: str, runtime: AvalRuntime) -> dict:
     named = unverified_offer_claims(token) or {}
     kid = MERCHANTS.get(str(named.get("merchant_id", "")))
     if kid is None:
-        raise ApiError(401, "offer_signature_invalid", "Oferta de vendedor desconhecido.")
+        raise ApiError(401, "offer_signature_invalid", "Offer from an unknown seller.")
     try:
         return verify_compact_jws(token, runtime.merchant_custody.verifying_key(kid))
     except ValueError as error:
-        raise ApiError(401, "offer_signature_invalid", "Oferta não assinada pelo merchant.") from error
+        raise ApiError(401, "offer_signature_invalid", "Offer not signed by the merchant.") from error
 
 
 def unverified_proof_claims(token: str) -> dict | None:

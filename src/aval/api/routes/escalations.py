@@ -75,11 +75,11 @@ def list_escalations(
         raise ApiError(
             422,
             "escalation_scope_required",
-            "Informe mandate_id ou principal_id; não existe listagem global.",
+            "Give a mandate_id or a principal_id; there is no global listing.",
         )
     if mandate_id is not None:
         if core.mandate(mandate_id) is None:
-            raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
+            raise ApiError(404, "mandate_not_found", "Mandate not found.")
         escalations = core.open_escalations(mandate_id)
     else:
         assert principal_id is not None
@@ -87,13 +87,13 @@ def list_escalations(
             raise ApiError(
                 422,
                 "read_authorization_required",
-                "A listagem por principal precisa da assinatura do titular.",
+                "Listing by principal needs the holder signature.",
             )
         try:
             readable = set(core.mandates_readable_by(authorization_jws, principal_id))
         except ValueError as error:
             raise ApiError(
-                422, "read_authorization_malformed", "Autorização de leitura malformada."
+                422, "read_authorization_malformed", "Malformed read authority."
             ) from error
         escalations = [
             item
@@ -111,7 +111,7 @@ def list_escalations(
 def read_escalation(request: Request, escalation_id: str) -> dict[str, Any]:
     escalation = runtime_of(request).core.escalation(escalation_id)
     if escalation is None:
-        raise ApiError(404, "escalation_not_found", "Escalação não encontrada.")
+        raise ApiError(404, "escalation_not_found", "Escalation not found.")
     return escalation_view(escalation)
 
 

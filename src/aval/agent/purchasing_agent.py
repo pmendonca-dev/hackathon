@@ -113,7 +113,7 @@ class PurchasingAgent:
             return AgentRun(
                 outcome="no_offer",
                 reason_code="no_offer_matched",
-                human_summary="Nenhuma oferta do catálogo atende ao pedido.",
+                human_summary="No offer in the catalogue meets the request.",
                 considered=len(offers),
             )
         offer = proposal.offer
@@ -174,8 +174,8 @@ class PurchasingAgent:
                 outcome="in_doubt",
                 reason_code="settlement_unreachable",
                 human_summary=(
-                    "Compra autorizada e em confirmação: o processador não respondeu. "
-                    "O orçamento segue retido até a reconciliação."
+                    "Purchase authorized and in confirmation: the processor did not "
+                    "answer. The budget stays held until reconciliation."
                 ),
                 offer=offer,
                 considered=len(offers),
@@ -186,9 +186,9 @@ class PurchasingAgent:
             outcome="settled" if result.approved else "refused",
             reason_code=result.reason_code,
             human_summary=(
-                f"Compra de {offer['item']['title']} concluída."
+                f"Purchase of {offer['item']['title']} completed."
                 if result.approved
-                else "Compra não concluída."
+                else "Purchase not completed."
             ),
             offer=offer,
             reservation_id=None if result.reservation is None else result.reservation.id,

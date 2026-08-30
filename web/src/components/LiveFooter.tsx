@@ -9,7 +9,7 @@ import { formatMoney } from '../utils/format.ts';
  * it happened to have loaded could disagree with the auditor tab standing next to it,
  * and then neither would be evidence.
  *
- * `gasto autorizado fora do mandato` is the product metric: money held or settled with
+ * `spend outside the mandate` is the product metric: money held or settled with
  * no authorization proof bound to it. It is the same condition a dispute resolves as
  * AGENT_OVERREACH, so the footer and the arbitration cannot tell two different stories.
  */
@@ -27,18 +27,18 @@ export function LiveFooter() {
   );
 
   return (
-    <footer className="live-footer" aria-label="Métricas ao vivo da instância">
+    <footer className="live-footer" aria-label="Live metrics for this instance">
       <Reading
-        label="decisões"
+        label="decisions"
         value={`${metrics.decisions.authorized} allow · ${metrics.decisions.awaiting_human} escalate · ${metrics.decisions.rejected} deny`}
       />
       <Reading
-        label="p99 da decisão"
+        label="decision p99"
         value={decided?.count ? `${decided.p99.toFixed(1)} ms` : '—'}
       />
-      <Reading label="recusados na borda" value={String(refusedAtEdge)} />
+      <Reading label="refused at the edge" value={String(refusedAtEdge)} />
       <Reading
-        label="gasto autorizado fora do mandato"
+        label="spend outside the mandate"
         value={formatMoney({
           minorUnits: metrics.spend_outside_mandate.minor_units,
           currency: metrics.spend_outside_mandate.currency,
