@@ -71,6 +71,7 @@ def capture_purchase(
             idempotency_key=body.idempotency_key,
             terms_hash=body.terms_hash or (None if bound is None else bound.terms_hash),
             canonical_offer=None if bound is None else bound.canonical_payload,
+            instrument_id=body.instrument_id,
         ),
         agent_id=agent.id,
     )

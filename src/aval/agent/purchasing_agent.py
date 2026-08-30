@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from aval.agent.proposer import OfferProposer, build_proposer
+from aval.agent.proposer import OfferProposer, Question, build_proposer
 from aval.api.purchase_flow import authorize_purchase, capture_purchase
 from aval.api.schemas import CaptureRequest, PurchaseRequest
 from aval.api.agent_auth import verify_signed_request
@@ -84,6 +84,15 @@ class PurchasingAgent:
     def run(self, *, mandate_id: str, instruction: str) -> AgentRun:
         offers = self._runtime.offers.catalog()
         proposal = self._proposer.propose(instruction, offers)
+        if isinstance(proposal, Question):
+            # Not a refusal and not a purchase. The mandate was never consulted,
+            # because there is nothing yet to put to it.
+            return AgentRun(
+                outcome="needs_clarification",
+                reason_code="instruction_ambiguous",
+                human_summary=proposal.text,
+                considered=len(offers),
+            )
         if proposal is None:
             return AgentRun(
                 outcome="no_offer",
@@ -124,7 +133,17 @@ class PurchasingAgent:
                 **credit,
             )
 
-        capture_body = {**purchase, "idempotency_key": f"cap_{checkout_id}"}
+        # The agent presents the mandate's own payment method. The token is worthless
+        # anywhere else — the core refuses a capture that names a different one, and the
+        # holder can cancel the card without touching the mandate — and it is not a PAN,
+        # so an agent that leaks it has leaked nothing that can pay.
+        snapshot = self._runtime.core.snapshot(mandate_id)
+        instrument = None if snapshot is None else snapshot.mandate.instrument
+        capture_body = {
+            **purchase,
+            "idempotency_key": f"cap_{checkout_id}",
+            "instrument_id": None if instrument is None else instrument.token,
+        }
         agent = self._signed_call("/capture", capture_body)
         result = capture_purchase(
             self._runtime, agent=agent, body=CaptureRequest(**capture_body)

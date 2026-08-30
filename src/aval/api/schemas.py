@@ -62,6 +62,18 @@ class UsageLimitOut(BaseModel):
     window_seconds: int
 
 
+class PaymentMethodIn(BaseModel):
+    """A card the holder is authorizing, on its way to being forgotten.
+
+    The number is read once, tokenized at the edge and never persisted: the mandate
+    stores the token and the last four digits, and nothing downstream can reconstruct a
+    PAN from either. This is the one place in the system a card number legitimately
+    appears, which is why it appears nowhere else.
+    """
+
+    card_number: str = Field(min_length=12, max_length=19)
+
+
 class CreateMandateRequest(BaseModel):
     principal: PrincipalIn
     allowed_merchant_ids: list[str] = Field(min_length=1)
@@ -71,6 +83,7 @@ class CreateMandateRequest(BaseModel):
     authorities: list[RevocationAuthorityIn] = Field(min_length=1)
     ceiling: MoneyIn | None = None
     usage_limit: UsageLimitIn | None = None
+    payment_method: PaymentMethodIn | None = None
 
     @field_validator("expires_at")
     @classmethod
@@ -84,6 +97,9 @@ class CreateMandateResponse(BaseModel):
     mandate_id: str
     policy_version: int
     revocation_id: str
+    # The scope a holder signs to cancel the card without ending the mandate. Returned
+    # because it names a token the caller has never seen and could not otherwise build.
+    instrument_revocation_scope: str | None = None
 
 
 class ReplaceLimitRequest(BaseModel):
@@ -122,6 +138,9 @@ class PurchaseRequest(BaseModel):
 class CaptureRequest(PurchaseRequest):
     idempotency_key: str = Field(min_length=1)
     terms_hash: str | None = None
+    # Which payment method is paying. A mandate that names one refuses any other, and
+    # refuses a capture that presents none.
+    instrument_id: str | None = None
 
 
 class EvaluationStepOut(BaseModel):
@@ -170,6 +189,9 @@ class MandateView(BaseModel):
     # How many uses the live window has already consumed. Read at the same instant
     # as the budget, so the two never disagree about what is left.
     uses_in_window: int = 0
+    # The card the mandate names, as four digits. The token is never served: a client
+    # that could read it could present it, and only the agent needs to.
+    instrument_label: str | None = None
 
 
 class MandateListView(BaseModel):

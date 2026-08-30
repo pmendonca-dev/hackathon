@@ -33,6 +33,11 @@ mandates = Table(
     # are set together or both null; the domain refuses a half-declared limit.
     Column("max_uses", Integer),
     Column("usage_window_seconds", Integer),
+    # The payment method the mandate names. The token is what the agent presents at
+    # capture; the label is the four digits a person recognises. Neither is a PAN, and
+    # both are null on a mandate that accepts any instrument.
+    Column("instrument_token", String),
+    Column("instrument_label", String),
     Column("expires_at", DateTime(timezone=True), nullable=False),
     Column("policy_version", Integer, nullable=False),
     Column("revocation_epoch", Integer, nullable=False, default=0),

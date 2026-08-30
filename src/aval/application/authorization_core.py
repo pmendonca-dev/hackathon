@@ -1146,7 +1146,13 @@ class AuthorizationCore:
                 stopped("mandate_not_revoked", "mandato revogado pelo titular"),
             ), mandate
         cleared("mandate_not_revoked")
-        instrument_id = getattr(command, "instrument_id", None)
+        # Whichever card is in play: the one this command presents, or — when the
+        # command is a preview that carries none — the one the mandate itself names.
+        # A cancelled card has to refuse the preview too, or the holder is told their
+        # purchase needs approval when in truth their card no longer exists.
+        instrument_id = getattr(command, "instrument_id", None) or (
+            None if mandate.instrument is None else mandate.instrument.token
+        )
         instrument_revoked = instrument_id is not None and revocations.has_scope(
             command.mandate_id, f"instrument:{instrument_id}"
         )
@@ -1211,6 +1217,23 @@ class AuthorizationCore:
                 ),
             ), mandate
         cleared("category_in_scope", command.category)
+        # Only a capture carries an instrument, and only a capture moves money. The
+        # pre-check above it is a preview: it deliberately does not spend the offer's
+        # nonce either. Everything here is walked again at capture, so gating the rung
+        # on the command that pays is not a hole — it is where the question is real.
+        if isinstance(command, CaptureCommand) and mandate.instrument is not None:
+            if command.instrument_id != mandate.instrument.token:
+                return self._reject(
+                    "instrument_not_in_mandate",
+                    "Meio de pagamento não é o que o mandato nomeia.",
+                    stopped(
+                        "instrument_in_mandate",
+                        "nenhum instrumento apresentado"
+                        if command.instrument_id is None
+                        else "instrumento apresentado não é o do mandato",
+                    ),
+                ), mandate
+            cleared("instrument_in_mandate", mandate.instrument.label)
         assert limit is not None
         if (command.total.currency, command.total.scale) != (limit.currency, limit.scale):
             return self._reject(

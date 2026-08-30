@@ -22,6 +22,7 @@ from aval.agent.intent import parse_intent
 from aval.agent.proposer import (
     ModelProposer,
     Proposal,
+    Question,
     RuleProposer,
     build_proposer,
     offer_line,
@@ -233,3 +234,42 @@ def test_wanting_the_model_without_a_credential_still_falls_back(monkeypatch) ->
         monkeypatch.delenv(variable, raising=False)
 
     assert isinstance(build_proposer(), RuleProposer)
+
+
+# ── the third answer ────────────────────────────────────────────────────────
+def test_a_request_that_names_no_destination_is_asked_about_not_guessed() -> None:
+    """The silent approval this closes: every word here is a stop word, so nothing
+    narrows the catalogue and the cheapest fare would win by default."""
+    answer = RuleProposer().propose("compre um voo", CATALOG)
+
+    assert isinstance(answer, Question)
+    assert "Para onde" in answer.text
+
+
+def test_a_request_naming_something_nobody_sells_is_asked_about_too() -> None:
+    """Same failure, different sentence: the agent cannot tell what is wanted."""
+    assert isinstance(RuleProposer().propose("compre um voo pra Marte", CATALOG), Question)
+
+
+def test_a_request_that_names_a_destination_is_answered_not_questioned() -> None:
+    answer = RuleProposer().propose("compre um voo pra Córdoba", CATALOG)
+
+    assert isinstance(answer, Proposal)
+    assert answer.offer["item"]["sku"] == "FL-A"
+
+
+def test_the_model_may_ask_instead_of_choosing() -> None:
+    answer = ModelProposer(FakeModel({"pergunta": "Para Córdoba ou Buenos Aires?"})).propose(
+        "quero viajar em setembro", CATALOG
+    )
+
+    assert answer == Question("Para Córdoba ou Buenos Aires?")
+
+
+def test_an_empty_question_is_not_an_answer_and_falls_back() -> None:
+    """A model that asks nothing has not asked. The rules take the wheel back."""
+    answer = ModelProposer(FakeModel({"pergunta": "   "})).propose(
+        "compre um voo pra Córdoba", CATALOG
+    )
+
+    assert isinstance(answer, Proposal)
