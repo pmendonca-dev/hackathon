@@ -1,55 +1,97 @@
-import { AlertTriangle, LoaderCircle } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 
+import { RuntimeFailure } from './components/RuntimeFailure.tsx';
 import { Shell } from './components/Shell.tsx';
-import { Button } from './components/ui.tsx';
-import { AuditorTrailView } from './pages/AuditorTrailView.tsx';
-import { HolderView } from './pages/HolderView.tsx';
-import { MerchantDeskView } from './pages/MerchantDeskView.tsx';
-import { TrialByFireConsole } from './pages/TrialByFireConsole.tsx';
+import { HumanView } from './pages/HumanView.tsx';
+import { MerchantView } from './pages/MerchantView.tsx';
+import { AuditorView } from './pages/AuditorView.tsx';
+import { LiveAuditorView } from './pages/LiveAuditorView.tsx';
+import { LiveHumanView } from './pages/LiveHumanView.tsx';
+import { LiveMerchantView } from './pages/LiveMerchantView.tsx';
+import { TrialConsole } from './pages/TrialConsole.tsx';
 import { useAval } from './state/AvalContext.ts';
 import { AvalProvider } from './state/AvalProvider.tsx';
 
 function Workspace() {
-  const { view, loading, error, mandates, reload } = useAval();
+  const { snapshot, loading, error, view, reload, lastCommandReceipt, submitTrialCommand } = useAval();
 
-  if (loading && mandates.length === 0 && !error) {
+  if (loading && !snapshot) {
     return (
       <Shell>
         <div className="flex min-h-[70vh] items-center justify-center" role="status">
           <LoaderCircle className="animate-spin text-allow" size={24} aria-hidden="true" />
-          <span className="ml-3 text-sm text-fg-mute">Lendo o estado canônico…</span>
+          <span className="ml-3 text-sm text-fg-mute">Carregando estado da API…</span>
         </div>
       </Shell>
     );
   }
 
-  // An unreachable runtime is shown as unreachable. There is no fixture fallback: a
-  // screen that filled itself with invented data would be indistinguishable from a
-  // working system precisely when it matters most.
-  if (error && mandates.length === 0) {
+  if (error || !snapshot) {
     return (
       <Shell>
-        <div className="mx-auto flex min-h-[70vh] max-w-md flex-col items-center justify-center px-6 text-center" role="alert">
-          <AlertTriangle className="text-deny" size={28} aria-hidden="true" />
-          <h1 className="mt-4 font-display text-xl font-semibold">Runtime indisponível</h1>
-          <p className="mt-2 text-sm leading-relaxed text-fg-mute">{error}</p>
-          <Button className="mt-5" onClick={() => void reload()}>Tentar novamente</Button>
+        <div className="mx-auto flex min-h-[70vh] max-w-2xl items-center px-6">
+          {error && <RuntimeFailure error={error} onAction={() => void reload()} />}
         </div>
       </Shell>
     );
   }
+
+  const liveSnapshot = snapshot.meta.dataSource === 'api' && 'live' in snapshot
+    ? snapshot
+    : null;
+  const mockSnapshot = 'human' in snapshot ? snapshot : null;
 
   return (
     <Shell>
-      {error && (
-        <div className="mx-auto mt-4 max-w-[1180px] px-5 text-[12px] text-deny" role="alert">
-          {error}
+      {snapshot.meta.dataSource === 'mock' && (
+        <div
+          className="sticky top-[57px] z-10 border-b border-escalate/40 bg-escalate-dk px-5 py-2 text-center font-mono text-[11px] font-semibold tracking-wide text-escalate"
+          role="status"
+        >
+          DADOS DE DEMONSTRAÇÃO / MOCK — estas projeções não representam estado vivo nem comprovam execução do runtime.
         </div>
       )}
-      {view === 'human' && <HolderView />}
-      {view === 'merchant' && <MerchantDeskView />}
-      {view === 'auditor' && <AuditorTrailView />}
-      {view === 'trial' && <TrialByFireConsole />}
+      {(error || loading) && (
+        <div className="mx-auto mt-4 max-w-[1180px] px-5">
+          {error ? (
+            <RuntimeFailure error={error} compact onAction={() => void reload()} />
+          ) : (
+            <div className="flex items-center gap-2 rounded-xl border border-line bg-ink-850 px-4 py-3 text-[12px] text-fg-mute" role="status">
+              <LoaderCircle className="animate-spin text-verify" size={14} aria-hidden="true" />
+              Atualizando a projeção canônica…
+            </div>
+          )}
+        </div>
+      )}
+      {liveSnapshot ? (
+        <>
+          {view === 'human' && <LiveHumanView data={liveSnapshot.live} />}
+          {view === 'merchant' && <LiveMerchantView capture={liveSnapshot.live.capture} receipts={liveSnapshot.live.receipts} />}
+          {view === 'auditor' && <LiveAuditorView audit={liveSnapshot.live.audit} dispute={liveSnapshot.live.dispute} />}
+          {view === 'trial' && (
+            <TrialConsole
+              mandateId={liveSnapshot.live.mandateId}
+              dataSource="api"
+              receipt={lastCommandReceipt}
+              onSubmit={submitTrialCommand}
+            />
+          )}
+        </>
+      ) : mockSnapshot ? (
+        <>
+          {view === 'human' && <HumanView data={mockSnapshot.human} />}
+          {view === 'merchant' && <MerchantView data={mockSnapshot.merchant} />}
+          {view === 'auditor' && <AuditorView data={mockSnapshot.auditor} />}
+          {view === 'trial' && (
+            <TrialConsole
+              mandateId={mockSnapshot.human.mandate.id}
+              dataSource="mock"
+              receipt={lastCommandReceipt}
+              onSubmit={submitTrialCommand}
+            />
+          )}
+        </>
+      ) : null}
     </Shell>
   );
 }
