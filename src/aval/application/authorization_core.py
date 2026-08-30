@@ -130,6 +130,10 @@ class CaptureResult:
     settlement_reference: str | None = None
     escalation_id: str | None = None
     authorization_proof: str | None = None
+    # True when this result was replayed from a completed idempotency record rather than
+    # computed now. The outcome is identical by construction; only the caller's framing
+    # differs, and a protocol that advertises replays needs to know which it is.
+    replayed: bool = False
 
 
 @dataclass(frozen=True)
@@ -1123,7 +1127,7 @@ class AuthorizationCore:
             return ("prepared", reservation, attempt_id, proof, proof_jti)
         prepared = run_in_write_transaction(self._engine, prepare)
         if prepared[0] == "replay":
-            return self._deserialize_result(prepared[1])
+            return replace(self._deserialize_result(prepared[1]), replayed=True)
         if prepared[0] == "result":
             return prepared[1]
         _, reservation, attempt_id, proof, proof_jti = prepared

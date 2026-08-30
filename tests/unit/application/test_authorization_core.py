@@ -136,7 +136,10 @@ def test_capture_commits_before_calling_settlement_and_replays_idempotently():
     replay = core.capture(CaptureCommand(**command().__dict__, idempotency_key="idem_1"))
 
     assert first.approved
-    assert replay == first
+    # Identical outcome, and marked as the replay it is: same reservation, same
+    # reference, no second settlement.
+    assert replay.replayed is True
+    assert replace(replay, replayed=False) == first
     assert settlement.reservation_statuses == ["COMMITTED"]
 
 

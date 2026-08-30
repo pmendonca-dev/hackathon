@@ -14,6 +14,13 @@ const views: Array<{ id: View; label: string; context: string; icon: LucideIcon 
 
 export function Shell({ children }: { children: ReactNode }) {
   const { view, setView, snapshot, loading, reload } = useAval();
+  const isMock = snapshot?.meta.dataSource === 'mock';
+  const sourceLabel = !snapshot ? 'AGUARDANDO API' : isMock ? 'DADOS MOCK' : 'API REAL';
+  const sourceDetail = !snapshot
+    ? 'Nenhuma projeção canônica carregada'
+    : 'fixtureId' in snapshot.meta
+      ? snapshot.meta.fixtureId
+      : snapshot.meta.contractVersion;
 
   return (
     <div className="min-h-full bg-ink-950 text-fg lg:grid lg:grid-cols-[252px_minmax(0,1fr)]">
@@ -55,8 +62,10 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="hidden border-t border-line p-5 lg:absolute lg:inset-x-0 lg:bottom-0 lg:block">
           <p className="eyebrow">Origem do snapshot</p>
           <div className="mt-2 flex items-center justify-between gap-2">
-            <Badge tone={snapshot?.meta.dataSource === 'mock' ? 'escalate' : 'verify'}>{snapshot?.meta.dataSource ?? 'carregando'}</Badge>
-            <span className="mono text-[9px] text-fg-mute">SEM REDE</span>
+            <Badge tone={!snapshot ? 'neutral' : isMock ? 'escalate' : 'verify'}>{sourceLabel}</Badge>
+            <span className="mono text-[9px] text-fg-mute">
+              {!snapshot ? 'INDISPONÍVEL' : snapshot.meta.networkUsed ? 'REDE ATIVA' : 'FIXTURE LOCAL'}
+            </span>
           </div>
         </div>
       </aside>
@@ -66,11 +75,11 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="mx-auto flex max-w-[1180px] items-center justify-between gap-4">
             <div className="min-w-0">
               <p className="eyebrow">Sala de prova · AP2 v0.2</p>
-              <p className="truncate text-[12px] text-fg-mute">{snapshot?.meta.fixtureId ?? 'Carregando contrato de apresentação'}</p>
+              <p className="truncate text-[12px] text-fg-mute">{sourceDetail}</p>
             </div>
             <div className="flex items-center gap-2">
-              <Badge tone="escalate">MOCK</Badge>
-              <Button variant="ghost" onClick={() => void reload()} disabled={loading} aria-label="Recarregar snapshot mock">
+              <Badge tone={!snapshot ? 'neutral' : isMock ? 'escalate' : 'verify'}>{sourceLabel}</Badge>
+              <Button variant="ghost" onClick={() => void reload()} disabled={loading} aria-label="Recarregar estado canônico">
                 <RefreshCw size={13} aria-hidden="true" />
                 <span className="hidden sm:inline">Recarregar</span>
               </Button>

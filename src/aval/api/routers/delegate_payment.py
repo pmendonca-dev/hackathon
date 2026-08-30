@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict
 
 from aval.adapters.acp.delegate_payment import serialize_delegated_payment
 from aval.application.services.delegation import DurableDelegationService
 from aval.application.services.vault import DelegationRejected, VaultService
+from aval.adapters.ucp.http_signatures import Rfc9421Verifier
+from aval.api.authentication import authenticate_rfc9421
 
 
 class CardCredentialInput(BaseModel):
@@ -39,12 +41,17 @@ class DelegatePaymentResponse(BaseModel):
     allowance: AllowanceResponse
 
 
-def create_delegate_payment_router(service: VaultService | DurableDelegationService) -> APIRouter:
+def create_delegate_payment_router(
+    service: VaultService | DurableDelegationService, *, verifier: Rfc9421Verifier | None = None
+) -> APIRouter:
     router = APIRouter()
+
+    def require_agent(request: Request) -> None:
+        authenticate_rfc9421(request, verifier)
 
     @router.post(
         "/agentic_commerce/delegate_payment",
-        response_model=DelegatePaymentResponse, status_code=201,
+        response_model=DelegatePaymentResponse, status_code=201, dependencies=[Depends(require_agent)],
     )
     async def delegate_payment(
         request: DelegatePaymentRequest,

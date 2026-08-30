@@ -7,6 +7,14 @@ from sqlalchemy import Engine, select
 from aval.application.services.dispute import DisputeEvidence, ReadableAuditEvent
 from aval.adapters.ap2.receipts import mandate_reference
 from aval.infrastructure.sqlite.models import audit_events
+
+# The trail is written once, in the core's vocabulary. This audience reads `capture.*`,
+# so the names are translated on the way out rather than duplicated on the way in.
+PROTOCOL_EVENT_NAMES = {
+    "purchase_committed": "capture.committed",
+    "purchase_settled": "capture.settled",
+    "purchase_declined": "capture.declined",
+}
 from aval.infrastructure.sqlite.payment_runtime_repository import SqlitePaymentRuntimeRepository
 
 
@@ -25,14 +33,15 @@ class SqliteDisputeEvidenceReader:
                 audit_events.c.mandate_id == mandate_id
             ).order_by(audit_events.c.occurred_at, audit_events.c.id)).mappings().all()
         timeline = tuple(ReadableAuditEvent(
-            id=row["id"], mandate_id=mandate_id, event_type=row["event_type"],
-            reason_code="settled" if row["event_type"].startswith("capture.") else "revocation",
+            id=row["id"], mandate_id=mandate_id,
+            event_type=PROTOCOL_EVENT_NAMES.get(row["event_type"], row["event_type"]),
+            reason_code="settled" if row["event_type"] in PROTOCOL_EVENT_NAMES else "revocation",
             human_summary=row["human_summary"], actor="authorization_core",
             occurred_at=row["occurred_at"].replace(tzinfo=UTC) if row["occurred_at"].tzinfo is None else row["occurred_at"],
             evidence_hash="runtime", revocation_epoch=0,
         ) for row in rows)
-        checkout_mandate = f"checkout:{capture.checkout_id}"
-        payment_mandate = f"payment:{capture.id}"
+        checkout_mandate = capture.checkout_mandate
+        payment_mandate = capture.payment_mandate
         committed_at = timeline[0].occurred_at if timeline else datetime.now(UTC)
         return DisputeEvidence(
             mandate_id=mandate_id, open_mandate=mandate_id, revocation_authority="runtime",

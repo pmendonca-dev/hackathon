@@ -11,10 +11,13 @@ All timestamps are RFC 3339 UTC timestamps.
 
 ## Authentication and safety
 
-Every endpoint requires an authenticated actor. Agent endpoints require a
-trusted registered agent identity; holder/operator endpoints require their
-registered authority identity. The demo seed identities are only for local
-development and must never be enabled in a deployed runtime.
+Every endpoint requires a trusted RFC 9421 identity. The signature covers the
+received raw body through `Content-Digest`, as well as `@method`, `@authority`,
+`@path`, `ucp-agent`, `idempotency-key`, and `content-type`. The runtime rejects
+missing/invalid signatures, altered bodies, unknown keys, and untrusted
+profiles before any operational service executes. The local roles are
+`agent_01` (merchant projection), `holder_01`, and `auditor_01`; only the
+latter two have cross-merchant audit access.
 
 Every `POST` requires a non-empty `Idempotency-Key` header. The key is durable
 for at least 24 hours and is scoped to the endpoint. Repeating the same key
@@ -86,17 +89,19 @@ Requires a trusted merchant/agent authentication context and
 
 ```json
 {
-  "mandate_id": "mandate_01",
   "checkout_session_id": "chi_01",
-  "merchant_id": "merchant_01",
   "token": "vt_local_opaque_value",
-  "amount": {"amount": 500, "currency": "BRL", "scale": 2},
+  "audience": "merchant_01",
+  "nonce": "merchant-capture-challenge",
   "ap2": {
-    "checkout_mandate": "issuer-jwt~kb-jwt",
-    "payment_mandate": "issuer-jwt~kb-jwt"
+    "checkout_mandate": "issuer-jwt~kb-jwt"
   }
 }
 ```
+
+`mandate_id`, `merchant_id`, and amount are deliberately not accepted here.
+The runtime loads these values from `checkout_session_id`'s canonical persisted
+checkout and validates the vault-token scope against them.
 
 `201 Created` on approved settlement:
 
@@ -141,8 +146,10 @@ endpoint; it is read-only and has no idempotency header.
 
 `GET /payment-captures/{capture_id}/receipts`
 
-Requires the authenticated holder, merchant, or auditor. It returns receipts
-only after approved settlement:
+Requires a signed trusted reader. The merchant identity can read only a capture
+whose canonical checkout belongs to that merchant; holder and auditor identities
+can read the authorized cross-merchant projection. It returns receipts only
+after approved settlement:
 
 ```json
 {
@@ -159,10 +166,13 @@ PSP confirmation only; they never contain payment credentials or a Core proof.
 ## Audit and dispute (preserved)
 
 `GET /audit/mandates/{mandate_id}` and
-`GET /audit/mandates/{mandate_id}/dispute` require an authenticated holder,
-merchant, or auditor. They return the append-only, human-readable timeline and
-the dispute verdict. They return `404 mandate_not_found` when the mandate is
-unknown and `503 audit_unavailable` if durable evidence cannot be read. A
+`GET /audit/mandates/{mandate_id}/dispute` require a signed trusted reader. A
+merchant receives only its merchant projection; holder and auditor receive the
+authorized mandate projection. An anonymous or unauthorized reader receives
+`422` with an RFC authentication code or `403 reader_not_authorized`. They
+return the append-only, human-readable timeline and the dispute verdict. They
+return `404 mandate_not_found` when the mandate is unknown and `503
+audit_unavailable` if durable evidence cannot be read. A
 revocation after a committed reservation is recorded in this timeline but does
 not rewrite the settled capture; the dispute result states that reversal,
 refund, or dispute is the available remedy.

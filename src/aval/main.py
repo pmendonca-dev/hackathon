@@ -41,6 +41,7 @@ from aval.api.middleware.raw_body import RawBodyMiddleware
 from aval.api.routers.audit import create_audit_router
 from aval.api.routers.delegate_payment import create_delegate_payment_router
 from aval.api.routers.payment_capture import create_payment_capture_router
+from aval.api.routers.revocations import create_revocation_router
 from aval.api.routers.ucp_checkout import create_ucp_checkout_router
 from aval.api.routers.ucp_discovery import create_ucp_discovery_router
 from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
@@ -85,10 +86,24 @@ __all__ = ["app", "create_app", "database_path", "PROTOCOL_KEY_IDS"]
 
 # The protocol lane signs and verifies with these four roles. They live in the runtime's
 # custody so one process has one set of keys, whichever door a request arrives through.
-PROTOCOL_KEY_IDS = ("merchant-key", "agent-key", "issuer-key", "holder-key", "psp-key")
+# The roles the protocol lane signs and verifies with. `auditor-key` is a reader: it
+# proves who is asking for a trail without ever authorizing a purchase.
+PROTOCOL_KEY_IDS = (
+    "merchant-key",
+    "agent-key",
+    "issuer-key",
+    "holder-key",
+    "auditor-key",
+    "psp-key",
+)
+
+SEED_IDENTITIES = (
+    ("agent_01", "https://agent.aval.local/.well-known/ucp", "agent-key"),
+    ("holder_01", "https://holder.aval.local/.well-known/ucp", "holder-key"),
+    ("auditor_01", "https://auditor.aval.local/.well-known/ucp", "auditor-key"),
+)
 
 SEED_MANDATE_ID = "mandate_01"
-SEED_AGENT_ID = "agent_01"
 
 
 def _now() -> datetime:
@@ -131,19 +146,27 @@ def _seed_protocol_fixtures(runtime: AvalRuntime, clock: Callable[[], datetime])
             ),
         )
     )
-    identity = AgentIdentity(
-        id=SEED_AGENT_ID,
-        profile_url="https://agent.aval.local/.well-known/ucp",
-        public_jwk=custody.public_jwk("agent-key"),
-        trusted=True,
-    )
-    # Two registries, one identity: the protocol lane reads through its own repository,
-    # the authorization edge through `agent_for_kid`. Writing both keeps a single agent
-    # recognisable at either door.
-    run_in_write_transaction(
-        runtime.engine, lambda connection: SqliteAgentRegistryRepository(connection).put(identity)
-    )
-    runtime.core.register_agent(identity)
+    identities = [
+        AgentIdentity(
+            id=identity_id,
+            profile_url=profile_url,
+            public_jwk=custody.public_jwk(key_id),
+            trusted=True,
+        )
+        for identity_id, profile_url, key_id in SEED_IDENTITIES
+    ]
+
+    def seed_identities(connection) -> None:
+        repository = SqliteAgentRegistryRepository(connection)
+        for identity in identities:
+            repository.put(identity)
+
+    # Two registries, one set of identities: the protocol lane reads through its own
+    # repository, the authorization edge through `agent_for_kid`. Writing both keeps a
+    # single agent recognisable at either door.
+    run_in_write_transaction(runtime.engine, seed_identities)
+    for identity in identities:
+        runtime.core.register_agent(identity)
 
 
 def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[], datetime]) -> None:
@@ -184,23 +207,34 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
         ),
     )
 
+    # The capture reads its facts from the stored checkout, so it is handed the same
+    # store and the same verifiers the checkout was created with.
+    payment_runtime = PaymentRuntime(
+        core=runtime.core,
+        engine=runtime.engine,
+        clock=clock,
+        receipts=receipts,
+        checkouts=SqliteCheckoutRepository(runtime.engine),
+        merchant_authorization_verifier=MerchantAuthorizationVerifier(
+            custody.public_jwk("merchant-key")
+        ),
+        mandate_verifier=ClosedCheckoutMandateVerifier(
+            issuer_jwk=custody.public_jwk("issuer-key"),
+            holder_jwk=custody.public_jwk("holder-key"),
+            clock=clock,
+        ),
+    )
+    # One verifier for every protocol door. Payment and audit are agent traffic too, so
+    # they answer the same question the checkout does: is the caller who it claims to be.
+    agent_verifier = Rfc9421Verifier(SqliteTrustedAgentRegistry(runtime.engine))
+
     # RFC 9421 over UCP needs the unparsed bytes, which FastAPI would otherwise consume.
     app.add_middleware(RawBodyMiddleware)
     app.include_router(create_ucp_discovery_router(custody=custody, key_id="merchant-key"))
-    app.include_router(
-        create_ucp_checkout_router(
-            checkout_service,
-            verifier=Rfc9421Verifier(SqliteTrustedAgentRegistry(runtime.engine)),
-        )
-    )
-    app.include_router(create_delegate_payment_router(delegation_service))
-    app.include_router(
-        create_payment_capture_router(
-            PaymentRuntime(
-                core=runtime.core, engine=runtime.engine, clock=clock, receipts=receipts
-            )
-        )
-    )
+    app.include_router(create_ucp_checkout_router(checkout_service, verifier=agent_verifier))
+    app.include_router(create_delegate_payment_router(delegation_service, verifier=agent_verifier))
+    app.include_router(create_payment_capture_router(payment_runtime, verifier=agent_verifier))
+    app.include_router(create_revocation_router(runtime.core, verifier=agent_verifier))
     app.include_router(
         create_audit_router(
             DisputeService(
@@ -211,7 +245,13 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
                 payment_receipt_verifier=lambda token: verify_compact_jws(
                     token, public_key_from_jwk(custody.public_jwk("psp-key"))
                 ),
-            )
+            ),
+            verifier=agent_verifier,
+            # An agent reads the trail of a mandate it actually took part in, and no
+            # other. Authentication says who is asking; this says what they may see.
+            can_read=lambda identity_id, mandate_id: payment_runtime.can_read_mandate(
+                identity_id=identity_id, mandate_id=mandate_id
+            ),
         )
     )
 

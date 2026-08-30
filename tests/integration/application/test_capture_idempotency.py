@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from datetime import UTC, datetime
 
 from aval.application.authorization_core import CaptureCommand
@@ -54,6 +56,9 @@ def test_capture_idempotency_is_durable_and_rejects_changed_bodies(tmp_path):
     changed_body = AuthorizationCore(clock=lambda: now, engine=engine, settlement_adapter=settlement).capture(capture_command(key="idem_1", amount=600))
 
     assert first.approved
-    assert replay == first
+    # Identical outcome, and marked as the replay it is: same reservation, same
+    # reference, no second settlement.
+    assert replay.replayed is True
+    assert replace(replay, replayed=False) == first
     assert changed_body.reason_code == "idempotency_key_reused"
     assert settlement.calls == 1

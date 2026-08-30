@@ -179,3 +179,143 @@ Keep the mandate only in process memory
 **What we chose:** Seed the demo mandate only on an empty durable runtime and preserve it unchanged on subsequent starts.
 
 **Why:** Rewriting a persisted mandate would silently extend expiry or replace policy/revocation facts after a restart, which contradicts continuous authorization and durable audit requirements.
+
+## Operational request authentication
+
+**Decision:** Authentication boundary for payment runtime HTTP surfaces
+
+**Options considered (one per line):**
+
+Accept an unsigned local runtime header for ACP and capture calls
+Apply RFC 9421 only to the original UCP checkout routes
+Require RFC 9421 signatures over the raw request body on every operational payment POST and authenticated reader requests
+
+**What we chose:** Reuse the trusted RFC 9421 agent registry and raw-body Content-Digest verifier for delegation, capture, receipt reads, and audit/dispute reads.
+
+**Why:** Reusing the existing trust registry prevents a second identity authority and makes body tampering, unknown profiles, and signature failures fail before tokenization, Core authorization, or evidence disclosure.
+
+## Canonical capture binding
+
+**Decision:** Source of capture mandate, merchant, and amount
+
+**Options considered (one per line):**
+
+Trust mandate, merchant, and amount supplied by the capture caller
+Duplicate those values into a payment-specific request policy
+Load all capture scope from the persisted canonical checkout and validate its AP2 evidence before Core commit
+
+**What we chose:** Capture accepts only a checkout identifier, opaque token, key-binding inputs, and AP2 closed checkout evidence; it derives authoritative scope from the canonical checkout.
+
+**Why:** A caller-controlled total or merchant would create a second authorization representation. Verifying merchant authorization JCS/JWS and closed AP2 evidence against the persisted checkout blocks divergent values before a reservation, PSP call, receipt, or settlement audit event exists.
+## Browser runtime source selection
+
+**Decision:** Default browser data source for the live demo
+
+**Options considered (one per line):**
+
+Keep the fixture gateway as the default until all runtime endpoints are merged
+Fall back silently from HTTP to fixtures when the runtime is unavailable
+Use HTTP by default and permit fixtures only behind an explicit development-only flag
+
+**What we chose:** `HttpAvalGateway` is the default. The fixture gateway is selected only when Vite is in development mode and `VITE_AVAL_USE_MOCK=true`; the UI then renders a persistent mock-data provenance strip.
+
+**Why:** A silent or default fixture can make presentation data look like canonical state and can make a demo appear successful while the runtime is unavailable. An explicit development gate keeps fixtures useful for layout work without weakening live-demo evidence.
+
+## Trial command availability
+
+**Decision:** Administrative commands exposed by the browser
+
+**Options considered (one per line):**
+
+Simulate unsupported limit, scope, and budget commands locally
+Invent HTTP endpoints that are not in the published runtime contract
+Enable only commands backed by authenticated, idempotent, audited runtime endpoints
+
+**What we chose:** The browser will enable signed mandate revocation after the runtime is integrated. Limit reduction, scope change, and budget-zero remain visibly unavailable because the published contract does not define those APIs.
+
+**Why:** Local mutation would create a second authority and speculative endpoints would couple the UI to an imaginary protocol. The signed revocation endpoint is the only published administrative seam that can provide a real authenticated and auditable effect.
+
+## Live workspace composition
+
+**Decision:** Projection strategy for human, merchant, and auditor views
+
+**Options considered (one per line):**
+
+Populate missing live fields with fixture literals or browser-derived policy
+Require an undocumented aggregate workspace endpoint
+Compose only the published capture, receipt, audit, and dispute responses and render unavailable fields as unavailable
+
+**What we chose:** The live UI will compose documented read-only runtime responses identified by configured mandate and capture IDs, without synthesizing mandate limits, private budgets, identity, or authorization state.
+
+**Why:** The payment runtime contract intentionally exposes no aggregate workspace or mandate-detail response. Rendering only returned facts preserves `AuthorizationCore` as the sole source of truth and prevents merchant-visible leakage of private fields.
+
+## Task 12 runtime conformance gate
+
+**Decision:** When Task 12 may be reported green
+
+**Options considered (one per line):**
+
+Treat Laptop A's focused integration tests as sufficient E2E evidence
+Adapt Laptop B tests to the current implementation even when it diverges from the published contract
+Keep public E2E assertions red until the integrated runtime implements the published authentication, AP2, revocation, and audit boundaries
+
+**What we chose:** Task 12 stays red until tests in `tests/integration/e2e/` pass against `origin/main` after the Laptop A merge, using public HTTP calls and stable contract responses.
+
+**Why:** Runtime commit `9904b06` currently accepts unauthenticated delegation, omits the signed revocation route, and rejects the contract's capture `ap2` object. Weakening the tests would turn implementation drift into a second de facto contract and would make the demo evidence misleading.
+
+## Direct Task 12 validation target
+
+**Decision:** Git base for the corrected runtime validation
+
+**Options considered (one per line):**
+
+Wait for the runtime PR to merge into main
+Merge the runtime branch into Laptop B locally
+Rebase Laptop B directly onto the exact published runtime commit requested by the user
+
+**What we chose:** Rebase onto
+`origin/codex/laptop-a-live-payments` at
+`3191d3e647e52180fe2367bf0d1a2e3740ea2ad0` without merging main.
+
+**Why:** This validates the precise corrected artifact while preserving a linear,
+reviewable Laptop B history and respecting the instruction not to merge or open
+the final PR yet.
+
+## Public E2E evidence boundary
+
+**Decision:** How Task 12 proves absence of downstream payment effects
+
+**Options considered (one per line):**
+
+Inspect reservation, receipt, and audit tables after each request
+Call Core services directly from the E2E suite
+Observe only signed HTTP responses, receipts, audit, and dispute projections
+
+**What we chose:** Use authenticated public HTTP as the assertion boundary.
+After invalid AP2 or divergent capture input, compare the signed audit timeline
+and prove that the same delegated token can still complete one canonical
+capture. Direct SQLite access is permitted only to inject revocation-store
+unavailability, never to establish the outcome.
+
+**Why:** Database assertions or direct Core calls would bypass the deployed
+composition and could hide missing routers, authentication dependencies, or
+response mapping defects.
+
+## Browser signing trust boundary
+
+**Decision:** Behavior when no safe RFC 9421 browser signer is published
+
+**Options considered (one per line):**
+
+Embed local runtime private keys in Vite configuration
+Treat cookies as equivalent to the contract's RFC 9421 identity
+Keep the live browser state unavailable until a server-side signing bridge or browser-owned registered key is defined
+
+**What we chose:** Do not ship trusted runtime private keys or simulate signed
+success in the browser. The HTTP gateway remains the default transport, but a
+direct browser session may surface authentication/unavailable state until a
+safe signer boundary is published.
+
+**Why:** Vite variables are public client assets, and cookie-only requests do
+not satisfy the runtime contract. Either shortcut would weaken the identity
+boundary precisely where Task 12 is intended to test it.
