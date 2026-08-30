@@ -156,14 +156,12 @@ test('capture payment posts the opaque token and AP2 evidence idempotently', asy
     },
   });
   const request = {
-    mandate_id: 'mandate_01',
     checkout_session_id: 'chi_01',
-    merchant_id: 'merchant_01',
     token: 'vt_local_opaque_value',
-    amount: { amount: 500, currency: 'BRL', scale: 2 },
+    audience: 'merchant_01',
+    nonce: 'merchant-capture-challenge',
     ap2: {
       checkout_mandate: 'checkout-issuer~checkout-kb',
-      payment_mandate: 'payment-issuer~payment-kb',
     },
   };
 
@@ -171,6 +169,9 @@ test('capture payment posts the opaque token and AP2 evidence idempotently', asy
   assert.equal(requests[0].input, 'https://aval.example/payment-captures');
   assert.equal(new Headers(requests[0].init.headers).get('idempotency-key'), 'capture-live-1');
   assert.deepEqual(JSON.parse(requests[0].init.body), request);
+  for (const forbidden of ['mandate_id', 'merchant_id', 'amount', 'payment_mandate']) {
+    assert.equal(requests[0].init.body.includes(forbidden), false);
+  }
 });
 
 test('capture state is read from its canonical read-only endpoint', async () => {

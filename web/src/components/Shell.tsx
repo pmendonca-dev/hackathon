@@ -18,7 +18,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const sourceLabel = !snapshot ? 'AGUARDANDO API' : isMock ? 'DADOS MOCK' : 'API REAL';
   const sourceDetail = !snapshot
     ? 'Nenhuma projeção canônica carregada'
-    : isMock
+    : 'fixtureId' in snapshot.meta
       ? snapshot.meta.fixtureId
       : snapshot.meta.contractVersion;
 

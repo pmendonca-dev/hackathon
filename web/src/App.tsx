@@ -39,6 +39,11 @@ function Workspace() {
     );
   }
 
+  const liveSnapshot = snapshot.meta.dataSource === 'api' && 'live' in snapshot
+    ? snapshot
+    : null;
+  const mockSnapshot = 'human' in snapshot ? snapshot : null;
+
   return (
     <Shell>
       {snapshot.meta.dataSource === 'mock' && (
@@ -50,35 +55,35 @@ function Workspace() {
         </div>
       )}
       {error && <div className="mx-auto mt-4 max-w-[1180px] px-5 text-[12px] text-deny" role="alert">{error}</div>}
-      {snapshot.meta.dataSource === 'api' ? (
+      {liveSnapshot ? (
         <>
-          {view === 'human' && <LiveHumanView data={snapshot.live} />}
-          {view === 'merchant' && <LiveMerchantView capture={snapshot.live.capture} receipts={snapshot.live.receipts} />}
-          {view === 'auditor' && <LiveAuditorView audit={snapshot.live.audit} dispute={snapshot.live.dispute} />}
+          {view === 'human' && <LiveHumanView data={liveSnapshot.live} />}
+          {view === 'merchant' && <LiveMerchantView capture={liveSnapshot.live.capture} receipts={liveSnapshot.live.receipts} />}
+          {view === 'auditor' && <LiveAuditorView audit={liveSnapshot.live.audit} dispute={liveSnapshot.live.dispute} />}
           {view === 'trial' && (
             <TrialConsole
-              mandateId={snapshot.live.mandateId}
+              mandateId={liveSnapshot.live.mandateId}
               dataSource="api"
               receipt={lastCommandReceipt}
               onSubmit={submitTrialCommand}
             />
           )}
         </>
-      ) : (
+      ) : mockSnapshot ? (
         <>
-          {view === 'human' && <HumanView data={snapshot.human} />}
-          {view === 'merchant' && <MerchantView data={snapshot.merchant} />}
-          {view === 'auditor' && <AuditorView data={snapshot.auditor} />}
+          {view === 'human' && <HumanView data={mockSnapshot.human} />}
+          {view === 'merchant' && <MerchantView data={mockSnapshot.merchant} />}
+          {view === 'auditor' && <AuditorView data={mockSnapshot.auditor} />}
           {view === 'trial' && (
             <TrialConsole
-              mandateId={snapshot.human.mandate.id}
+              mandateId={mockSnapshot.human.mandate.id}
               dataSource="mock"
               receipt={lastCommandReceipt}
               onSubmit={submitTrialCommand}
             />
           )}
         </>
-      )}
+      ) : null}
     </Shell>
   );
 }

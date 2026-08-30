@@ -1,6 +1,4 @@
-import type { CheckoutApiMoney } from './checkoutApi.ts';
-
-export const PAYMENT_RUNTIME_API_CONTRACT_VERSION = 'aval-payment-runtime-api@b7fb4f7' as const;
+export const PAYMENT_RUNTIME_API_CONTRACT_VERSION = 'aval-payment-runtime-api@3191d3e' as const;
 
 export interface DelegatePaymentRequest {
   mandate_id: string;
@@ -22,14 +20,12 @@ export interface DelegatePaymentResponse {
 }
 
 export interface CreatePaymentCaptureRequest {
-  mandate_id: string;
   checkout_session_id: string;
-  merchant_id: string;
   token: `vt_${string}`;
-  amount: CheckoutApiMoney;
+  audience: string;
+  nonce: string;
   ap2: {
     checkout_mandate: string;
-    payment_mandate: string;
   };
 }
 
