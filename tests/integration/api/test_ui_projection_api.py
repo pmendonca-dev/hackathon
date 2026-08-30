@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from aval.domain.entities import Mandate, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
+from aval.main import SEED_INSTRUMENT_TOKEN
 from aval.application.authorization_core import CaptureCommand
 from aval.main import create_app
 
@@ -90,6 +91,7 @@ def test_audit_projection_never_reflects_untrusted_ledger_human_summary(monkeypa
             total=Money(100, "BRL", 2),
             category="travel",
             idempotency_key="capture_sensitive_reason",
+            instrument_id=SEED_INSTRUMENT_TOKEN,
         )
     )
     assert capture.reservation is not None

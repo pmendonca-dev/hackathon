@@ -68,6 +68,11 @@ check(
 );
 
 // 3 — the agent buys, and the ladder comes back.
+// 1b — the card, registered at the processor. A mandate is born unfunded, so without
+// this the agent is refused at `instrument_not_in_mandate` before any money question.
+const card = await gateway.registerCard(mandateId, (claims) => signCompactJws(claims, wallet));
+check('o navegador registra o cartão no processador', Boolean(card), card ?? 'nenhum');
+
 const bought = await gateway.agentPurchase(mandateId, 'compre um voo para Córdoba abaixo de $150');
 check('o agente conclui a compra', bought.outcome === 'settled', bought.reason_code);
 check(

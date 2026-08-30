@@ -50,7 +50,7 @@ from aval.api.routers.ui_sessions import create_ui_session_router, ui_local_http
 from aval.api.routers.ui_workspace import create_ui_workspace_router
 from aval.api.routers.ucp_checkout import create_ucp_checkout_router
 from aval.api.routers.ucp_discovery import create_ucp_discovery_router
-from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
+from aval.adapters.acp.delegate_payment import OpaqueDelegationTokenMinter
 from aval.adapters.ap2.receipts import Ap2ReceiptIssuer
 from aval.application.services.checkout import CheckoutService
 from aval.application.services.delegation import (
@@ -64,7 +64,7 @@ from aval.application.services.vault import VaultService
 from aval.application.services.ui_sessions import UiLocalCredentials, UiSessionService
 from aval.application.services.ui_operator_revocation import UiOperatorRevocationService
 from aval.application.services.ui_projections import UiProjectionService
-from aval.domain.entities import AgentIdentity, Mandate, Principal, RevocationAuthority
+from aval.domain.entities import AgentIdentity, Mandate, PaymentInstrument, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
 from aval.infrastructure.sqlite.agent_registry_repository import (
@@ -110,6 +110,7 @@ SEED_IDENTITIES = (
 UNRESTRICTED_AUDIT_READERS = frozenset({"holder_01", "auditor_01"})
 
 SEED_MANDATE_ID = "mandate_01"
+SEED_INSTRUMENT_TOKEN = "vt_seed_protocol_fixture"
 
 
 def _now() -> datetime:
@@ -167,6 +168,11 @@ def _seed_protocol_fixtures(runtime: AvalRuntime, clock: Callable[[], datetime])
                 ),
                 *((operator_authority,) if operator_authority is not None else ()),
             ),
+            # The protocol fixture names an instrument because a mandate that names
+            # none can no longer pay for anything. The token is the fixture's own, not
+            # a card anybody typed — this seed exists so the protocol lane has
+            # something to talk to, and it is the one place a stand-in belongs.
+            instrument=PaymentInstrument(SEED_INSTRUMENT_TOKEN, "•••• 4242"),
         )
     )
     if operator_authority is not None:
@@ -218,7 +224,7 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
             authorizer=CoreDelegationAuthorizer(
                 core=runtime.core, checkouts=SqliteCheckoutRepository(runtime.engine)
             ),
-            tokenizer=OpaqueTestCredentialTokenizer(),
+            tokenizer=OpaqueDelegationTokenMinter(),
         ),
         engine=runtime.engine,
     )

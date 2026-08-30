@@ -123,3 +123,50 @@ Perform a browser inspection on that origin:
 Attach the exact candidate commit, command outputs, any lint warnings, the
 legacy-schema regression output, and the browser inspection notes to the final
 review. Stop and repair a concrete failure before claiming completion.
+
+## 9. Recorded command rehearsal — 2026-08-30
+
+The following is factual command evidence for candidate
+`c919b65c468acca54393d7be88b4cd0cb1761e3d` (`fix: align migration target and
+guard stale BFF sessions`). It records an automated rehearsal only; it does
+not assert that the final delivery gate has passed, that a PR is approved, or
+that a merge has occurred.
+
+The commands ran from a disposable linked worktree. Alembic created its local
+SQLite file there. The shared `var/aval.db` was hash-checked before and after
+the migration attempt and was unchanged.
+
+| Gate | Observed result |
+| --- | --- |
+| `uv sync` | Blocked by the OneDrive hardlink limitation (OS error 396). |
+| `uv sync --link-mode=copy` | Passed; 14 packages installed. |
+| `uv run alembic upgrade head` | Blocked by App Control while spawning the `alembic` executable (OS error 4551). |
+| `uv run python -m alembic upgrade head` | Passed; upgraded a new local SQLite database through `0013_repair_legacy_mandate_frequency`. |
+| `uv run alembic heads` | Blocked by the same App Control policy. |
+| `uv run python -m alembic heads` | Passed; reported only `0013_repair_legacy_mandate_frequency (head)`. |
+| `uv run python -m pytest -q` | Passed: 554 tests in 49.45 seconds. |
+| `uv run python -m pytest tests/integration/e2e -q` | Passed: 15 tests in 3.40 seconds. |
+| `uv run python scripts/demo_smoke.py` | Passed: 9 tests in 2.35 seconds; the output explicitly excludes x402. |
+| `npm --prefix web ci` | Passed; 46 packages audited and 0 vulnerabilities reported. |
+| `npm --prefix web test` | Passed: 39 tests. |
+| `npm --prefix web run build` | Passed; 1,837 modules transformed. |
+| `npm --prefix web run lint` | Passed with no lint output. |
+
+The two `python -m alembic` invocations are an environment-specific workaround
+for App Control, not a substitute for the requested Alembic operations: they
+run the same installed Alembic package and are recorded separately so that a
+release environment can repeat the direct commands where permitted. No secret
+value was supplied or printed during this command rehearsal.
+
+### Remaining evidence and rollback
+
+Manual browser inspection against a live FastAPI origin was not run in this
+command-only rehearsal; it remains a separate final-review observation under
+section 7. The automated Python suite includes the Browser BFF and same-origin
+regressions, but it does not replace that interactive observation.
+
+This evidence changes documentation only. To abandon it before review, leave
+the branch unmerged; to undo it after integration, revert the evidence commit.
+The disposable worktree and its local SQLite database can be removed with Git
+after stopping any process using them. Do not reset, delete, or downgrade the
+shared `var/aval.db` as part of rollback.

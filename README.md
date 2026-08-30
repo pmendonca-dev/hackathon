@@ -69,6 +69,10 @@ export AVAL_LLM_MODEL=claude-opus-5      # opcional; este é o padrão
 export AVAL_LLM_TIMEOUT_SECONDS=8        # opcional; estourou, as regras assumem
 ```
 
+O bot do Telegram tem o par equivalente para a *conversa* que monta o mandato —
+`AVAL_TELEGRAM_LLM=1` mais `OPENAI_API_KEY`. Tudo está em [`.env.example`](.env.example),
+que é a lista completa e a que vale.
+
 A **vigília** — a ordem permanente que compra sozinha quando o preço cai — só é
 avaliada quando alguém pede um tick. Por padrão quem pede é o bot do Telegram, no laço
 de polling dele. Para que o servidor faça isso por conta própria, sem bot:
@@ -124,7 +128,7 @@ de demonstração.
 
 ---
 
-## O circuito completo, em sete chamadas
+## O circuito completo, em oito chamadas
 
 ```bash
 # 1. Marta cria o mandato: voos, até $200, teto de $500, na VuelaYa
@@ -139,20 +143,33 @@ curl -X POST localhost:8099/mandates -H 'content-type: application/json' -d '{
                    "public_jwk": {"kty":"EC","crv":"P-256","kid":"usr_marta_k1","x":"...","y":"..."},
                    "allowed_scopes": ["mandate"]}]}'
 
-# 2. O agente descobre, decide e paga
+# 2. O cartão. O mandato nasce SEM meio de pagamento — ele é autoridade para gastar,
+#    e o núcleo recusa uma captura cujo instrumento o mandato não nomeia. O número é
+#    digitado na página do processador; o que volta é um token. Três chamadas, todas
+#    assinadas pelo titular, e nenhuma delas carrega um PAN.
+curl -X POST localhost:8099/mandates/mandate_.../instrument/session \
+  -H 'content-type: application/json' \
+  -d '{"authorization_jws": "<JWS sobre {mandate_id, scope:\"instrument_session\"}>"}'
+curl "localhost:8099/mandates/mandate_.../instrument/session/<session_id>?authorization_jws=<o mesmo JWS>"
+curl -X POST localhost:8099/mandates/mandate_.../instrument -H 'content-type: application/json' \
+  -d '{"token": "<token do processador>", "label": "•••• 4242",
+       "authorization_jws": "<JWS sobre {mandate_id, scope:\"instrument\", instrument_token,
+                              instrument_label, supersedes: null}>"}'
+
+# 3. O agente descobre, decide e paga
 curl -X POST localhost:8099/agent/purchase -H 'content-type: application/json' \
   -d '{"mandate_id": "mandate_...", "instruction": "compre um voo para Córdoba abaixo de $150"}'
 
-# 3. O merchant verifica a compra que recebeu
+# 4. O merchant verifica a compra que recebeu
 curl -X POST localhost:8099/merchant/verify -H 'content-type: application/json' \
   -d '{"authorization_proof": "...", "merchant_authorization": "..."}'
 
-# 4. As três visões da mesma verdade
+# 5. As três visões da mesma verdade
 curl "localhost:8099/ledger?mandate_id=mandate_...&view=human"
 curl "localhost:8099/ledger?merchant_id=vuelaya&view=merchant"
 curl "localhost:8099/ledger?mandate_id=mandate_...&view=auditor"
 
-# 5. Um jurado muda o limite — vale na próxima decisão, sem restart.
+# 6. Um jurado muda o limite — vale na próxima decisão, sem restart.
 #    Exige JWS do titular sobre
 #    {mandate_id, limit_minor_units, currency, scale, policy_version}:
 #    mudar o orçamento é mudar autoridade de gasto, e isso é do dono do mandato.
@@ -162,11 +179,11 @@ curl -X PATCH localhost:8099/mandates/mandate_.../limit -H 'content-type: applic
   -d '{"limit": {"minor_units": 10000, "currency": "USD", "scale": 2},
        "authorization_jws": "<JWS ES256 assinado pela chave da Marta>"}'
 
-# 6. Revogação assinada — irreversível
+# 7. Revogação assinada — irreversível
 curl -X POST localhost:8099/mandates/mandate_.../revocation -H 'content-type: application/json' \
   -d '{"token": "<JWS ES256 assinado pela chave da Marta>"}'
 
-# 7. A trilha se verifica sozinha
+# 8. A trilha se verifica sozinha
 curl "localhost:8099/ledger/verify?mandate_id=mandate_..."
 ```
 
@@ -517,12 +534,18 @@ Escolhas de demonstração, não de produção — e defensáveis como tal:
   que ninguém pediu. O agente tem uma terceira saída além de propor e não achar: ele
   pergunta, e a resposta é um toque nos mesmos botões de sempre. **Ambiguidade pergunta,
   mandato recusa** — dois freios, em duas coisas diferentes.
-- **O mandato nomeia o cartão, e o cartão pode ser cancelado sozinho.** O número é
-  lido uma vez na criação do mandato, tokenizado na borda e esquecido; o mandato guarda
-  um token e quatro dígitos. O agente apresenta o token e nunca viu o cartão, e o núcleo
-  recusa uma captura que apresente outro — ou nenhum. Cancelar o cartão **não** revoga o
-  mandato: o agente continua autorizado a decidir e fica sem com o que pagar, o que é
-  uma recusa diferente e um botão diferente.
+- **O mandato nasce sem cartão, e o cartão é registrado no processador.** Um mandato é
+  autoridade para gastar; o meio de pagamento é da pessoa. Ela é mandada para a página
+  do próprio processador e volta com um token e quatro dígitos — o número não passa por
+  aqui em requisição nenhuma. Vincular é assinado pelo titular, com compare-and-swap
+  sobre o cartão anterior, porque escolher o cartão é escolher de quem é o dinheiro.
+  O agente apresenta o token e nunca viu o cartão, e o núcleo recusa uma captura que
+  apresente outro — ou nenhum. Cancelar o cartão **não** revoga o mandato: o agente
+  continua autorizado a decidir e fica sem com o que pagar, o que é uma recusa diferente
+  e um botão diferente. O processador de demonstração responde as mesmas duas chamadas
+  que a Stripe, com um cartão fictício, para que a demo offline registre um cartão pelo
+  mesmo caminho que a real — um processador sem formulário não é mais simples, é um
+  processador com o qual ninguém consegue pagar.
 - **O catálogo é local e assinado, não raspado da web.** Preço raspado não é oferta: sem
   assinatura do vendedor não há `terms_hash` para a autorização vincular nem nada para o
   merchant verificar. Integração real é trocar `merchant/catalog.py` por um cliente HTTP,

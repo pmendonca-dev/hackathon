@@ -320,7 +320,16 @@ export function AvalProvider({
             ],
           });
           setSelectedMandateId(created.mandate_id);
-          return `Mandato ${created.mandate_id} criado na versão de política ${created.policy_version}.`;
+          // The mandate is born unfunded: authority to spend, and no means of paying.
+          // Registering the card here keeps it one action for the person, and the three
+          // calls it takes are signed by this browser's key like everything else.
+          const card = await gateway.registerCard(created.mandate_id, (claims) =>
+            signCompactJws(claims, holder),
+          );
+          return (
+            `Mandato ${created.mandate_id} criado na versão de política ${created.policy_version}` +
+            (card ? `, pagando com ${card}.` : '. Nenhum cartão registrado: ele ainda não pode pagar.')
+          );
         });
         if (accepted) await reload();
       },

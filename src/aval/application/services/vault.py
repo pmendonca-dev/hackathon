@@ -25,6 +25,9 @@ class ApprovedPaymentContext:
     merchant_id: str
     checkout_id: str
     expires_at: datetime
+    # What the mandate authorized as its means of payment. A delegation with nothing
+    # behind it is a token that stands for whatever card the caller felt like naming.
+    instrument_token: str | None = None
 
 
 @dataclass(frozen=True)
@@ -45,8 +48,16 @@ class DelegationAuthorizer(Protocol):
     ) -> ApprovedPaymentContext: ...
 
 
-class CredentialTokenizer(Protocol):
-    def tokenize(self, card_number: str) -> str: ...
+class DelegationTokenMinter(Protocol):
+    """Mints the opaque handle a delegation is presented under.
+
+    It takes nothing, and that is the point. This used to be a tokenizer fed a card
+    number the agent supplied — which meant the ACP lane vaulted whatever card was
+    typed at it, never the one the mandate names. The card is now read from the
+    mandate; what is minted here is only the handle that stands for this one checkout.
+    """
+
+    def mint(self) -> str: ...
 
 
 class VaultService:
@@ -56,7 +67,7 @@ class VaultService:
         self,
         *,
         authorizer: DelegationAuthorizer,
-        tokenizer: CredentialTokenizer,
+        tokenizer: DelegationTokenMinter,
     ) -> None:
         self._authorizer = authorizer
         self._tokenizer = tokenizer
@@ -67,8 +78,13 @@ class VaultService:
         mandate_id: str,
         checkout_id: str,
         merchant_id: str,
-        card_number: str,
     ) -> DelegatedPayment:
+        """Delegate the mandate's own card for one checkout.
+
+        No card number crosses this boundary. The agent asks to spend against a
+        mandate; what pays is whatever that mandate names, and if it names nothing
+        there is nothing to delegate.
+        """
         approved = self._authorizer.authorize_delegation(
             mandate_id=mandate_id,
             checkout_id=checkout_id,
@@ -76,6 +92,8 @@ class VaultService:
         )
         if (approved.checkout_id, approved.merchant_id) != (checkout_id, merchant_id):
             raise ValueError("authorized payment context does not match the request")
+        if not approved.instrument_token:
+            raise DelegationRejected("instrument_not_in_mandate")
 
         allowance = derive_allowance(
             live_balance=approved.live_balance,
@@ -86,7 +104,7 @@ class VaultService:
             expires_at=approved.expires_at,
         )
         return DelegatedPayment(
-            token=self._tokenizer.tokenize(card_number),
+            token=self._tokenizer.mint(),
             allowance=allowance,
         )
 

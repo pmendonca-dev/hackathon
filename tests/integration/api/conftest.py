@@ -3,7 +3,8 @@ from __future__ import annotations
 import base64
 import json
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from itertools import count
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -37,6 +38,8 @@ class Harness:
     clock: MutableClock
     custody: KeyCustodyService
     runtime: Any
+    # mandate_id -> the instrument token that mandate names.
+    instruments: dict[str, str] = field(default_factory=dict)
 
     HOLDER_KID = "usr_marta_k1"
     AGENT_KID = "agent_travel_k1"
@@ -46,8 +49,21 @@ class Harness:
     def operator(self) -> dict[str, str]:
         return {"X-Aval-Operator": self.OPERATOR_TOKEN}
 
+    # A mandate is authority to spend; an instrument is the means. Since the core
+    # stopped letting a mandate without a payment method settle, the default fixture
+    # carries one — a test that wants the no-card case now says so by passing
+    # `payment_method=None`, instead of getting it by accident.
+    #
+    # A token and four digits, never a number: the card is typed on the processor's
+    # own page, so by the time a mandate hears about it there is nothing to tokenize.
+    TEST_CARD = {"token": "pm_test_fixture", "label": "•••• 4242"}
+    _cards = count(1)
+
     def mandate_payload(self, **overrides: Any) -> dict[str, Any]:
         payload: dict[str, Any] = {
+            # Unique per mandate, the way a real vaulted card is: two mandates sharing
+            # one token would hide an instrument check that compared nothing.
+            "payment_method": {**self.TEST_CARD, "token": f"pm_test_{next(self._cards)}"},
             "principal": {"id": "usr_marta", "display_name": "Marta Silva"},
             "allowed_merchant_ids": ["vuelaya"],
             "allowed_categories": ["travel"],
@@ -70,7 +86,13 @@ class Harness:
     def create_mandate(self, **overrides: Any) -> str:
         response = self.client.post("/mandates", json=self.mandate_payload(**overrides))
         assert response.status_code == 201, response.text
-        return response.json()["mandate_id"]
+        body = response.json()
+        # The token is only ever handed back once, inside the revocation scope. Kept
+        # here so `purchase()` can present the very instrument the mandate names.
+        scope = body.get("instrument_revocation_scope")
+        if scope:
+            self.instruments[body["mandate_id"]] = scope.removeprefix("instrument:")
+        return body["mandate_id"]
 
     def register_agent(self, agent_id: str, kid: str, *, trusted: bool = True) -> None:
         self.custody.generate_es256(kid)
@@ -94,6 +116,8 @@ class Harness:
             "category": "travel",
             "total": {"minor_units": 13000, "currency": "USD", "scale": 2},
         }
+        if mandate_id in self.instruments:
+            body["instrument_id"] = self.instruments[mandate_id]
         body.update(overrides)
         return body
 
@@ -108,6 +132,8 @@ class Harness:
             "total": offer["total"],
             "merchant_authorization": offer["merchant_authorization"],
         }
+        if mandate_id in self.instruments:
+            body["instrument_id"] = self.instruments[mandate_id]
         if idempotency_key is not None:
             body["idempotency_key"] = idempotency_key
         return body

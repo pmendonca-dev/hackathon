@@ -16,6 +16,10 @@ import re
 import unicodedata
 
 from aval.interfaces.telegram.gateway import (
+    AgentProfileView,
+    CardSessionView,
+    ChainView,
+    DisputeView,
     EscalationView,
     WatchView,
     OfferView,
@@ -41,6 +45,7 @@ CALLBACK_CARD_MENU = "crd"
 CALLBACK_CARD_CONFIRM = "crm"
 CALLBACK_CATALOGUE = "cat"
 CALLBACK_BUY = "buy"
+CALLBACK_NEW_CONFIRM = "new"
 
 _VERBS = frozenset(
     {
@@ -56,6 +61,7 @@ _VERBS = frozenset(
         CALLBACK_CARD_MENU,
         CALLBACK_CARD_CONFIRM,
         CALLBACK_WATCH,
+        CALLBACK_NEW_CONFIRM,
     }
 )
 
@@ -157,6 +163,15 @@ def _mandate_body(mandate: MandateView) -> str:
     ]
     if mandate.ceiling is not None:
         lines.append(f"Teto por compra: {format_money(mandate.ceiling)} — <i>ninguém atravessa</i>")
+    if mandate.max_uses is not None:
+        # Frequency reads as authority, not as a counter: what is left, and over what
+        # window. The core escalates the use past this — it is not a wall, it is a
+        # point where the person is asked again.
+        left = max(mandate.max_uses - mandate.uses_in_window, 0)
+        lines.append(
+            f"Frequência: <b>{left} de {mandate.max_uses}</b> compra(s) livres "
+            f"{_window_label(mandate.window_seconds)}"
+        )
     if mandate.instrument_label is not None:
         # The fourth thing the mandate authorizes, next to the other three. The
         # agent holds a token for it and never the number. Once cancelled the label
@@ -173,6 +188,16 @@ def _mandate_body(mandate: MandateView) -> str:
         f"Vence em {days} dia(s) · política v{mandate.policy_version} · epoch {mandate.revocation_epoch}",
     ]
     return "\n".join(lines)
+
+
+def _window_label(window_seconds: int | None) -> str:
+    """`2592000` becomes `nos últimos 30 dias` — a person counts in days, not seconds."""
+    if not window_seconds:
+        return "na janela do mandato"
+    days = window_seconds // 86_400
+    if days >= 1:
+        return f"nos últimos {days} dia(s)"
+    return f"nas últimas {max(window_seconds // 3_600, 1)} hora(s)"
 
 
 def _mandate_buttons(mandate: MandateView, *, primary: bool = False) -> tuple[Row, ...]:
@@ -334,7 +359,94 @@ def receipt(view: ReceiptView) -> View:
             f"{entry.occurred_at:%d/%m %H:%M} · <code>{escape(entry.event_type)}</code>"
             f"\n    {escape(entry.human_summary)}"
         )
+    if view.chain is not None:
+        lines += ["", _chain_line(view.chain)]
     return View("\n".join(lines), _mandate_buttons(view.mandate))
+
+
+def _chain_line(chain: ChainView) -> str:
+    """An extract that says it is auditable without proving it is only a claim."""
+    if chain.intact:
+        return f"🔗 <i>Trilha íntegra — {chain.checked} evento(s) conferidos agora.</i>"
+    where = "desconhecido" if chain.broken_at is None else f"#{chain.broken_at}"
+    return (
+        f"⛓️‍💥 <b>TRILHA VIOLADA</b> no evento {where} — {chain.checked} conferidos. "
+        "Nada aqui serve como prova."
+    )
+
+
+_DISPUTE_VERDICT = {
+    "MANDATE_HELD": (
+        "🟢",
+        "O mandato sustenta a compra",
+        "Existe prova de autorização assinada ligando esta compra ao seu mandato. "
+        "Numa contestação real é o emissor que responde ao titular, não o merchant.",
+    ),
+    "MANDATE_FAILED": (
+        "🔴",
+        "Nada vincula essa compra ao seu mandato",
+        "Não há prova de autorização para esta reserva. A cobrança não se sustenta "
+        "e o estorno é seu por direito.",
+    ),
+}
+
+
+def agent_card(
+    profile: AgentProfileView | None, *, holder_name: str, holder_kid: str, principal_id: str
+) -> View:
+    """Two identities, two keys, and what each one is allowed to sign.
+
+    The case asks for the agent's identity to be separate from the human's. Saying it
+    on one screen is what makes the separation checkable instead of architectural
+    folklore: neither key can produce the other's signature, so a compromised agent
+    still cannot revoke, approve or move a limit.
+    """
+    lines = [
+        "🪪 <b>Quem é quem nesta compra</b>",
+        "",
+        f"👤 <b>Você, o titular</b> — {escape(holder_name)}",
+        f"    <code>{escape(principal_id)}</code> · chave <code>{escape(holder_kid)}</code>",
+        "    Assina: revogar, aprovar, mudar limite.",
+        "",
+    ]
+    if profile is None:
+        lines.append("🤖 <b>O agente</b> — perfil indisponível no núcleo agora.")
+    else:
+        badge = "✅ confiável" if profile.trusted else "⛔ não confiável"
+        lines += [
+            f"🤖 <b>O agente</b> — {badge}",
+            f"    <code>{escape(profile.agent_id)}</code> · chave <code>{escape(profile.kid)}</code>",
+            "    Assina: as requisições de compra. Nada mais.",
+        ]
+        if profile.profile_url:
+            lines.append(f"    <i>{escape(profile.profile_url)}</i>")
+    lines += [
+        "",
+        "<i>Chaves diferentes. O agente não consegue revogar o próprio mandato, "
+        "e um agente que se passe por este é recusado na porta.</i>",
+    ]
+    return View("\n".join(lines))
+
+
+def dispute_verdict(dispute: DisputeView) -> View:
+    """Who is right, decided by the trail — the only part of a dispute that matters.
+
+    The bot states no opinion of its own: the badge comes from the ledger's verdict
+    and the fine print is the core's own sentence, quoted.
+    """
+    badge, headline, meaning = _DISPUTE_VERDICT.get(
+        dispute.status,
+        ("⚪", "Disputa aberta", "O veredito ainda não saiu. A trilha é quem responde."),
+    )
+    lines = [
+        f"{badge} <b>{escape(headline)}</b>",
+        f"<code>{escape(dispute.id[:24])}</code> · {escape(dispute.status)}",
+        "",
+        escape(meaning),
+    ]
+    if dispute.resolution:
+        lines += ["", f"<i>{escape(dispute.resolution)}</i>"]
+    return View("\n".join(lines))
 
 
 @dataclass(frozen=True)
@@ -597,13 +709,19 @@ def help_text() -> View:
         "\n".join(
             [
                 "<b>Comandos</b>",
+                "<i>Ou simplesmente diga o que o agente pode fazer — eu pergunto o que "
+                "faltar e te mostro o mandato para confirmar.</i>",
+                "",
                 "/comprar &lt;pedido&gt; — o agente tenta comprar em texto livre",
                 "/mandato — orçamento vivo e estado",
                 "/catalogo — o que está à venda",
                 "/aprovacoes — compras aguardando você",
                 "/extrato — recibos e trilha auditável",
+                "/cartao — cadastra o cartão que paga (na página do processador)",
                 "/limite &lt;valor&gt; — muda o orçamento (assinado por você)",
+                "/novo &lt;regra&gt; — refaz o mandato: <i>/novo hotel até 300 por 7 dias, 2x</i>",
                 "/revogar — encerra a autoridade do agente",
+                "/agente — quem é o agente, e por que não é você",
                 "/status — saúde do backend",
                 "/meuid — o id deste chat",
             ]
@@ -613,6 +731,146 @@ def help_text() -> View:
 
 def signed_note(action: str, message: str) -> View:
     return View(f"✅ <b>{escape(action)}</b>\n{escape(message)}\n\n<i>assinado pela sua chave</i>")
+
+
+@dataclass(frozen=True)
+class MandateSpec:
+    """What a person just said their agent may do.
+
+    A spec is not a mandate: it is the sentence, read. Nothing here is authority
+    until the core registers it and the person's own key signs the swap.
+    """
+
+    categories: tuple[str, ...]
+    limit: MoneyView
+    valid_for_days: int
+    max_uses: int | None
+
+
+_CATEGORY_WORDS = {
+    "lodging": ("hotel", "hospedagem", "pousada", "lodging", "diaria", "diária", "noite"),
+    "travel": ("voo", "viagem", "passagem", "travel", "flight", "aereo", "aéreo"),
+}
+_DAYS = re.compile(r"(\d{1,3})\s*(?:dia|dias|day|days)")
+_USES = re.compile(r"(\d{1,2})\s*(?:x|vez|vezes|compras?|times?)")
+
+
+def parse_mandate_spec(raw: str, *, defaults) -> MandateSpec | None:
+    """Read `hospedagem até 300 por 7 dias, 2x`.
+
+    Deliberately forgiving and deliberately partial: whatever the sentence does not
+    say falls back to the configured default, so a person can change one thing
+    without restating the other three. Saying nothing at all is not a mandate,
+    though — an empty spec would silently mean "the defaults", and a mandate the
+    person did not actually describe is the one thing this must not create.
+    """
+    text = raw.strip().lower()
+    if not text:
+        return None
+    folded = "".join(
+        char
+        for char in unicodedata.normalize("NFD", text)
+        if unicodedata.category(char) != "Mn"
+    )
+    categories = tuple(
+        name
+        for name, words in _CATEGORY_WORDS.items()
+        if any(word in folded for word in words)
+    )
+    days = _DAYS.search(folded)
+    uses = _USES.search(folded)
+    # Days and uses are counts, not money: they are struck from the text before the
+    # amount is read, or `por 7 dias` would be a seven-real budget.
+    without_counts = _USES.sub(" ", _DAYS.sub(" ", folded))
+    amount = None
+    money = re.search(r"\d[\d.,]*", without_counts)
+    if money:
+        amount = parse_money(money.group(), currency=defaults.currency, scale=defaults.scale)
+    return MandateSpec(
+        categories=categories or tuple(defaults.categories),
+        limit=amount
+        or MoneyView(defaults.limit_minor_units, defaults.currency, defaults.scale),
+        valid_for_days=int(days.group(1)) if days else defaults.valid_for.days,
+        max_uses=int(uses.group(1)) if uses else defaults.max_uses,
+    )
+
+
+def new_mandate_preview(spec: MandateSpec, current: MandateView | None) -> View:
+    """Say what is about to be granted, and what it costs, before it is granted.
+
+    Replacing a mandate revokes the one in force — that is the honest way to change
+    what was authorized, and it is far too destructive to happen on a typo.
+    """
+    lines = [
+        "📝 <b>Novo mandato — confira antes</b>",
+        "",
+        f"Pode comprar: <b>{escape(', '.join(spec.categories))}</b>",
+        f"Orçamento: <b>{format_money(spec.limit)}</b>",
+        f"Vale por: <b>{spec.valid_for_days} dia(s)</b>",
+        f"Frequência: <b>{spec.max_uses}</b> compra(s) na janela"
+        if spec.max_uses
+        else "Frequência: <b>sem limite de vezes</b>",
+        "Método: <b>nenhum ainda</b> — cadastre em /cartao",
+    ]
+    if current is not None and current.status == "ACTIVE":
+        lines += [
+            "",
+            f"⚠️ Isto <b>revoga</b> o mandato em vigor (<code>{escape(current.id[:20])}</code>) "
+            "e emite outro. As compras já liquidadas continuam válidas — mas o cartão "
+            "não vem junto: o mandato novo nasce sem meio de pagamento.",
+        ]
+    return View(
+        "\n".join(lines),
+        ((("✅ Emitir este mandato", f"{CALLBACK_NEW_CONFIRM}:{(current.id if current else '_')}"),),),
+    )
+
+
+def card_form(session: CardSessionView) -> View:
+    """The link to the processor's own page, and why it is a link and not a question.
+
+    Saying where the number goes is not decoration. A person who understands that the
+    card is typed at the processor knows what to check before typing it, and a bot
+    that asked for the number in the chat would deserve the answer it got.
+    """
+    return View(
+        "\n".join(
+            [
+                "💳 <b>Cadastrar o cartão</b>",
+                "",
+                "Abra o link e digite o cartão <b>na página do processador</b>.",
+                "O número não passa por este chat, nem por mim, nem fica salvo aqui.",
+                "",
+                f'<a href="{escape(session.url)}">👉 Abrir a página segura</a>',
+                "",
+                "<i>Quando terminar, volte aqui e mande /cartao de novo — eu confiro "
+                "e vinculo ao seu mandato, assinado com a sua chave.</i>",
+            ]
+        )
+    )
+
+
+def card_pending() -> View:
+    return View(
+        "⏳ Ainda não vi um cartão cadastrado nessa página.\n"
+        "<i>Termine o cadastro e mande /cartao de novo.</i>"
+    )
+
+
+def card_bound(label: str, *, replaced: bool) -> View:
+    headline = "Cartão trocado" if replaced else "Cartão cadastrado"
+    return View(
+        "\n".join(
+            [
+                f"✅ <b>{headline}</b> — {escape(label)}",
+                "",
+                "O mandato agora tem com o que pagar. O agente apresenta esse cartão",
+                "e nada mais: ele nunca viu o número, e nem eu.",
+                "",
+                "<i>Você pode cancelar só o cartão a qualquer momento em /mandato, "
+                "sem encerrar o agente.</i>",
+            ]
+        )
+    )
 
 
 def plain(message: str) -> View:

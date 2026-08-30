@@ -75,6 +75,13 @@ adulterar a trilha e revogar. Se ela passa, o jurado consegue fazer tudo no nave
    gerada no navegador; o servidor recebe só a metade pública. A tira lateral mostra
    qual chave está assinando — ela não rola para fora da tela.
 
+   O mandato nasce **sem meio de pagamento** — ele é autoridade para gastar, não uma
+   forma de pagar — então a mesma ação registra o cartão no processador logo em
+   seguida, em três chamadas assinadas que nunca carregam um número. O aviso de
+   sucesso diz com que cartão o mandato passou a pagar (`•••• 4242`). Se ele disser
+   *nenhum cartão registrado*, o agente vai ser recusado em `instrument_not_in_mandate`
+   antes de qualquer pergunta sobre dinheiro — e essa é a recusa certa.
+
 2. **O agente compra.** Digite *"compre um voo para Córdoba abaixo de $150"*. A escada
    de avaliação aparece inteira, toda verde, com o orçamento no último degrau — que é
    onde ele tem que estar: autoridade antes de dinheiro.

@@ -18,6 +18,7 @@ from sqlalchemy.pool import StaticPool
 from aval.application.authorization_core import AuthorizationCore
 from aval.domain.entities import AgentIdentity
 from aval.infrastructure.psp import DemoPspAdapter, PspControl
+from aval.infrastructure.stripe_psp import StripeConfigError, StripePspAdapter
 from aval.infrastructure.sqlite.engine import create_sqlite_engine
 from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
 from aval.infrastructure.sqlite.models import metadata
@@ -67,6 +68,31 @@ class AvalRuntime:
     pairwise_secret: bytes
     metrics: MetricsRegistry
     operator_token: str
+
+
+def _settlement_adapter(*, proof_verifier, mode_provider, mandate_for):
+    """Which processor settles, chosen once and never silently.
+
+    `AVAL_PSP=stripe` without a key is a startup failure, not a quiet fall back to the
+    demo adapter: a system that says it takes real payments and then mocks them is
+    worse than one that refuses to start, because nobody finds out until the money
+    was supposed to move.
+    """
+    selected = os.environ.get("AVAL_PSP", "demo").strip().lower()
+    if selected in ("", "demo"):
+        return DemoPspAdapter(mode_provider, proof_verifier=proof_verifier)
+    if selected != "stripe":
+        raise StripeConfigError(f"AVAL_PSP={selected!r} não é um processador conhecido")
+    key = os.environ.get("AVAL_STRIPE_SECRET_KEY", "").strip()
+    if not key:
+        raise StripeConfigError("AVAL_PSP=stripe exige AVAL_STRIPE_SECRET_KEY")
+    if key.startswith("sk_live_"):
+        # A hackathon demo has no business holding a live key, and a judge pressing
+        # buttons on someone's real account is not a scenario worth supporting.
+        raise StripeConfigError("chave de produção recusada: use uma chave sk_test_")
+    return StripePspAdapter(
+        secret_key=key, mandate_for=mandate_for, proof_verifier=proof_verifier
+    )
 
 
 def build_runtime(
@@ -138,15 +164,15 @@ def build_runtime(
         ):
             raise ValueError("authorization proof does not bind this reservation")
 
-    psp = DemoPspAdapter(
-        lambda: psp_control.mode, proof_verifier=verify_proof_for_settlement
-    )
     core = AuthorizationCore(
-        clock=clock.now,
-        engine=engine,
-        settlement_adapter=psp,
-        authorization_proof_issuer=proofs,
+        clock=clock.now, engine=engine, authorization_proof_issuer=proofs
     )
+    psp = _settlement_adapter(
+        proof_verifier=verify_proof_for_settlement,
+        mode_provider=lambda: psp_control.mode,
+        mandate_for=core.mandate,
+    )
+    core.attach_settlement_adapter(psp)
     # The agent gets a key of its own. Agent identity and human identity are separate
     # things in this system, and this is where that separation starts.
     agent_custody = KeyCustodyService()

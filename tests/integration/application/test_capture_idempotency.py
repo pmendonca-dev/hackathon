@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from aval.application.authorization_core import CaptureCommand
-from aval.domain.entities import Mandate, Principal, RevocationAuthority
+from aval.domain.entities import Mandate, PaymentInstrument, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
 from aval.application.authorization_core import AuthorizationCore, SettlementResult
@@ -32,12 +32,12 @@ def make_mandate(public_jwk: dict[str, str]) -> Mandate:
         limit=Money(1_000, "BRL", 2),
         expires_at=datetime(2026, 8, 30, tzinfo=UTC), policy_version=1,
         revocation_metadata={"revocation_id": "rev_1", "epoch": 0},
-        authorities=(RevocationAuthority("authority_1", "holder-key", RevocationRole.HOLDER, public_jwk, frozenset({"mandate"})),),
+        authorities=(RevocationAuthority("authority_1", "holder-key", RevocationRole.HOLDER, public_jwk, frozenset({"mandate"})),), instrument=PaymentInstrument("vt_test_instrument", "•••• 4242"),
     )
 
 
 def capture_command(*, key: str, amount: int = 500) -> CaptureCommand:
-    return CaptureCommand("mandate_persisted", "checkout_1", "merchant_1", Money(amount, "BRL", 2), "travel", key)
+    return CaptureCommand("mandate_persisted", "checkout_1", "merchant_1", Money(amount, "BRL", 2), "travel", key, instrument_id="vt_test_instrument")
 
 
 def test_capture_idempotency_is_durable_and_rejects_changed_bodies(tmp_path):
