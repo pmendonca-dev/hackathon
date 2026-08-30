@@ -1,5 +1,23 @@
 # Decision Log
 
+## Browser BFF session migration identity
+
+**Decision:** Alembic revision number for durable browser sessions
+
+**Options considered (one per line):**
+
+Reuse the plan's historical `0006_browser_ui_sessions` identifier
+Rewrite already published migrations to insert a new revision at `0006`
+Add a forward-only revision after the published `0008_capture_ap2_evidence` head
+
+**What we chose:** Add `0009_browser_ui_sessions` as the forward-only migration.
+
+**Why:** Revisions `0006_escalations`, `0007_payment_runtime`, and
+`0008_capture_ap2_evidence` are already published runtime history. Reusing or
+inserting `0006` would create an Alembic identity conflict and make an existing
+database ambiguous. The new revision preserves the schema chain while adding
+only the server-side session table.
+
 ## Technical coverage objective
 
 **Decision:** Primary product objective for the hackathon solution
