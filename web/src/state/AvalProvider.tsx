@@ -1,100 +1,388 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react';
+  AuthorizationGateway,
+  GatewayError,
+  type AgentRun,
+  type Escalation,
+  type LedgerEntry,
+  type MandateView,
+} from '../gateways/authorizationGateway.ts';
+import { signCompactJws, type HolderWallet } from '../wallet/holderKey.ts';
+import { loadOrCreateWallet } from '../wallet/walletStore.ts';
+import {
+  AvalContext,
+  type AvalContextValue,
+  type ChainStatus,
+  type CommandReceipt,
+  type View,
+} from './AvalContext.ts';
 
-import type {
-  AvalGateway,
-  AvalSnapshot,
-  TrialCommand,
-  TrialCommandReceipt,
-} from '../contracts/avalGateway.ts';
-import { createAvalGateway } from '../gateways/createAvalGateway.ts';
-import { AvalContext, type AvalContextValue, type View } from './AvalContext.ts';
-const DEFAULT_AVAL_GATEWAY = createAvalGateway(import.meta.env);
+const environment = import.meta.env;
 
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
+/**
+ * Built once, outside render. The gateway holds the operator token and the base URL;
+ * rebuilding it per render would reopen the question of which instance a command went
+ * to every time React re-rendered.
+ */
+const DEFAULT_GATEWAY = new AuthorizationGateway({
+  baseUrl: environment.VITE_AVAL_API_BASE_URL ?? 'http://127.0.0.1:8099',
+  operatorToken: environment.VITE_AVAL_OPERATOR_TOKEN,
+});
+
+const DEFAULT_PRINCIPAL = environment.VITE_AVAL_PRINCIPAL_ID ?? 'usr_marta';
+
+function describe(error: unknown): { reasonCode: string | null; message: string } {
+  if (error instanceof GatewayError) return { reasonCode: error.reasonCode, message: error.message };
+  return { reasonCode: null, message: error instanceof Error ? error.message : 'Falha desconhecida.' };
 }
 
 export function AvalProvider({
   children,
-  gateway = DEFAULT_AVAL_GATEWAY,
+  gateway = DEFAULT_GATEWAY,
 }: {
   children: ReactNode;
-  gateway?: AvalGateway;
+  gateway?: AuthorizationGateway;
 }) {
-  const [snapshot, setSnapshot] = useState<AvalSnapshot | null>(null);
+  const [principalId, setPrincipalIdState] = useState(DEFAULT_PRINCIPAL);
+  const [view, setView] = useState<View>('human');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<View>('human');
-  const [lastCommandReceipt, setLastCommandReceipt] = useState<TrialCommandReceipt | null>(null);
+  const [wallet, setWallet] = useState<HolderWallet | null>(null);
+
+  const [mandates, setMandates] = useState<MandateView[]>([]);
+  const [selectedMandateId, setSelectedMandateId] = useState<string | null>(null);
+  const [escalations, setEscalations] = useState<Escalation[]>([]);
+  const [lastRun, setLastRun] = useState<AgentRun | null>(null);
+  const [humanEntries, setHumanEntries] = useState<LedgerEntry[]>([]);
+  const [auditorEntries, setAuditorEntries] = useState<LedgerEntry[]>([]);
+  const [merchantEntries, setMerchantEntries] = useState<LedgerEntry[]>([]);
+  const [merchantRedactions, setMerchantRedactions] = useState<string[]>([]);
+  const [chain, setChain] = useState<ChainStatus | null>(null);
+  const [receipts, setReceipts] = useState<CommandReceipt[]>([]);
+
+  // `reload` must not depend on the selection — it would re-create the callback and
+  // re-fire the load effect on every mandate click. The ref carries the current choice
+  // to it instead, synced in an effect rather than during render.
+  const selectedRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedRef.current = selectedMandateId;
+  }, [selectedMandateId]);
+
+  const note = useCallback((receipt: CommandReceipt) => {
+    setReceipts((previous) => [receipt, ...previous].slice(0, 12));
+  }, []);
+
+  /**
+   * Every command reports what the runtime actually answered — including "no answer".
+   * A browser that rendered a network failure as a refusal would tell a judge the
+   * mandate said no when it was never asked.
+   */
+  const run = useCallback(
+    async (label: string, action: () => Promise<string>): Promise<boolean> => {
+      try {
+        const message = await action();
+        note({ label, outcome: 'accepted', reasonCode: null, message, at: new Date().toISOString() });
+        return true;
+      } catch (caught) {
+        const { reasonCode, message } = describe(caught);
+        note({
+          label,
+          outcome: reasonCode === 'runtime_unreachable' ? 'unreachable' : 'refused',
+          reasonCode,
+          message,
+          at: new Date().toISOString(),
+        });
+        return false;
+      }
+    },
+    [note],
+  );
+
+  useEffect(() => {
+    let active = true;
+    loadOrCreateWallet(principalId)
+      .then((loaded) => {
+        if (active) setWallet(loaded);
+      })
+      .catch(() => {
+        if (active) {
+          setError(
+            'Não foi possível abrir a carteira do titular neste navegador. Sem ela nenhuma ' +
+              'autoridade de gasto pode ser assinada.',
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [principalId]);
 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setSnapshot(await gateway.loadWorkspace());
-    } catch (error) {
-      setError(errorMessage(error, 'Não foi possível carregar o snapshot. Verifique a boundary configurada.'));
+      const [listed, pending] = await Promise.all([
+        gateway.listMandates(principalId),
+        gateway.listEscalations(principalId),
+      ]);
+      setMandates(listed.mandates);
+      setEscalations(pending.escalations);
+
+      const current =
+        selectedRef.current && listed.mandates.some((item) => item.mandate_id === selectedRef.current)
+          ? selectedRef.current
+          : (listed.mandates[0]?.mandate_id ?? null);
+      setSelectedMandateId(current);
+
+      if (current) {
+        const [human, auditor] = await Promise.all([
+          gateway.humanLedger(current),
+          gateway.auditorLedger(current),
+        ]);
+        setHumanEntries(human.entries);
+        setAuditorEntries(auditor.entries);
+        setChain(auditor.chain);
+        const merchantId = human.mandate.allowed_merchant_ids[0];
+        if (merchantId) {
+          const merchant = await gateway.merchantLedger(merchantId);
+          setMerchantEntries(merchant.entries);
+          setMerchantRedactions(merchant.redacted);
+        }
+      } else {
+        setHumanEntries([]);
+        setAuditorEntries([]);
+        setMerchantEntries([]);
+        setChain(null);
+      }
+    } catch (caught) {
+      setError(describe(caught).message);
     } finally {
       setLoading(false);
     }
-  }, [gateway]);
+  }, [gateway, principalId]);
 
   useEffect(() => {
-    let active = true;
+    void reload();
+  }, [reload]);
 
-    async function loadInitialSnapshot() {
-      try {
-        const loadedSnapshot = await gateway.loadWorkspace();
-        if (active) setSnapshot(loadedSnapshot);
-      } catch (error) {
-        if (active) {
-          setError(errorMessage(error, 'Não foi possível carregar o snapshot. Verifique a boundary configurada.'));
-        }
-      } finally {
-        if (active) setLoading(false);
-      }
-    }
+  const requireWallet = useCallback((): HolderWallet => {
+    if (!wallet) throw new Error('A carteira do titular ainda não está pronta.');
+    return wallet;
+  }, [wallet]);
 
-    void loadInitialSnapshot();
-    return () => {
-      active = false;
-    };
-  }, [gateway]);
-
-  const submitTrialCommand = useCallback(
-    async (command: TrialCommand) => {
-      setError(null);
-      try {
-        const receipt = await gateway.submitTrialCommand(command);
-        setLastCommandReceipt(receipt);
-        if (receipt.dataSource === 'api') {
-          setSnapshot(await gateway.loadWorkspace());
-        }
-      } catch (error) {
-        setError(errorMessage(error, 'A boundary recusou o comando. Nenhuma alteração foi presumida pelo browser.'));
-      }
-    },
-    [gateway],
-  );
-
-  const value = useMemo<AvalContextValue>(
+  const value: AvalContextValue = useMemo(
     () => ({
-      snapshot,
+      principalId,
+      holderKid: wallet?.kid ?? null,
+      walletReady: wallet !== null,
+      view,
       loading,
       error,
-      view,
-      lastCommandReceipt,
+      operatorAvailable: gateway.hasOperatorToken,
+      mandates,
+      selectedMandateId,
+      escalations,
+      lastRun,
+      humanEntries,
+      auditorEntries,
+      merchantEntries,
+      merchantRedactions,
+      chain,
+      receipts,
+
       setView,
+      setPrincipalId: (next: string) => {
+        setPrincipalIdState(next);
+        setSelectedMandateId(null);
+        setWallet(null);
+      },
+      selectMandate: setSelectedMandateId,
       reload,
-      submitTrialCommand,
+
+      async createMandate(input) {
+        const holder = requireWallet();
+        const accepted = await run('Criar mandato', async () => {
+          const created = await gateway.createMandate({
+            principal: { id: principalId, display_name: input.displayName },
+            allowed_merchant_ids: input.merchants,
+            allowed_categories: input.categories,
+            limit: input.limit,
+            ceiling: input.ceiling,
+            expires_at: input.expiresAt,
+            usage_limit: input.usageLimit,
+            // The browser's own public key becomes the mandate's holder authority.
+            // This is what makes later revocation and approval signable here — and what
+            // keeps the server from ever being able to produce them.
+            authorities: [
+              {
+                kid: holder.kid,
+                role: 'holder',
+                public_jwk: holder.publicJwk,
+                allowed_scopes: ['mandate', 'budget:zero'],
+              },
+            ],
+          });
+          setSelectedMandateId(created.mandate_id);
+          return `Mandato ${created.mandate_id} criado na versão de política ${created.policy_version}.`;
+        });
+        if (accepted) await reload();
+      },
+
+      async runAgent(instruction: string) {
+        const mandateId = selectedRef.current;
+        if (!mandateId) return;
+        await run('Instrução ao agente', async () => {
+          const result = await gateway.agentPurchase(mandateId, instruction);
+          setLastRun(result);
+          return `${result.outcome} · ${result.reason_code}`;
+        });
+        await reload();
+      },
+
+      async decideEscalation(escalationId, decision) {
+        const holder = requireWallet();
+        const escalation = escalations.find((item) => item.id === escalationId);
+        if (!escalation) return;
+        const accepted = await run(
+          decision === 'approve' ? 'Aprovar escalação' : 'Recusar escalação',
+          async () => {
+            // The signature names the exact purchase, so an approval lifted from one
+            // decision cannot be replayed onto a larger one.
+            const approval = await signCompactJws(
+              {
+                decision_handle: escalation.id,
+                mandate_id: escalation.mandate_id,
+                decision,
+                amount_minor_units: escalation.amount.minor_units,
+              },
+              holder,
+            );
+            const answer = await gateway.decideEscalation(escalationId, decision, approval);
+            return (answer as { resumed?: boolean }).resumed
+              ? 'Aprovação assinada; a compra retomou.'
+              : 'Decisão assinada registrada.';
+          },
+        );
+        if (accepted) await reload();
+      },
+
+      async changeLimit(minorUnits: number) {
+        const holder = requireWallet();
+        const mandate = mandates.find((item) => item.mandate_id === selectedRef.current);
+        if (!mandate) return;
+        const accepted = await run('Mudar limite', async () => {
+          const authorization = await signCompactJws(
+            {
+              mandate_id: mandate.mandate_id,
+              limit_minor_units: minorUnits,
+              currency: mandate.limit.currency,
+              scale: mandate.limit.scale,
+            },
+            holder,
+          );
+          const answer = await gateway.changeLimit(
+            mandate.mandate_id,
+            { minor_units: minorUnits, currency: mandate.limit.currency, scale: mandate.limit.scale },
+            authorization,
+          );
+          return `Limite vale a partir da política ${answer.policy_version}.`;
+        });
+        if (accepted) await reload();
+      },
+
+      async revokeSelected() {
+        const holder = requireWallet();
+        const mandate = mandates.find((item) => item.mandate_id === selectedRef.current);
+        if (!mandate) return;
+        const accepted = await run('Revogar mandato', async () => {
+          const token = await signCompactJws(
+            {
+              mandate_id: mandate.mandate_id,
+              scope: 'mandate',
+              reason: 'revogado pelo titular',
+              epoch: mandate.revocation_epoch + 1,
+            },
+            holder,
+          );
+          const answer = await gateway.revokeMandate(mandate.mandate_id, token);
+          return `Revogado na época ${answer.epoch}. A próxima tentativa falha.`;
+        });
+        if (accepted) await reload();
+      },
+
+      async revokeEverything() {
+        const holder = requireWallet();
+        const accepted = await run('Revogar tudo', async () => {
+          const token = await signCompactJws(
+            {
+              principal_id: principalId,
+              scope: 'mandate',
+              reason: 'interrupção total pelo titular',
+              epoch: 1,
+            },
+            holder,
+          );
+          const answer = await gateway.revokeEverything(principalId, token);
+          return `${answer.revoked_mandate_ids.length} mandato(s) encerrado(s).`;
+        });
+        if (accepted) await reload();
+      },
+
+      async setPspMode(mode) {
+        await run(`Processador ${mode}`, async () => {
+          await gateway.setPspMode(mode);
+          return `Processador agora em modo ${mode}.`;
+        });
+      },
+
+      async reconcile() {
+        await run('Reconciliar', async () => {
+          const answer = await gateway.reconcile();
+          return `Reconciliação concluída: ${JSON.stringify(answer)}`;
+        });
+        await reload();
+      },
+
+      async advanceClock(seconds: number) {
+        await run('Avançar relógio', async () => {
+          const answer = await gateway.advanceClock(seconds);
+          return `Agora é ${answer.now} (deslocamento de ${answer.offset_seconds}s).`;
+        });
+        await reload();
+      },
+
+      async tamperLedger(sequence: number) {
+        const mandateId = selectedRef.current;
+        if (!mandateId) return;
+        await run('Adulterar trilha', async () => {
+          await gateway.tamperLedger(mandateId, sequence);
+          return `Evento ${sequence} reescrito. A cadeia deve acusar a posição.`;
+        });
+        await reload();
+      },
     }),
-    [snapshot, loading, error, view, lastCommandReceipt, reload, submitTrialCommand],
+    [
+      principalId,
+      wallet,
+      view,
+      loading,
+      error,
+      gateway,
+      mandates,
+      escalations,
+      selectedMandateId,
+      lastRun,
+      humanEntries,
+      auditorEntries,
+      merchantEntries,
+      merchantRedactions,
+      chain,
+      receipts,
+      reload,
+      requireWallet,
+      run,
+    ],
   );
 
   return <AvalContext.Provider value={value}>{children}</AvalContext.Provider>;
