@@ -61,6 +61,10 @@ def verify_signed_request(
             seen=runtime.replay_guard,
         )
     except SignatureError as error:
+        # Counted here and nowhere else: this request never became a decision, so the
+        # trail has nothing to record it against. It is also the number that moves
+        # while a judge is attacking the edge, which is when a footer earns its place.
+        runtime.metrics.refused_at_edge(error.reason_code)
         status = 403 if error.reason_code in FORBIDDEN_REASONS else 401
         raise ApiError(status, error.reason_code, error.human_summary) from error
     return found["identity"]

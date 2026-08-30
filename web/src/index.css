@@ -250,3 +250,34 @@
   .audit-sequence { width: 2.6rem; height: 2.2rem; font-size: 0.57rem; }
   .audit-event:not(:last-child)::before { left: 1.28rem; }
 }
+
+/* The live footer: four readings that move while a judge attacks the system. */
+.live-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: baseline;
+  justify-content: space-between;
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  padding-top: 0.85rem;
+  margin-top: 0.25rem;
+}
+
+.live-footer-reading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.live-footer-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.live-footer-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-weight: 600;
+}

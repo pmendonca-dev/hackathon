@@ -7,6 +7,7 @@ import {
   type Escalation,
   type LedgerEntry,
   type MandateView,
+  type Metrics,
 } from '../gateways/authorizationGateway.ts';
 import { signCompactJws, type HolderWallet } from '../wallet/holderKey.ts';
 import { loadOrCreateWallet } from '../wallet/walletStore.ts';
@@ -60,6 +61,7 @@ export function AvalProvider({
   const [merchantRedactions, setMerchantRedactions] = useState<string[]>([]);
   const [chain, setChain] = useState<ChainStatus | null>(null);
   const [receipts, setReceipts] = useState<CommandReceipt[]>([]);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
 
   // `reload` must not depend on the selection — it would re-create the callback and
   // re-fire the load effect on every mandate click. The ref carries the current choice
@@ -121,6 +123,14 @@ export function AvalProvider({
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // The footer reads the whole instance rather than this buyer, so it is loaded
+    // before the wallet gate below — and its failure never blanks the page: a missing
+    // footer is a missing footer, not a broken session.
+    try {
+      setMetrics(await gateway.metrics());
+    } catch {
+      setMetrics(null);
+    }
     try {
       // Both principal-scoped listings are signed by the wallet: the id in the URL is a
       // guessable name, and the key is what decides which mandates come back. Before the
@@ -202,6 +212,7 @@ export function AvalProvider({
       merchantRedactions,
       chain,
       receipts,
+      metrics,
 
       setView,
       setPrincipalId: (next: string) => {
@@ -394,6 +405,7 @@ export function AvalProvider({
       merchantRedactions,
       chain,
       receipts,
+      metrics,
       reload,
       requireWallet,
       run,

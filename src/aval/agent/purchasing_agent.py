@@ -20,6 +20,7 @@ from typing import Any
 from uuid import uuid4
 
 from aval.agent.proposer import OfferProposer, Question, build_proposer
+from aval.infrastructure.psp import PspUnreachable
 from aval.api.purchase_flow import authorize_purchase, capture_purchase
 from aval.api.schemas import CaptureRequest, PurchaseRequest
 from aval.api.agent_auth import verify_signed_request
@@ -145,9 +146,27 @@ class PurchasingAgent:
             "instrument_id": None if instrument is None else instrument.token,
         }
         agent = self._signed_call("/capture", capture_body)
-        result = capture_purchase(
-            self._runtime, agent=agent, body=CaptureRequest(**capture_body)
-        )
+        try:
+            result = capture_purchase(
+                self._runtime, agent=agent, body=CaptureRequest(**capture_body)
+            )
+        except PspUnreachable:
+            # The purchase is committed and the budget is held; only the processor's
+            # answer is missing. `/capture` answers 502 because a machine caller has to
+            # learn it got no answer — but a person is owed the state, not the error.
+            # Reconciliation is what turns this into settled or declined.
+            return AgentRun(
+                outcome="in_doubt",
+                reason_code="settlement_unreachable",
+                human_summary=(
+                    "Compra autorizada e em confirmação: o processador não respondeu. "
+                    "O orçamento segue retido até a reconciliação."
+                ),
+                offer=offer,
+                considered=len(offers),
+                trace=decision.trace,
+                **credit,
+            )
         return AgentRun(
             outcome="settled" if result.approved else "refused",
             reason_code=result.reason_code,

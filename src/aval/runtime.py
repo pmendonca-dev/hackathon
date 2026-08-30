@@ -29,6 +29,8 @@ from aval.security.clock import ClockService
 from aval.security.http_signature import ReplayGuard
 from aval.security.jws import verify_compact_jws
 from aval.security.key_custody import KeyCustodyService
+from aval.observability.metrics import MetricsRegistry
+from aval.security.pairwise import resolve_pairwise_secret
 
 PROOF_KID = "aval-proof-k1"
 DEMO_AGENT_ID = "agent_aval_demo"
@@ -62,6 +64,8 @@ class AvalRuntime:
     spent_offer_nonces: ReplayGuard
     agent_custody: KeyCustodyService
     agent_kid: str
+    pairwise_secret: bytes
+    metrics: MetricsRegistry
     operator_token: str
 
 
@@ -169,5 +173,7 @@ def build_runtime(
         spent_offer_nonces=ReplayGuard(retain_seconds=24 * 3600),
         agent_custody=agent_custody,
         agent_kid=DEMO_AGENT_KID,
+        pairwise_secret=resolve_pairwise_secret(),
+        metrics=MetricsRegistry(),
         operator_token=operator_token or resolve_operator_token(),
     )

@@ -5,6 +5,7 @@ import type {
   Escalation,
   LedgerEntry,
   MandateView,
+  Metrics,
   Money,
 } from '../gateways/authorizationGateway.ts';
 
@@ -46,6 +47,8 @@ export interface AvalContextValue {
   merchantRedactions: string[];
   chain: ChainStatus | null;
   receipts: CommandReceipt[];
+  /** Instance-wide counters, read from the runtime. Null when it did not answer. */
+  metrics: Metrics | null;
 
   setView(view: View): void;
   setPrincipalId(principalId: string): void;

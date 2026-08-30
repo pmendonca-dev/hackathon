@@ -125,6 +125,18 @@ class SqliteAuditLedger:
         ).mappings().all()
         return [self._to_entry(row) for row in rows]
 
+    def all_entries(self) -> list[LedgerEntry]:
+        """Every event, for aggregation only.
+
+        There is no HTTP surface behind this and there must not be: a global read of
+        the trail is precisely what the three scoped views exist to prevent. It feeds
+        counters, and counters name no buyer.
+        """
+        rows = self._connection.execute(
+            self._joined().order_by(audit_events.c.occurred_at, audit_events.c.sequence)
+        ).mappings().all()
+        return [self._to_entry(row) for row in rows]
+
     def entries_for_merchant(self, merchant_id: str) -> list[LedgerEntry]:
         """Ordered by wall clock, then by the mandate's own sequence to break ties. The
         chain itself is per mandate, so this ordering is presentational only."""

@@ -139,3 +139,33 @@ test('an unreachable runtime is reported as unreachable, never as a refusal', as
     },
   );
 });
+
+test('the live footer is read from the runtime, never assembled in the page', async () => {
+  // The decision counts are aggregates of the hash-chained trail. A page that added
+  // them up itself could disagree with the auditor tab standing next to it.
+  const { gateway, calls } = gatewayWith([
+    {
+      status: 200,
+      body: {
+        decisions: { authorized: 3, awaiting_human: 1, rejected: 2 },
+        spend_outside_mandate: { minor_units: 0, currency: 'USD', scale: 2 },
+      },
+    },
+  ]);
+
+  const body = await gateway.metrics();
+
+  assert.equal(calls[0].url, 'http://api.test/metrics');
+  assert.equal(body.decisions.authorized, 3);
+  assert.equal(body.spend_outside_mandate.minor_units, 0);
+});
+
+test('the footer carries no operator token, because it decides nothing', async () => {
+  const { gateway, calls } = gatewayWith([{ status: 200, body: {} }], {
+    operatorToken: 'demo-token',
+  });
+
+  await gateway.metrics();
+
+  assert.equal(calls[0].headers['X-Aval-Operator'], undefined);
+});

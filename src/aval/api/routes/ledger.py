@@ -14,8 +14,10 @@ from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError
 from aval.api.schemas import MandateListView, MandateView, MoneyOut, UsageLimitOut
 from aval.application.authorization_core import MandateSnapshot
+from aval.security.pairwise import pairwise_id
 from aval.application.ledger_views import (
     MERCHANT_REDACTIONS,
+    MERCHANT_VISIBLE_EVENTS,
     auditor_entry,
     human_entry,
     merchant_entry,
@@ -123,10 +125,19 @@ def read_ledger(
                 "A visão do merchant é consultada por merchant_id.",
             )
         entries = core.merchant_timeline(merchant_id)
+        secret = runtime_of(request).pairwise_secret
+
+        def pairwise(mandate: str, seller: str) -> str:
+            return pairwise_id(secret, mandate_id=mandate, merchant_id=seller)
+
         return {
             "view": "merchant",
             "merchant_id": merchant_id,
-            "entries": [merchant_entry(entry) for entry in entries],
+            "entries": [
+                merchant_entry(entry, pairwise=pairwise)
+                for entry in entries
+                if entry.event_type in MERCHANT_VISIBLE_EVENTS
+            ],
             "redacted": list(MERCHANT_REDACTIONS),
         }
 

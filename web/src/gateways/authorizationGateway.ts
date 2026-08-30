@@ -81,6 +81,16 @@ export interface LedgerEntry {
   [key: string]: unknown;
 }
 
+export interface Metrics {
+  decisions: { authorized: number; awaiting_human: number; rejected: number };
+  reasons: Record<string, number>;
+  payments: { settled: number; declined: number; in_doubt: number };
+  /** Money held or settled with no authorization proof bound to it. Reads zero. */
+  spend_outside_mandate: Money;
+  edge_refusals: Record<string, number>;
+  latency_ms: Record<string, { count: number; p50: number; p99: number; max: number }>;
+}
+
 /** A refusal or a transport failure, carrying the runtime's own vocabulary. */
 export class GatewayError extends Error {
   readonly reasonCode: string;
@@ -234,6 +244,17 @@ export class AuthorizationGateway {
 
   offers(): Promise<{ offers: Array<Record<string, unknown>> }> {
     return this.#request('/merchant/offers');
+  }
+
+  /**
+   * The live footer. Aggregates of the same hash-chained trail the auditor tab reads,
+   * so the two can never disagree — which is the reason the page asks for them instead
+   * of counting what it happens to have loaded.
+   *
+   * No operator token: it reads counters and decides nothing.
+   */
+  metrics(): Promise<Metrics> {
+    return this.#request('/metrics');
   }
 
   merchantVerify(

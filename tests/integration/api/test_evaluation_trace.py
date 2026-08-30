@@ -42,6 +42,9 @@ def test_an_authorized_purchase_publishes_every_check_it_passed(harness: Harness
         "money_unit_matches",
         "amount_positive",
         "below_ceiling",
+        # Between the ceiling and the money: an operational guard against an agent
+        # that holds budget without spending it. See `test_reservation_griefing.py`.
+        "reservation_slot_free",
         "within_budget",
     ]
 

@@ -23,6 +23,25 @@ class SqliteLedgerRepository:
         ).scalar_one()
         return Money(int(amount), unit.currency, unit.scale)
 
+    def live_reservations(self, mandate_id: str) -> int:
+        """Reservations holding money right now, waiting on an answer.
+
+        `COMMITTED` and only `COMMITTED`: a settled purchase is finished and a released
+        one gave its money back, so neither occupies anything. This is the count that
+        an agent looping on an unanswered processor drives upwards without ever
+        spending a cent.
+        """
+        return int(
+            self._connection.execute(
+                select(func.count())
+                .select_from(reservations)
+                .where(
+                    reservations.c.mandate_id == mandate_id,
+                    reservations.c.status == ReservationStatus.COMMITTED.value,
+                )
+            ).scalar_one()
+        )
+
     def uses_since(self, mandate_id: str, since) -> int:
         """How many times money was actually held for this mandate inside the window.
 
