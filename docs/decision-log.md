@@ -537,3 +537,17 @@ Use the configured `AVAL_DATABASE_PATH` in both entrypoints
 **What we chose:** `create_app()` now uses the same configured durable database path as the ASGI entrypoint whenever a caller does not explicitly supply one.
 
 **Why:** A restarted runtime must reopen the database that operators migrated and verified. Divergent implicit locations can leave one entrypoint on an obsolete schema and break durable authorization facts.
+
+## Browser-safe UI authentication boundary
+
+**Decision:** Authentication mechanism for live browser views and operator actions
+
+**Options considered (one per line):**
+
+Embed trusted RFC 9421 private keys in browser assets
+Treat an unsigned browser cookie as equivalent to an agent signature on existing APIs
+Add a same-origin session-authenticated BFF while preserving RFC 9421 for agent APIs
+
+**What we chose:** Add a same-origin BFF with server-side role sessions and CSRF protection for browser views and operator commands; retain RFC 9421 and raw-body verification for agent-facing APIs.
+
+**Why:** Browser assets cannot safely hold runtime signing keys, while an unsigned cookie does not satisfy the agent identity contract. A role-scoped BFF keeps private signing material in `KeyCustodyService`, applies the existing Core services without creating another policy authority, and enables an authenticated operator revocation without asking the browser to handle a JWS.
