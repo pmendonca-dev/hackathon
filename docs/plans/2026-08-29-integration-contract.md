@@ -1,5 +1,33 @@
 # Contrato de integração — congelado em T+7
 
+> ## ⚠️ Atualização: a API existe e mudou em dois pontos
+>
+> Tudo abaixo continua válido, com **duas mudanças que quebram chamadas escritas contra
+> a versão anterior** — ambas por segurança, ambas com teste:
+>
+> 1. **`PATCH /mandates/{id}/limit` agora exige `authorization_jws`** — JWS ES256 do
+>    titular sobre `{mandate_id, limit_minor_units, currency, scale}`. Sem ele:
+>    `403 limit_change_unsigned`. Antes, qualquer um que soubesse o `mandate_id`
+>    aumentava a autoridade de gasto sem prova nenhuma, enquanto **revogar** já exigia
+>    assinatura — a operação mais perigosa era a desprotegida.
+> 2. **`POST /agents`, `POST /admin/psp` e `POST /reconcile` exigem o cabeçalho
+>    `X-Aval-Operator`.** Sem ele: `401 operator_token_missing`. `POST /agents` aceitava
+>    `trusted: true` de qualquer chamador — ou seja, um atacante se registrava como
+>    agente confiável e passava por toda a defesa contra impostor.
+>
+> **Endpoints novos, não previstos aqui:** `GET /mandates/{id}` (estado vivo com
+> orçamento), `GET /escalations`, `GET /escalations/{id}`, `GET /ledger/verify`,
+> `POST /agent/purchase` (agente por texto livre), `GET /agent/profile`,
+> `GET /merchant/.well-known/jwks.json`, `GET /.well-known/jwks.json`, `POST /disputes`,
+> `GET /disputes`, `POST /disputes/{id}/resolution`, `POST /reconcile`, `GET/POST /admin/psp`.
+>
+> **Reason codes novos** em `awaiting_human`: `category_not_allowed`. Em `rejected`:
+> `mandate_ceiling`. A resposta de `/authorize` e `/capture` ganhou `escalation_id`, e a
+> de `/capture` ganhou `authorization_proof`.
+>
+> `GET /docs` na instância rodando é a referência viva. Ver também
+> [modelo de segurança](../security-model.md).
+
 Documento único que as quatro lanes leem. Quem mudar este contrato avisa as outras três **antes** de mudar o código.
 
 > **Regra do contrato:** a partir de agora, ninguém espera outra lane ficar pronta. Cada lane constrói contra este documento. Se algo aqui estiver errado, corrija o documento primeiro.

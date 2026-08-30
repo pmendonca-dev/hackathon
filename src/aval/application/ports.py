@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
 from aval.domain.entities import (
-    AuditEvent,
     AuthorizationProof,
     CaptureAttempt,
     Mandate,
@@ -67,5 +66,18 @@ class CaptureRepository(Protocol):
 
 
 class AuditLedger(Protocol):
-    def append(self, event: AuditEvent) -> AuditEvent: ...
-    def timeline_for(self, mandate_id: str) -> Sequence[AuditEvent]: ...
+    """Append-only, hash-chained. `append` returns the entry it wrote so the caller can
+    quote its digest without reading the trail back."""
+
+    def append(
+        self,
+        *,
+        mandate_id: str,
+        event_type: str,
+        human_summary: str,
+        actor: str,
+        detail: Mapping[str, object],
+        occurred_at: datetime,
+    ) -> object: ...
+    def timeline_for(self, mandate_id: str) -> Sequence[object]: ...
+    def entries_for_merchant(self, merchant_id: str) -> Sequence[object]: ...

@@ -4,7 +4,13 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Mapping
 
-from aval.domain.enums import DisputeStatus, MandateStatus, ReservationStatus, RevocationRole
+from aval.domain.enums import (
+    DisputeStatus,
+    EscalationStatus,
+    MandateStatus,
+    ReservationStatus,
+    RevocationRole,
+)
 from aval.domain.errors import DomainError
 from aval.domain.money import Money
 
@@ -192,3 +198,35 @@ class Dispute:
         if status is DisputeStatus.OPEN:
             raise DomainError("a dispute resolution must be conclusive")
         return replace(self, status=status, resolution=resolution, resolved_at=resolved_at)
+
+
+@dataclass(frozen=True)
+class Escalation:
+    """A purchase the core refused to decide alone.
+
+    It freezes what was asked. The approval that arrives later is checked against these
+    fields, so approving cannot become a way to buy something bigger.
+    """
+
+    id: str
+    mandate_id: str
+    checkout_id: str
+    merchant_id: str
+    category: str
+    amount: Money
+    reason_code: str
+    created_at: datetime
+    expires_at: datetime
+    status: EscalationStatus = EscalationStatus.OPEN
+    agent_id: str | None = None
+    approval_jws: str | None = None
+    decided_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.reason_code:
+            raise DomainError("an escalation must carry the reason it was raised")
+        if self.expires_at <= self.created_at:
+            raise DomainError("an escalation must expire after it was created")
+
+    def is_expired_at(self, instant: datetime) -> bool:
+        return instant >= self.expires_at

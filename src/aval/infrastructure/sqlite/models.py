@@ -151,6 +151,8 @@ audit_events = Table(
     Column("human_summary", Text, nullable=False),
     Column("evidence_id", ForeignKey("evidence.id")),
     Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column("sequence", Integer, nullable=False),
+    UniqueConstraint("mandate_id", "sequence", name="audit_event_mandate_sequence"),
 )
 
 agent_profiles = Table(
@@ -190,6 +192,27 @@ disputes = Table(
     ),
 )
 
+escalations = Table(
+    "escalations",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("mandate_id", ForeignKey("mandates.id"), nullable=False),
+    Column("checkout_id", String, nullable=False),
+    Column("merchant_id", String, nullable=False),
+    Column("category", String, nullable=False),
+    Column("amount_minor_units", Integer, nullable=False),
+    Column("currency", String(3), nullable=False),
+    Column("scale", Integer, nullable=False),
+    Column("reason_code", String, nullable=False),
+    Column("status", String, nullable=False),
+    Column("agent_id", String),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("approval_jws", Text),
+    Column("decided_at", DateTime(timezone=True)),
+    CheckConstraint("status IN ('OPEN', 'APPROVED', 'DENIED')", name="escalation_status"),
+)
+
 CORE_TABLE_NAMES = (
     "mandates",
     "revocation_authorities",
@@ -205,4 +228,5 @@ CORE_TABLE_NAMES = (
     "agent_profiles",
     "vault_tokens",
     "disputes",
+    "escalations",
 )
