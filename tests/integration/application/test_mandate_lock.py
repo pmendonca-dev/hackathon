@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from aval.application.authorization_core import AuthorizationCore, CaptureCommand
-from aval.domain.entities import Mandate, Principal, RevocationAuthority
+from aval.domain.entities import Mandate, PaymentInstrument, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
 from aval.infrastructure.sqlite.engine import create_sqlite_engine
@@ -24,12 +24,12 @@ def test_capture_and_signed_revocation_touch_the_same_durable_mandate_lock(tmp_p
     mandate = Mandate(
         "m1", Principal("p1", "Marta"), frozenset({"merchant"}), frozenset({"travel"}), Money(1_000, "BRL", 2),
         datetime(2026, 8, 30, tzinfo=UTC), 1, {"revocation_id": "r1", "epoch": 0},
-        (RevocationAuthority("a1", "holder", RevocationRole.HOLDER, custody.public_jwk("holder"), frozenset({"mandate"})),),
+        (RevocationAuthority("a1", "holder", RevocationRole.HOLDER, custody.public_jwk("holder"), frozenset({"mandate"})),), instrument=PaymentInstrument("vt_test_instrument", "•••• 4242"),
     )
     capture_core = AuthorizationCore(clock=lambda: now, engine=engine)
     capture_core.register_mandate(mandate)
 
-    assert capture_core.capture(CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "travel", "first")).approved
+    assert capture_core.capture(CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "travel", "first", instrument_id="vt_test_instrument")).approved
 
     later = now + timedelta(seconds=1)
     token = sign_compact_jws(

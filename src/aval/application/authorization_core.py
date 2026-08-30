@@ -1443,18 +1443,28 @@ class AuthorizationCore:
         # pre-check above it is a preview: it deliberately does not spend the offer's
         # nonce either. Everything here is walked again at capture, so gating the rung
         # on the command that pays is not a hole — it is where the question is real.
-        if isinstance(command, CaptureCommand) and mandate.instrument is not None:
-            if command.instrument_id != mandate.instrument.token:
+        #
+        # A mandate that names no instrument used to skip this rung entirely, and so
+        # settled with no payment method at all. Against a mock processor that reads as
+        # harmless theatre; against a real one it is the difference between "there is no
+        # card on file" and "charged anyway". Authority to spend is not a payment
+        # method, and neither one implies the other.
+        if isinstance(command, CaptureCommand):
+            named = None if mandate.instrument is None else mandate.instrument.token
+            if named is None or command.instrument_id != named:
                 return self._reject(
                     "instrument_not_in_mandate",
                     "Meio de pagamento não é o que o mandato nomeia.",
                     stopped(
                         "instrument_in_mandate",
-                        "nenhum instrumento apresentado"
+                        "o mandato não nomeia meio de pagamento"
+                        if named is None
+                        else "nenhum instrumento apresentado"
                         if command.instrument_id is None
                         else "instrumento apresentado não é o do mandato",
                     ),
                 ), mandate
+            assert mandate.instrument is not None
             cleared("instrument_in_mandate", mandate.instrument.label)
         assert limit is not None
         if (command.total.currency, command.total.scale) != (limit.currency, limit.scale):

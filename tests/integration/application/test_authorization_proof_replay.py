@@ -6,7 +6,7 @@ import pytest
 
 from aval.adapters.settlement.mock_card_psp import MockCardPSP
 from aval.application.authorization_core import AuthorizationCore, CaptureCommand
-from aval.domain.entities import Mandate, Principal, Reservation, RevocationAuthority
+from aval.domain.entities import Mandate, PaymentInstrument, Principal, Reservation, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
 from aval.infrastructure.sqlite.engine import create_sqlite_engine
@@ -109,10 +109,10 @@ def test_core_issued_proof_is_single_use_at_the_mock_psp_boundary(tmp_path):
     core.register_mandate(Mandate(
         "m1", Principal("p1", "Marta"), frozenset({"merchant"}), frozenset({"travel"}), Money(1_000, "BRL", 2),
         datetime(2026, 8, 30, tzinfo=UTC), 1, {"revocation_id": "r1", "epoch": 0},
-        (RevocationAuthority("a1", "holder-key", RevocationRole.HOLDER, custody.public_jwk("holder-key"), frozenset({"mandate"})),),
+        (RevocationAuthority("a1", "holder-key", RevocationRole.HOLDER, custody.public_jwk("holder-key"), frozenset({"mandate"})),), instrument=PaymentInstrument("vt_test_instrument", "•••• 4242"),
     ))
 
-    result = core.capture(CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "travel", "capture-1"))
+    result = core.capture(CaptureCommand("m1", "checkout", "merchant", Money(500, "BRL", 2), "travel", "capture-1", instrument_id="vt_test_instrument"))
 
     assert result.approved is True
     assert result.reservation is not None

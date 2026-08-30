@@ -60,7 +60,7 @@ from aval.application.services.vault import VaultService
 from aval.application.services.ui_sessions import UiLocalCredentials, UiSessionService
 from aval.application.services.ui_operator_revocation import UiOperatorRevocationService
 from aval.application.services.ui_projections import UiProjectionService
-from aval.domain.entities import AgentIdentity, Mandate, Principal, RevocationAuthority
+from aval.domain.entities import AgentIdentity, Mandate, PaymentInstrument, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
 from aval.infrastructure.sqlite.agent_registry_repository import (
@@ -97,6 +97,7 @@ SEED_IDENTITIES = (
 )
 
 SEED_MANDATE_ID = "mandate_01"
+SEED_INSTRUMENT_TOKEN = "vt_seed_protocol_fixture"
 
 
 def _now() -> datetime:
@@ -154,6 +155,11 @@ def _seed_protocol_fixtures(runtime: AvalRuntime, clock: Callable[[], datetime])
                 ),
                 *((operator_authority,) if operator_authority is not None else ()),
             ),
+            # The protocol fixture names an instrument because a mandate that names
+            # none can no longer pay for anything. The token is the fixture's own, not
+            # a card anybody typed — this seed exists so the protocol lane has
+            # something to talk to, and it is the one place a stand-in belongs.
+            instrument=PaymentInstrument(SEED_INSTRUMENT_TOKEN, "•••• 4242"),
         )
     )
     if operator_authority is not None:

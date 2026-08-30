@@ -110,13 +110,28 @@ def test_the_ladder_stops_before_it_ever_prices_the_purchase(harness):
     assert captured.json()["reason_code"] == "instrument_not_in_mandate"
 
 
-def test_a_mandate_that_names_no_card_still_accepts_any(harness):
-    """Every mandate written before instruments existed meant this."""
-    mandate_id = harness.create_mandate()
+def test_a_mandate_that_names_no_card_cannot_pay_at_all(harness):
+    """Authority to spend is not a payment method, and does not imply one.
+
+    This used to settle: a mandate with no instrument skipped the check entirely.
+    Against a mock processor that reads as harmless; against a real one it is the
+    difference between "there is no card on file" and "charged anyway".
+    """
+    mandate_id = harness.create_mandate(payment_method=None)
 
     response = buy(harness, mandate_id, instrument_id=None)
 
-    assert response.json()["approved"] is True
+    assert response.json()["approved"] is False
+    assert response.json()["reason_code"] == "instrument_not_in_mandate"
+
+
+def test_a_mandate_with_no_card_is_not_rescued_by_presenting_one(harness):
+    """Nor by inventing a token: the mandate names the instrument, not the buyer."""
+    mandate_id = harness.create_mandate(payment_method=None)
+
+    response = buy(harness, mandate_id, instrument_id="vt_qualquer_um")
+
+    assert response.json()["reason_code"] == "instrument_not_in_mandate"
 
 
 def test_cancelling_the_card_leaves_the_agent_alive_and_the_budget_intact(harness):
