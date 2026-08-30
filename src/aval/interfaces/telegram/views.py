@@ -12,9 +12,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape
+import re
+import unicodedata
 
 from aval.interfaces.telegram.gateway import (
     EscalationView,
+    OfferView,
     MandateView,
     MoneyView,
     PurchaseView,
@@ -32,6 +35,8 @@ CALLBACK_RECEIPT = "rec"
 CALLBACK_REVOKE_MENU = "rvk"
 CALLBACK_REVOKE_CONFIRM = "rvm"
 CALLBACK_DISPUTE = "dsp"
+CALLBACK_CATALOGUE = "cat"
+CALLBACK_BUY = "buy"
 
 _VERBS = frozenset(
     {
@@ -42,6 +47,8 @@ _VERBS = frozenset(
         CALLBACK_REVOKE_MENU,
         CALLBACK_REVOKE_CONFIRM,
         CALLBACK_DISPUTE,
+        CALLBACK_CATALOGUE,
+        CALLBACK_BUY,
     }
 )
 
@@ -85,7 +92,11 @@ def parse_callback(data: str) -> tuple[str, str] | None:
     if not data or len(data) > 64:
         return None
     verb, _, argument = data.partition(":")
-    if verb not in _VERBS or not argument:
+    if verb not in _VERBS:
+        return None
+    if verb == CALLBACK_CATALOGUE:
+        return verb, ""
+    if not argument:
         return None
     if not all(char.isalnum() or char in "_-" for char in argument):
         return None
@@ -93,19 +104,27 @@ def parse_callback(data: str) -> tuple[str, str] | None:
 
 
 # ── screens ─────────────────────────────────────────────────────────────────
-def welcome(*, display_name: str, mandate: MandateView, catalogue: Sequence[tuple]) -> View:
+def welcome(*, display_name: str, mandate: MandateView) -> View:
+    """Lead with what to do next.
+
+    The mandate details matter, but they are not an instruction. Someone arriving
+    for the first time needs the next move to be obvious and one tap away.
+    """
     lines = [
         f"<b>AVAL</b> — olá, {escape(display_name)}.",
         "",
-        "Seu agente compra sozinho. Você mantém a autoridade.",
-        "Acabei de emitir <b>seu</b> mandato, assinado pela sua chave:",
+        "Você acabou de ganhar um <b>agente de compras</b>. Ele compra sozinho,",
+        "mas só até onde você autorizou — e você pode cortar a qualquer momento.",
         "",
+        "<b>👉 Toque em «Ver o que posso comprar» para começar.</b>",
+        "",
+        "Ou peça em português: <code>/comprar um voo pra Córdoba</code>",
+        "",
+        "─────────────",
+        "<b>Seu mandato</b>, assinado com a sua chave:",
         _mandate_body(mandate),
-        "",
-        "Peça uma compra em português: <code>/comprar um voo pra Córdoba</code>",
-        "Ou veja o que está à venda com /catalogo.",
     ]
-    return View("\n".join(lines), _mandate_buttons(mandate))
+    return View("\n".join(lines), _mandate_buttons(mandate, primary=True))
 
 
 def mandate_card(mandate: MandateView) -> View:
@@ -128,16 +147,33 @@ def _mandate_body(mandate: MandateView) -> str:
     return "\n".join(lines)
 
 
-def _mandate_buttons(mandate: MandateView) -> tuple[Row, ...]:
-    rows: list[Row] = [
+def _mandate_buttons(mandate: MandateView, *, primary: bool = False) -> tuple[Row, ...]:
+    """Buying is the point; the rest is housekeeping, so it comes first."""
+    rows: list[Row] = []
+    if mandate.status == "ACTIVE":
+        rows.append((("🛒 Ver o que posso comprar", f"{CALLBACK_CATALOGUE}:_"),))
+    rows.append(
         (
             ("🔄 Atualizar", f"{CALLBACK_MANDATE}:{mandate.id}"),
             ("🧾 Extrato", f"{CALLBACK_RECEIPT}:{mandate.id}"),
         )
-    ]
+    )
     if mandate.status == "ACTIVE":
-        rows.append((("🛑 Revogar", f"{CALLBACK_REVOKE_MENU}:{mandate.id}"),))
+        label = "🛑 Revogar a autoridade" if primary else "🛑 Revogar"
+        rows.append(((label, f"{CALLBACK_REVOKE_MENU}:{mandate.id}"),))
     return tuple(rows)
+
+
+def _why(result: PurchaseView) -> str:
+    """The agent's reasoning, credited to whoever did it.
+
+    It is shown next to the outcome and never instead of it: the reason explains the
+    proposal, and the line above it is what the mandate did with that proposal.
+    """
+    if not result.rationale:
+        return ""
+    who = "🤖 O agente escolheu" if result.proposed_by == "llm" else "⚙️ Escolha por regra"
+    return f"\n\n<b>{who}:</b> <i>{escape(result.rationale)}</i>"
 
 
 def purchase_result(result: PurchaseView) -> View:
@@ -231,12 +267,105 @@ def receipt(view: ReceiptView) -> View:
     return View("\n".join(lines), _mandate_buttons(view.mandate))
 
 
-def catalogue(items: Sequence[tuple[str, MoneyView, str]]) -> View:
-    lines = ["<b>Catálogo VuelaYa</b>", ""]
-    for title, total, category in items:
-        lines.append(f"• {escape(title)} — <b>{format_money(total)}</b> <i>{escape(category)}</i>")
-    lines += ["", "Peça em português: <code>/comprar o voo pra Córdoba</code>"]
-    return View("\n".join(lines))
+@dataclass(frozen=True)
+class Wish:
+    """One thing a person can ask the agent for, and what it would cost.
+
+    A wish is not an offer. The person says *a flight to Córdoba*; the agent is
+    what picks which flight — that is the whole point of the product, so the
+    buttons express intent and let the agent shop.
+    """
+
+    slug: str
+    label: str
+    instruction: str
+    cheapest: MoneyView
+    category: str
+    count: int
+
+
+def _destination(title: str) -> str:
+    """`São Paulo → Córdoba, 17 set · direto` becomes `Córdoba`."""
+    tail = title.split("→")[-1] if "→" in title else title
+    return tail.split(",")[0].split("·")[0].strip()
+
+
+def _slugify(text: str) -> str:
+    folded = unicodedata.normalize("NFD", text.lower())
+    stripped = "".join(char for char in folded if unicodedata.category(char) != "Mn")
+    return "-".join(part for part in re.split(r"[^a-z0-9]+", stripped) if part)
+
+
+# The only two things the agent's reader can be asked for: `parse_intent` returns
+# `travel` or `lodging` and nothing else. Offering a button for a category it
+# cannot express would produce a guaranteed `no_offer` — a dead button.
+_WISH_SHAPES = {
+    "travel": ("✈️", "voo para {}"),
+    "lodging": ("🏨", "hotel em {}"),
+}
+
+
+def wishes(items: Sequence[OfferView]) -> tuple[Wish, ...]:
+    """Group the catalogue the way a person would ask for it."""
+    grouped: dict[tuple[str, str], list[OfferView]] = {}
+    for offer in items:
+        if offer.category not in _WISH_SHAPES:
+            continue
+        key = (offer.category, _destination(offer.title))
+        grouped.setdefault(key, []).append(offer)
+    built: list[Wish] = []
+    for (category, destination), offers in grouped.items():
+        icon, phrasing = _WISH_SHAPES.get(category, ("🛒", "{}"))
+        cheapest = min(offers, key=lambda item: item.total.minor_units)
+        built.append(
+            Wish(
+                slug=_slugify(f"{category}-{destination}"),
+                label=f"{icon} {destination}",
+                instruction=phrasing.format(destination),
+                cheapest=cheapest.total,
+                category=category,
+                count=len(offers),
+            )
+        )
+    return tuple(sorted(built, key=lambda wish: (wish.category, wish.cheapest.minor_units)))
+
+
+def wish_for(items: Sequence[OfferView], slug: str) -> Wish | None:
+    return next((wish for wish in wishes(items) if wish.slug == slug), None)
+
+
+def catalogue(items: Sequence[OfferView], *, mandate: MandateView | None = None) -> View:
+    """What to ask for, not what to pick.
+
+    Someone holding a phone should be able to buy without being taught a command
+    first. Free text still works and is where the adversarial story lives.
+    """
+    lines = [
+        "<b>O que você quer?</b>",
+        "",
+        "Diga o destino — <b>quem escolhe a passagem é o seu agente</b>,",
+        "e o mandato decide se ele pode.",
+        "",
+    ]
+    rows: list[Row] = []
+    for wish in wishes(items):
+        allowed = mandate is None or wish.category in mandate.categories
+        affordable = mandate is None or wish.cheapest.minor_units <= mandate.remaining.minor_units
+        mark = "" if allowed and affordable else "  ⚠️"
+        lines.append(
+            f"{wish.label} — a partir de <b>{format_money(wish.cheapest)}</b>"
+            f" <i>({wish.count} opções)</i>{mark}"
+        )
+        rows.append(
+            ((f"{wish.label} · {format_money(wish.cheapest)}", f"{CALLBACK_BUY}:{wish.slug}"),)
+        )
+    lines += [
+        "",
+        "⚠️ o agente vai tentar mesmo assim — e o mandato vai barrar.",
+        "",
+        "Também aceita texto livre: <code>/comprar um voo barato pra Córdoba</code>",
+    ]
+    return View("\n".join(lines), tuple(rows))
 
 
 def help_text() -> View:
