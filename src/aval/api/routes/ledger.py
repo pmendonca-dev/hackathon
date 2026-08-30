@@ -49,6 +49,7 @@ def mandate_view(snapshot: MandateSnapshot) -> MandateView:
         ),
         uses_in_window=snapshot.uses_in_window,
         instrument_label=None if mandate.instrument is None else mandate.instrument.label,
+        instrument_revoked=snapshot.instrument_revoked,
     )
 
 

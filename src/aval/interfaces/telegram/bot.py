@@ -197,17 +197,23 @@ class Bot:
         if identity is None or identity.mandate_id is None:
             return (views.no_mandate(),)
         mandate_id = identity.mandate_id
+        # Having an id is not having a mandate. The store survives restarts and the
+        # core does not have to: a reset database, an expiry purge or a fresh
+        # environment leaves this chat pointing at something nobody has. Resolved once
+        # here, so every command below fails the same readable way instead of five
+        # different unreadable ones.
+        mandate = self._gateway.mandate(mandate_id)
+        if mandate is None:
+            return (views.no_mandate(),)
 
         if command == "/mandato":
-            mandate = self._gateway.mandate(mandate_id)
-            return (views.mandate_card(mandate),) if mandate else (views.no_mandate(),)
+            return (views.mandate_card(mandate),)
         if command == "/extrato":
             return (views.receipt(self._gateway.receipt(mandate_id)),)
         if command in {"/aprovacoes", "/aprovações"}:
             return views.escalation_list(self._gateway.open_escalations(mandate_id))
         if command == "/revogar":
-            mandate = self._gateway.mandate(mandate_id)
-            return (views.revoke_menu(mandate),) if mandate else (views.no_mandate(),)
+            return (views.revoke_menu(mandate),)
         if command == "/comprar":
             return self._purchase(identity, argument)
         if command == "/limite":
@@ -428,6 +434,10 @@ class Bot:
             try:
                 pending = self._gateway.open_escalations(identity.mandate_id)
             except GatewayError as error:
+                if error.reason_code == "mandate_not_found":
+                    # Not a fault to report every thirty seconds. The chat is pointing
+                    # at a mandate the core does not have, and `/start` is the answer.
+                    continue
                 logger.warning("escalações de %s: %s", chat_id, error)
                 continue
             for escalation in pending:

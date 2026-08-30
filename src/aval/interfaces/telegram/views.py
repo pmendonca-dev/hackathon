@@ -146,8 +146,15 @@ def _mandate_body(mandate: MandateView) -> str:
         lines.append(f"Teto por compra: {format_money(mandate.ceiling)} — <i>ninguém atravessa</i>")
     if mandate.instrument_label is not None:
         # The fourth thing the mandate authorizes, next to the other three. The
-        # agent holds a token for it and never the number.
-        lines.append(f"Paga com: <b>{escape(mandate.instrument_label)}</b>")
+        # agent holds a token for it and never the number. Once cancelled the label
+        # stays — the holder still needs to know which card it was — but the line
+        # stops claiming the mandate can pay, because it cannot.
+        card = escape(mandate.instrument_label)
+        lines.append(
+            f"Cartão: <b>{card}</b> — \U0001f534 <b>cancelado</b>, nada pode ser pago"
+            if mandate.instrument_revoked
+            else f"Paga com: <b>{card}</b>"
+        )
     lines += [
         f"Pode comprar: {escape(', '.join(mandate.categories))} em {escape(', '.join(mandate.merchants))}",
         f"Vence em {days} dia(s) · política v{mandate.policy_version} · epoch {mandate.revocation_epoch}",
@@ -169,7 +176,7 @@ def _mandate_buttons(mandate: MandateView, *, primary: bool = False) -> tuple[Ro
     if mandate.status == "ACTIVE":
         # Two different things end here, so they are two different buttons: the
         # card stops the money, the revocation stops the authority.
-        if mandate.instrument_label is not None:
+        if mandate.instrument_label is not None and not mandate.instrument_revoked:
             rows.append(
                 (("💳 Cancelar o cartão", f"{CALLBACK_CARD_MENU}:{mandate.id}"),)
             )
@@ -374,6 +381,20 @@ def wish_for(items: Sequence[OfferView], slug: str) -> Wish | None:
     return next((wish for wish in wishes(items) if wish.slug == slug), None)
 
 
+def _reachable(wish: "Wish", mandate: MandateView | None) -> bool:
+    """Whether this mandate could actually complete this purchase today.
+
+    Two different refusals, one answer for the screen: a category the mandate never
+    allowed, and a price the live budget can no longer cover.
+    """
+    if mandate is None:
+        return True
+    return (
+        wish.category in mandate.categories
+        and wish.cheapest.minor_units <= mandate.remaining.minor_units
+    )
+
+
 def catalogue(items: Sequence[OfferView], *, mandate: MandateView | None = None) -> View:
     """What to ask for, not what to pick.
 
@@ -388,16 +409,24 @@ def catalogue(items: Sequence[OfferView], *, mandate: MandateView | None = None)
         "",
     ]
     rows: list[Row] = []
-    for wish in wishes(items):
-        allowed = mandate is None or wish.category in mandate.categories
-        affordable = mandate is None or wish.cheapest.minor_units <= mandate.remaining.minor_units
-        mark = "" if allowed and affordable else "  ⚠️"
+    # What the mandate can actually buy comes first. The out-of-scope offers stay —
+    # the agent trying and the mandate barring is the demonstration — but a judge who
+    # taps the top button must land on a purchase, not on an escalation, and the mark
+    # belongs on the button rather than only on the line above it: the button is what
+    # gets pressed.
+    for wish in sorted(wishes(items), key=lambda w: (not _reachable(w, mandate), w.category, w.cheapest.minor_units)):
+        mark = "" if _reachable(wish, mandate) else " ⚠️"
         lines.append(
             f"{wish.label} — a partir de <b>{format_money(wish.cheapest)}</b>"
             f" <i>({wish.count} opções)</i>{mark}"
         )
         rows.append(
-            ((f"{wish.label} · {format_money(wish.cheapest)}", f"{CALLBACK_BUY}:{wish.slug}"),)
+            (
+                (
+                    f"{wish.label} · {format_money(wish.cheapest)}{mark}",
+                    f"{CALLBACK_BUY}:{wish.slug}",
+                ),
+            )
         )
     lines += [
         "",
@@ -427,12 +456,21 @@ def clarification(
         "",
     ]
     rows: list[Row] = []
-    for wish in wishes(items):
-        if mandate is not None and wish.category not in mandate.categories:
-            continue
-        lines.append(f"{wish.label} — a partir de <b>{format_money(wish.cheapest)}</b>")
+    # Ordered and marked exactly like the catalogue: two screens that offer the same
+    # answers must not disagree about which of them the mandate can pay for. Nothing
+    # is hidden, so a nearly spent budget still gets a screen with answers on it.
+    for wish in sorted(
+        wishes(items), key=lambda w: (not _reachable(w, mandate), w.category, w.cheapest.minor_units)
+    ):
+        mark = "" if _reachable(wish, mandate) else " ⚠️"
+        lines.append(f"{wish.label} — a partir de <b>{format_money(wish.cheapest)}</b>{mark}")
         rows.append(
-            ((f"{wish.label} · {format_money(wish.cheapest)}", f"{CALLBACK_BUY}:{wish.slug}"),)
+            (
+                (
+                    f"{wish.label} · {format_money(wish.cheapest)}{mark}",
+                    f"{CALLBACK_BUY}:{wish.slug}",
+                ),
+            )
         )
     lines += ["", "Ou responda em texto: <code>/comprar um voo pra Córdoba</code>"]
     return View("\n".join(lines), tuple(rows))

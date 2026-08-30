@@ -75,6 +75,8 @@ class FakeAval:
             mandate = self.mandates.get(route.split("/")[2])
             return (200, mandate) if mandate else (404, {"reason_code": "mandate_not_found"})
         if route == "/escalations":
+            if params.get("mandate_id") not in self.mandates:
+                return 404, {"reason_code": "mandate_not_found"}
             return 200, {
                 "escalations": [
                     item
@@ -861,4 +863,65 @@ def test_an_incomplete_request_is_answered_with_a_question_and_buttons(world) ->
     assert screen.buttons, "a question with no answers is a dead end"
     assert all(
         button[1].startswith(f"{views.CALLBACK_BUY}:") for row in screen.buttons for button in row
+    )
+
+
+# ── the mandate the chat remembers may be gone ──────────────────────────────
+def test_a_chat_whose_mandate_vanished_is_told_to_start_again(world) -> None:
+    """The stored id outlives the mandate: a reset environment, an expiry purge, a
+    fresh database. Every command below the guard needs it to exist.
+
+    Before this, `/comprar` answered "nenhuma ação foi executada" — true, unhelpful,
+    and indistinguishable from the backend being down. The person had no way to know
+    that `/start` would fix it.
+    """
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    identities.bind_mandate(MARTA, "mandate_que_nao_existe")
+
+    for command in ("/comprar um voo pra Córdoba", "/extrato", "/aprovacoes", "/mandato"):
+        bot.handle_update(message(command))
+        assert "/start" in api.sent[-1][1].text, f"{command} não orientou a pessoa"
+
+
+def test_a_vanished_mandate_does_not_spam_the_escalation_poller(world, caplog) -> None:
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+    identities.bind_mandate(MARTA, "mandate_que_nao_existe")
+
+    with caplog.at_level("WARNING"):
+        assert bot.push_pending_approvals() == 0
+
+    assert not [record for record in caplog.records if "escalações" in record.message]
+
+
+def test_the_catalogue_leads_with_what_the_mandate_can_actually_buy(world) -> None:
+    """A judge taps the first button. It must not be a guaranteed escalation.
+
+    Out-of-scope offers stay on the screen on purpose — the agent trying and the
+    mandate barring is the demonstration — but they go below the ones that work, and
+    the button says so before it is pressed rather than after.
+    """
+    bot, api, aval, identities = world
+    bot.handle_update(message("/start"))
+
+    bot.handle_update(message("/catalogo"))
+
+    screen = api.sent[-1][1]
+    buttons = [button for row in screen.buttons for button in row]
+    assert buttons, "o catálogo não ofereceu nada"
+    allowed = set(aval.mandates[identities.get(MARTA).mandate_id]["allowed_categories"])
+
+    def category_of(button) -> str:
+        return button[1].split(":", 1)[1].split("-", 1)[0]
+
+    assert category_of(buttons[0]) in allowed, (
+        f"o primeiro botão é um beco sem saída: {buttons[0][0]}"
+    )
+    reachable = [index for index, b in enumerate(buttons) if category_of(b) in allowed]
+    barred = [index for index, b in enumerate(buttons) if category_of(b) not in allowed]
+    assert barred, "o fake precisa oferecer algo fora do escopo para este teste valer"
+    assert min(barred) > max(reachable), "o que o mandato permite vem antes do que ele barra"
+    assert all("⚠️" in buttons[index][0] for index in barred), (
+        "um botão que o mandato vai barrar tem de avisar antes de ser tocado"
     )

@@ -139,6 +139,11 @@ class MandateSnapshot:
     # Uses already consumed inside the frequency window, read at the same instant
     # as the spend so a listing cannot show a budget and a count from two moments.
     uses_in_window: int = 0
+    # Whether the card the mandate names has been cancelled. The mandate keeps its
+    # instrument — rewriting it would erase what the holder actually authorized — so
+    # the revocation is a separate fact, and a view that does not carry it advertises
+    # a card every purchase is about to be refused for.
+    instrument_revoked: bool = False
 
     @property
     def remaining(self) -> Money:
@@ -1065,6 +1070,7 @@ class AuthorizationCore:
                 limit=limit,
                 spent=ledger.spent_for(mandate_id, limit),
                 uses_in_window=self._uses_in_window(ledger, mandate),
+                instrument_revoked=self._instrument_revoked(connection, mandate),
             )
 
     def snapshots_for_principal(self, principal_id: str) -> list[MandateSnapshot]:
@@ -1085,9 +1091,18 @@ class AuthorizationCore:
                         limit=limit,
                         spent=ledger.spent_for(mandate.id, limit),
                         uses_in_window=self._uses_in_window(ledger, mandate),
+                        instrument_revoked=self._instrument_revoked(connection, mandate),
                     )
                 )
             return snapshots
+
+    @staticmethod
+    def _instrument_revoked(connection, mandate: Mandate) -> bool:
+        if mandate.instrument is None:
+            return False
+        return SqliteRevocationRepository(connection).has_scope(
+            mandate.id, f"instrument:{mandate.instrument.token}"
+        )
 
     def _uses_in_window(self, ledger: SqliteLedgerRepository, mandate: Mandate) -> int:
         if mandate.usage_limit is None:
