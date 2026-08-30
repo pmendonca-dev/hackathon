@@ -137,3 +137,45 @@ Persist and acquire one lock record per mandate inside the shared write transact
 **What we chose:** Use one durable `mandate_locks` record per mandate, acquired by both capture and signed revocation in their `BEGIN IMMEDIATE` transactions.
 
 **Why:** The explicit shared resource documents and enforces the commit race boundary independently of the current SQLite implementation, so a revocation and a capture cannot make conflicting pre-commit decisions.
+
+## Payment runtime authority boundary
+
+**Decision:** Authority and composition boundary for ACP delegation and card settlement
+
+**Options considered (one per line):**
+
+Let ACP allowance and vault state become a second payment-policy source
+Create a parallel demo capture flow outside the AuthorizationCore
+Compose ACP, capture, PSP, receipts, and audit around live AuthorizationCore decisions
+
+**What we chose:** Compose the runtime around AuthorizationCore as the exclusive authority; ACP projects a fresh allowance, and capture commits a Core reservation before the PSP receives a single-use proof.
+
+**Why:** This preserves live revocation, canonical checkout scope, budget enforcement, durable retry behavior, and the post-commit settlement boundary without copying policy into adapters or allowing protocol-specific state to authorize a purchase.
+
+## Settlement evidence persistence
+
+**Decision:** When AP2 receipts become durable runtime facts
+
+**Options considered (one per line):**
+
+Issue receipts when a payment token is delegated
+Issue receipts when the Core reservation is committed
+Issue and persist receipts only after the mock PSP approves settlement
+
+**What we chose:** Issue checkout and payment receipts only after approved settlement, then persist them under the settled reservation identifier.
+
+**Why:** A committed reservation can still be released when settlement declines. Tying immutable receipt issuance to the approved settlement result prevents the audit trail from claiming payment completion before the PSP outcome is known.
+
+## Runtime seed preservation
+
+**Decision:** Startup behavior for already persisted demo mandates
+
+**Options considered (one per line):**
+
+Rewrite the seed mandate every time the FastAPI runtime starts
+Create the seed mandate only when its identifier is absent
+Keep the mandate only in process memory
+
+**What we chose:** Seed the demo mandate only on an empty durable runtime and preserve it unchanged on subsequent starts.
+
+**Why:** Rewriting a persisted mandate would silently extend expiry or replace policy/revocation facts after a restart, which contradicts continuous authorization and durable audit requirements.

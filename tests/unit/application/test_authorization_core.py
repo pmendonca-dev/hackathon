@@ -327,3 +327,35 @@ def test_revoking_one_mandate_leaves_the_sibling_spendable():
     assert core.evaluate(command()).reason_code == "mandate_revoked"
     sibling = replace(command(), mandate_id="mandate_2")
     assert core.evaluate(sibling).decision is AuthorizationDecision.AUTHORIZED
+
+
+def test_registering_an_existing_mandate_does_not_extend_its_validity():
+    """Re-seeding on start must not keep a mandate alive forever."""
+    core = AuthorizationCore(clock=lambda: datetime.now(UTC))
+    original = make_mandate(expires_at=datetime.now(UTC) + timedelta(hours=1))
+    core.register_mandate(original)
+
+    core.register_mandate(replace(original, expires_at=datetime.now(UTC) + timedelta(days=30)))
+
+    stored = core.mandate("mandate_1")
+    assert stored is not None
+    assert stored.expires_at == original.expires_at
+
+
+def test_registering_an_existing_mandate_cannot_undo_a_revocation():
+    custody = KeyCustodyService()
+    custody.generate_es256("holder-key")
+    core = AuthorizationCore(clock=lambda: datetime.now(UTC))
+    mandate = make_mandate(public_jwk=custody.public_jwk("holder-key"))
+    core.register_mandate(mandate)
+    core.submit_signed_revocation(
+        sign_compact_jws(
+            {"mandate_id": "mandate_1", "scope": "mandate", "reason": "holder", "epoch": 1},
+            custody,
+            "holder-key",
+        )
+    )
+
+    core.register_mandate(mandate)
+
+    assert core.evaluate(command()).reason_code == "mandate_revoked"

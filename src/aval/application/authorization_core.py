@@ -133,6 +133,15 @@ class CaptureResult:
     authorization_proof: str | None = None
 
 
+@dataclass(frozen=True)
+class LiveAuthorizationContext:
+    """Current Core facts safe to project into a short-lived edge allowance."""
+
+    mandate_ceiling: Money
+    live_balance: Money
+    expires_at: datetime
+
+
 class AuthorizationCore:
     """The sole writer for the in-process authorization state used by the MVP."""
 
@@ -158,10 +167,14 @@ class AuthorizationCore:
     def register_mandate(self, mandate: Mandate) -> None:
         def operation(connection) -> None:
             policies = SqlitePolicyRepository(connection)
-            first_registration = policies.latest_version(mandate.id) is None
-            SqliteMandateRepository(connection).put(mandate)
-            if not first_registration:
+            if policies.latest_version(mandate.id) is not None:
+                # Registering is creation, not update. Writing the row again would reset
+                # whatever the mandate has become since — its status, its epoch, and its
+                # expiry above all: a process that re-seeds on every start would quietly
+                # keep a mandate alive forever. Limits move through the signed live-policy
+                # path; revocation is irreversible by design.
                 return
+            SqliteMandateRepository(connection).put(mandate)
             # The limit a mandate is born with is policy version 1. Recording it keeps the
             # version meaningful from the first decision: without this row the first live
             # change would also land on version 1, and nothing downstream could tell the
@@ -906,6 +919,25 @@ class AuthorizationCore:
         entries = self.timeline_for(mandate_id)
         intact, broken_at = verify_chain(entries)
         return intact, broken_at, len(entries)
+
+    def live_delegation_context(
+        self, command: AuthorizationCommand
+    ) -> tuple[AuthorizationResult, LiveAuthorizationContext | None]:
+        """Return the current, authoritative allowance inputs for one checkout."""
+        with self._engine.connect() as connection:
+            decision, mandate = self._evaluate_with(connection, command)
+            if decision.decision is not AuthorizationDecision.AUTHORIZED or mandate is None:
+                return decision, None
+            live_limit, _ = SqlitePolicyRepository(connection).active_limit_for(
+                mandate.id, mandate.limit
+            )
+            spent = SqliteLedgerRepository(connection).spent_for(mandate.id, live_limit)
+            return decision, LiveAuthorizationContext(
+                mandate_ceiling=mandate.limit,
+                live_balance=live_limit.subtract(spent),
+                expires_at=mandate.expires_at,
+            )
+
 
     def _evaluate_with(
         self,

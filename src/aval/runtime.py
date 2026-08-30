@@ -28,6 +28,7 @@ from aval.merchant.offers import MerchantOfferService
 from aval.security.authorization_proof import AuthorizationProofService
 from aval.security.clock import ClockService
 from aval.security.http_signature import ReplayGuard
+from aval.security.jws import verify_compact_jws
 from aval.security.key_custody import KeyCustodyService
 
 PROOF_KID = "aval-proof-k1"
@@ -113,7 +114,24 @@ def build_runtime(
     merchant_custody = KeyCustodyService()
     merchant_custody.generate_es256(MERCHANT_KID)
     psp_control = PspControl()
-    psp = DemoPspAdapter(lambda: psp_control.mode)
+
+    def verify_proof_for_settlement(proof: str, reservation) -> None:
+        """Check the proof the core issued, without spending it.
+
+        Consumption belongs to the merchant, which presents the token once to claim the
+        goods. A processor that burned the jti here would settle the payment and leave
+        the merchant unable to verify the very sale it just took part in.
+        """
+        claims = verify_compact_jws(proof, custody.verifying_key(PROOF_KID))
+        if (
+            claims.get("reservation_id") != reservation.id
+            or claims.get("transaction_hash") != reservation.transaction_hash
+        ):
+            raise ValueError("authorization proof does not bind this reservation")
+
+    psp = DemoPspAdapter(
+        lambda: psp_control.mode, proof_verifier=verify_proof_for_settlement
+    )
     core = AuthorizationCore(
         clock=clock.now,
         engine=engine,

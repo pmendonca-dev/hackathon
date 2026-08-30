@@ -38,9 +38,35 @@ from aval.adapters.ap2.merchant_authorization import (
 from aval.adapters.ucp.http_signatures import Rfc9421Verifier
 from aval.api.app import create_app as create_authorization_app
 from aval.api.middleware.raw_body import RawBodyMiddleware
+from aval.api.routers.audit import create_audit_router
+from aval.api.routers.delegate_payment import create_delegate_payment_router
+from aval.api.routers.payment_capture import create_payment_capture_router
 from aval.api.routers.ucp_checkout import create_ucp_checkout_router
 from aval.api.routers.ucp_discovery import create_ucp_discovery_router
+from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
+from aval.adapters.ap2.receipts import Ap2ReceiptIssuer
 from aval.application.services.checkout import CheckoutService
+from aval.application.services.dispute import DisputeService
+from aval.application.services.payment_runtime import PaymentRuntime
+from aval.application.services.receipts import ReceiptService
+from aval.application.services.delegation import (
+    CoreDelegationAuthorizer,
+    DurableDelegationService,
+)
+from aval.application.services.vault import VaultService
+from aval.application.services.delegation import CoreDelegationAuthorizer, DurableDelegationService
+from aval.application.services.vault import VaultService
+from aval.adapters.acp.delegate_payment import OpaqueTestCredentialTokenizer
+from aval.adapters.settlement.mock_card_psp import MockCardPSP
+from aval.application.services.payment_runtime import PaymentRuntime
+from aval.application.services.receipts import ReceiptService
+from aval.application.services.dispute import DisputeService
+from aval.adapters.ap2.receipts import Ap2ReceiptIssuer
+from aval.infrastructure.sqlite.dispute_evidence_reader import SqliteDisputeEvidenceReader
+from aval.security.jws import verify_compact_jws
+from aval.security.key_custody import public_key_from_jwk
+from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
+from aval.security.authorization_proof import AuthorizationProofService
 from aval.domain.entities import AgentIdentity, Mandate, Principal, RevocationAuthority
 from aval.domain.enums import RevocationRole
 from aval.domain.money import Money
@@ -49,15 +75,17 @@ from aval.infrastructure.sqlite.agent_registry_repository import (
     SqliteTrustedAgentRegistry,
 )
 from aval.infrastructure.sqlite.checkout_repository import SqliteCheckoutRepository
+from aval.infrastructure.sqlite.dispute_evidence_reader import SqliteDisputeEvidenceReader
 from aval.infrastructure.sqlite.transaction import run_in_write_transaction
 from aval.runtime import AvalRuntime, build_runtime
-from aval.security.key_custody import KeyCustodyService
+from aval.security.jws import verify_compact_jws
+from aval.security.key_custody import KeyCustodyService, public_key_from_jwk
 
 __all__ = ["app", "create_app", "database_path", "PROTOCOL_KEY_IDS"]
 
 # The protocol lane signs and verifies with these four roles. They live in the runtime's
 # custody so one process has one set of keys, whichever door a request arrives through.
-PROTOCOL_KEY_IDS = ("merchant-key", "agent-key", "issuer-key", "holder-key")
+PROTOCOL_KEY_IDS = ("merchant-key", "agent-key", "issuer-key", "holder-key", "psp-key")
 
 SEED_MANDATE_ID = "mandate_01"
 SEED_AGENT_ID = "agent_01"
@@ -134,6 +162,28 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
         ),
         clock=clock,
     )
+    # The scoped payment credential: the agent is handed a token that works at this
+    # merchant, for this checkout, up to this amount — never a card.
+    delegation_service = DurableDelegationService(
+        vault=VaultService(
+            authorizer=CoreDelegationAuthorizer(
+                core=runtime.core, checkouts=SqliteCheckoutRepository(runtime.engine)
+            ),
+            tokenizer=OpaqueTestCredentialTokenizer(),
+        ),
+        engine=runtime.engine,
+    )
+    # Two receipts, two issuers: the merchant attests what was sold, the processor what
+    # was paid. A dispute is answered by reading both, not by trusting either.
+    receipts = ReceiptService(
+        checkout_issuer=Ap2ReceiptIssuer(
+            issuer="merchant_aval", custody=custody, kid="merchant-key", clock=clock
+        ),
+        payment_issuer=Ap2ReceiptIssuer(
+            issuer="psp_mock", custody=custody, kid="psp-key", clock=clock
+        ),
+    )
+
     # RFC 9421 over UCP needs the unparsed bytes, which FastAPI would otherwise consume.
     app.add_middleware(RawBodyMiddleware)
     app.include_router(create_ucp_discovery_router(custody=custody, key_id="merchant-key"))
@@ -141,6 +191,27 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
         create_ucp_checkout_router(
             checkout_service,
             verifier=Rfc9421Verifier(SqliteTrustedAgentRegistry(runtime.engine)),
+        )
+    )
+    app.include_router(create_delegate_payment_router(delegation_service))
+    app.include_router(
+        create_payment_capture_router(
+            PaymentRuntime(
+                core=runtime.core, engine=runtime.engine, clock=clock, receipts=receipts
+            )
+        )
+    )
+    app.include_router(
+        create_audit_router(
+            DisputeService(
+                reader=SqliteDisputeEvidenceReader(runtime.engine),
+                checkout_receipt_verifier=lambda token: verify_compact_jws(
+                    token, public_key_from_jwk(custody.public_jwk("merchant-key"))
+                ),
+                payment_receipt_verifier=lambda token: verify_compact_jws(
+                    token, public_key_from_jwk(custody.public_jwk("psp-key"))
+                ),
+            )
         )
     )
 
