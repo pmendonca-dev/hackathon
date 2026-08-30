@@ -2,6 +2,8 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { Clock, Eye, KeyRound, Send, ShieldOff, Sparkles } from 'lucide-react';
 
 import { useAval } from '../state/AvalContext.ts';
+import { AttackScenarios } from '../components/AttackScenarios.tsx';
+import { AuthorityAtlas } from '../components/AuthorityAtlas.tsx';
 import { EvaluationLadder } from '../components/EvaluationLadder.tsx';
 import { Badge, Button, EmptyNotice, Field, Panel } from '../components/ui.tsx';
 import { formatDateTime, formatMoney } from '../utils/format.ts';
@@ -29,6 +31,7 @@ export function HolderView() {
     selectMandate,
     escalations,
     lastRun,
+    chain,
     humanEntries,
     holderKid,
     walletReady,
@@ -63,10 +66,11 @@ export function HolderView() {
       <header className="page-heading">
         <div>
           <p className="eyebrow">Visão do titular</p>
-          <h1>A autoridade que eu dei, e tudo o que foi feito com ela.</h1>
+          <h1>Uma compra só encontra caminho dentro da autoridade que eu dei.</h1>
           <p>
-            A chave que assina revogação, limite e aprovação foi gerada neste navegador e
-            nunca sai dele. O servidor conhece apenas a metade pública.
+            A chave que move limite, revogação e aprovação nasce neste navegador. AVAL
+            mostra o percurso da decisão, mas o núcleo determinístico é quem permite ou
+            interrompe cada etapa.
           </p>
         </div>
         <Badge tone={walletReady ? 'verify' : 'escalate'}>
@@ -80,6 +84,17 @@ export function HolderView() {
           autoridade de gasto pode ser assinado — e nada será fingido.
         </div>
       )}
+
+      <AuthorityAtlas mandate={selected} lastRun={lastRun} chain={chain} />
+
+      <AttackScenarios
+        mandate={selected}
+        busy={busy}
+        onRun={async (nextInstruction) => {
+          setInstruction(nextInstruction);
+          await guard(() => runAgent(nextInstruction));
+        }}
+      />
 
       <section className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
         <Panel
@@ -140,7 +155,7 @@ export function HolderView() {
           )}
         </Panel>
 
-        <Panel eyebrow="Agente comprador" title="Diga em texto livre. O núcleo é que decide." action={<Send size={18} className="text-allow" aria-hidden="true" />}>
+        <Panel eyebrow="Agente comprador" title="Escreva livremente. A decisão continua sendo do núcleo." action={<Send size={18} className="text-allow" aria-hidden="true" />}>
           <form
             onSubmit={(event: FormEvent) => {
               event.preventDefault();
