@@ -20,6 +20,9 @@ from aval.application.authorization_core import AuthorizationCore
 from aval.domain.entities import AgentIdentity
 from aval.infrastructure.psp import DemoPspAdapter, PspControl
 from aval.infrastructure.sqlite.engine import create_sqlite_engine
+from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyRepository
+from aval.infrastructure.sqlite.models import metadata
+from aval.infrastructure.sqlite.transaction import run_in_write_transaction
 from aval.merchant.catalog import MERCHANT_KID
 from aval.merchant.offers import MerchantOfferService
 from aval.security.authorization_proof import AuthorizationProofService
@@ -67,6 +70,8 @@ def build_runtime(
     database_path: Path | None = None,
     now_provider: Callable[[], datetime] | None = None,
     operator_token: str | None = None,
+    custody: KeyCustodyService | None = None,
+    extra_key_ids: tuple[str, ...] = (),
 ) -> AvalRuntime:
     """Wire the system. Without a path the database is in memory, which is what the
     tests want and what a judge resetting the demo gets."""
@@ -80,9 +85,29 @@ def build_runtime(
             poolclass=StaticPool,
         )
     )
-    custody = KeyCustodyService()
-    custody.generate_es256(PROOF_KID)
-    proofs = AuthorizationProofService(clock=clock.now, custody=custody, kid=PROOF_KID)
+    # A caller may hand in custody it already published: a verifier that trusted a
+    # key yesterday must still find that key after a restart.
+    # The core refuses to create a schema on an engine it was handed: migrations own the
+    # database, not the application. The composition root is where that schema is put in
+    # place, which is what main's own entrypoint did before this was factored out.
+    metadata.create_all(engine)
+    custody = custody or KeyCustodyService()
+    for key_id in (PROOF_KID, *extra_key_ids):
+        if not custody.has(key_id):
+            custody.generate_es256(key_id)
+    # One-use proofs, remembered in the database rather than in this process: a proof
+    # spent before a restart must still be spent after one.
+    def consume_proof_jti(jti: str) -> bool:
+        return run_in_write_transaction(
+            engine,
+            lambda connection: SqliteIdempotencyRepository(connection).consume_once(
+                "authorization_proof", jti
+            ),
+        )
+
+    proofs = AuthorizationProofService(
+        clock=clock.now, custody=custody, kid=PROOF_KID, consume_jti=consume_proof_jti
+    )
     # Kept in its own custody: the seller signs offers, AVAL signs authorizations,
     # and neither can produce the other side of the exchange.
     merchant_custody = KeyCustodyService()

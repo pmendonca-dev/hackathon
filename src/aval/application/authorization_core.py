@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from aval.application.ports import AuthorizationProofIssuer, SettlementAdapter
 from aval.domain.entities import (
     AgentIdentity,
+    AuditEvent,
     Dispute,
     Escalation,
     Mandate,
@@ -48,6 +49,8 @@ from aval.infrastructure.sqlite.idempotency_repository import SqliteIdempotencyR
 from aval.infrastructure.sqlite.capture_repository import SqliteCaptureRepository
 from aval.infrastructure.sqlite.policy_repository import SqlitePolicyRepository
 from aval.infrastructure.sqlite.revocation_repository import SqliteRevocationRepository
+from aval.infrastructure.sqlite.audit_repository import SqliteAuditRepository
+from aval.infrastructure.sqlite.lock_repository import SqliteMandateLockRepository
 from aval.infrastructure.sqlite.transaction import run_in_write_transaction
 
 
@@ -81,8 +84,12 @@ class AuthorizationCommand:
 @dataclass(frozen=True)
 class CaptureCommand(AuthorizationCommand):
     idempotency_key: str
+    # `terms_hash` and `canonical_offer` bind the purchase to the merchant's signed
+    # offer; `instrument_id` names the scoped payment credential. They answer different
+    # questions — what was sold, and what pays for it — so both travel here.
     terms_hash: str | None = None
     canonical_offer: str | None = None
+    instrument_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -138,10 +145,13 @@ class AuthorizationCore:
         authorization_proof_issuer: AuthorizationProofIssuer | None = None,
     ) -> None:
         self._clock = clock
-        self._engine = engine or create_engine(
-            "sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-        )
-        metadata.create_all(self._engine)
+        if engine is None:
+            self._engine = create_engine(
+                "sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+            )
+            metadata.create_all(self._engine)
+        else:
+            self._engine = engine
         self._settlement_adapter = settlement_adapter
         self._authorization_proof_issuer = authorization_proof_issuer
 
@@ -287,23 +297,40 @@ class AuthorizationCore:
                         continue
                     if payload.get("mandate_id") != mandate.id:
                         continue
-                    if payload.get("scope") not in authority.allowed_scopes:
+                    scope = payload.get("scope")
+                    if not isinstance(scope, str) or not self._is_canonical_revocation_scope(scope):
+                        raise ValueError("invalid revocation scope")
+                    if scope not in authority.allowed_scopes:
                         raise ValueError("revocation scope is not allowed")
+                    if authority.role in (RevocationRole.GUARDIAN, RevocationRole.ISSUER) and scope != "mandate":
+                        raise ValueError("guardian and issuer may only revoke the mandate")
                     if not payload.get("reason") or not isinstance(payload.get("epoch"), int):
                         raise ValueError("revocation payload is incomplete")
+                    SqliteMandateLockRepository(connection).acquire(
+                        mandate.id, touched_at=self._clock()
+                    )
                     revocation = Revocation(
                         id=f"rev_{uuid4().hex}", mandate_id=mandate.id, authority_id=authority.id,
-                        scope=str(payload["scope"]), reason=str(payload["reason"]), epoch=int(payload["epoch"]),
+                        scope=scope, reason=str(payload["reason"]), epoch=int(payload["epoch"]),
                         signed_jws=token, revoked_at=self._clock(),
                     )
                     SqliteRevocationRepository(connection).append(revocation)
                     metadata = dict(mandate.revocation_metadata)
                     metadata["epoch"] = revocation.epoch
-                    SqliteMandateRepository(connection).put(replace(mandate, status=MandateStatus.REVOKED, revocation_metadata=metadata))
+                    # Only a mandate-scoped revocation ends the mandate. An instrument
+                    # or merchant scope withdraws part of the authority and leaves the
+                    # rest standing, which is why the status is not touched here.
+                    if scope == "mandate":
+                        mandate = replace(mandate, status=MandateStatus.REVOKED, revocation_metadata=metadata)
+                    else:
+                        mandate = replace(mandate, revocation_metadata=metadata)
+                    SqliteMandateRepository(connection).put(mandate)
+                    # `revocation.{role}` names *who* withdrew the authority, which is
+                    # what makes an emergency operator revocation answerable later.
                     SqliteAuditLedger(connection).append(
                         mandate_id=mandate.id,
-                        event_type="mandate_revoked",
-                        human_summary="Mandato revogado pelo titular.",
+                        event_type=f"revocation.{authority.role.value}",
+                        human_summary=f"Revogação de escopo {scope} por {authority.role.value} aceita.",
                         actor=f"authority:{authority.kid}",
                         detail={
                             "scope": revocation.scope,
@@ -802,6 +829,38 @@ class AuthorizationCore:
 
         return run_in_write_transaction(self._engine, operation)
 
+    def reservation_for_proof(self, reservation_id: str) -> Reservation | None:
+        """The committed reservation a proof names.
+
+        The merchant does not carry this and must not be asked to: the proof binding is
+        checked against what AVAL recorded, not against what the presenter claims.
+        """
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                select(
+                    reservations.c.id,
+                    reservations.c.mandate_id,
+                    reservations.c.checkout_intent_id,
+                    reservations.c.amount_minor_units,
+                    reservations.c.status,
+                    reservations.c.transaction_hash,
+                    checkout_intents.c.currency,
+                    checkout_intents.c.scale,
+                )
+                .join(checkout_intents, reservations.c.checkout_intent_id == checkout_intents.c.id)
+                .where(reservations.c.id == reservation_id)
+            ).mappings().one_or_none()
+        if row is None:
+            return None
+        return Reservation(
+            row["id"],
+            row["mandate_id"],
+            row["checkout_intent_id"],
+            Money(row["amount_minor_units"], row["currency"], row["scale"]),
+            ReservationStatus(row["status"]),
+            row["transaction_hash"],
+        )
+
     def reservation_authority_state(self, reservation_id: str) -> dict | None:
         """Answer *is the authority behind this purchase still standing* without saying
         whose it was. The merchant needs the answer; it is not entitled to the mandate."""
@@ -855,12 +914,32 @@ class AuthorizationCore:
         approved_reasons: frozenset[str] = frozenset(),
     ) -> tuple[AuthorizationResult, Mandate | None]:
         mandate = SqliteMandateRepository(connection).get(command.mandate_id)
-        revoked = mandate is not None and SqliteRevocationRepository(connection).is_revoked(command.mandate_id)
-        limit, _ = SqlitePolicyRepository(connection).active_limit_for(command.mandate_id, mandate.limit) if mandate else (None, 0)
         if mandate is None:
             return self._reject("mandate_not_found", "Mandato não encontrado."), None
+        try:
+            revocations = SqliteRevocationRepository(connection)
+            revoked = revocations.is_revoked(command.mandate_id)
+            budget_zero = revocations.has_scope(command.mandate_id, "budget:zero")
+            merchant_revoked = revocations.has_scope(command.mandate_id, f"merchant:{command.merchant_id}")
+        except Exception:
+            return self._reject("revocation_unavailable", "Revogação indisponível; captura recusada."), mandate
+        limit, _ = SqlitePolicyRepository(connection).active_limit_for(command.mandate_id, mandate.limit)
         if revoked or mandate.status is MandateStatus.REVOKED:
             return self._reject("mandate_revoked", "Mandato revogado."), mandate
+        instrument_id = getattr(command, "instrument_id", None)
+        instrument_revoked = instrument_id is not None and revocations.has_scope(
+            command.mandate_id, f"instrument:{instrument_id}"
+        )
+        if merchant_revoked:
+            return self._reject("merchant_revoked", "Merchant revogado para este mandato."), mandate
+        if instrument_revoked:
+            return self._reject("instrument_revoked", "Instrumento revogado para este mandato."), mandate
+        if budget_zero:
+            return AuthorizationResult(
+                AuthorizationDecision.AWAITING_HUMAN,
+                "budget_revoked",
+                "Orçamento do mandato foi zerado; aprovação humana necessária.",
+            ), mandate
         if mandate.status is MandateStatus.EXPIRED or self._clock() >= mandate.expires_at:
             return self._reject("mandate_expired", "Mandato expirado."), mandate
         if (
@@ -912,10 +991,18 @@ class AuthorizationCore:
         agent_id: str | None = None,
         approved_reasons: frozenset[str] = frozenset(),
     ) -> CaptureResult:
-        request_hash = hashlib.sha256(json.dumps({"mandate": command.mandate_id, "checkout": command.checkout_id, "merchant": command.merchant_id, "amount": command.total.minor_units, "currency": command.total.currency, "scale": command.total.scale, "category": command.category, "terms": command.terms_hash}, sort_keys=True).encode()).hexdigest()
+        # Every field that makes this a different purchase belongs in the hash: change
+        # the category, the terms or the instrument and it is not the same charge.
+        request_hash = hashlib.sha256(json.dumps({"mandate": command.mandate_id, "checkout": command.checkout_id, "merchant": command.merchant_id, "amount": command.total.minor_units, "currency": command.total.currency, "scale": command.total.scale, "category": command.category, "terms": command.terms_hash, "instrument": command.instrument_id}, sort_keys=True).encode()).hexdigest()
         def prepare(connection):
+            SqliteMandateLockRepository(connection).acquire(
+                command.mandate_id, touched_at=self._clock()
+            )
             idem = SqliteIdempotencyRepository(connection)
-            claim = idem.get_or_claim("capture", command.idempotency_key, request_hash)
+            try:
+                claim = idem.get_or_claim("capture", command.idempotency_key, request_hash)
+            except Exception:
+                return ("result", CaptureResult(False, "idempotency_unavailable"))
             if claim.state == "REPLAY":
                 return ("replay", claim.response_body)
             if claim.state == "MISMATCH":
@@ -1036,8 +1123,11 @@ class AuthorizationCore:
                     "amount_minor_units": command.total.minor_units,
                     "currency": command.total.currency,
                     "scale": command.total.scale,
+                    "instrument_id": command.instrument_id,
                     "reason_code": result.reason_code,
                     "settlement_reference": result.settlement_reference,
+                    # The capture vocabulary the checkout adapters read.
+                    "capture_state": "capture.committed" if result.approved else "capture.declined",
                 },
                 occurred_at=self._clock(),
             )
@@ -1063,6 +1153,16 @@ class AuthorizationCore:
             value.get("escalation_id"),
             value.get("authorization_proof"),
         )
+
+    @staticmethod
+    def _is_canonical_revocation_scope(scope: str) -> bool:
+        if scope in {"mandate", "budget:zero"}:
+            return True
+        if scope.startswith("merchant:"):
+            return bool(scope.removeprefix("merchant:"))
+        if scope.startswith("instrument:vt_"):
+            return len(scope) > len("instrument:vt_")
+        return False
 
     @staticmethod
     def _reject(reason_code: str, human_summary: str) -> AuthorizationResult:

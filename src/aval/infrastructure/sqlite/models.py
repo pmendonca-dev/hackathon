@@ -128,8 +128,16 @@ idempotency_records = Table(
     Column("request_hash", String, nullable=False),
     Column("state", String, nullable=False),
     Column("response_body", Text),
+    Column("retained_until", DateTime(timezone=True), nullable=False),
     CheckConstraint("state IN ('IN_FLIGHT', 'COMPLETED')", name="idempotency_state"),
     UniqueConstraint("scope", "idempotency_key", name="idempotency_scope_key"),
+)
+
+mandate_locks = Table(
+    "mandate_locks",
+    metadata,
+    Column("mandate_id", ForeignKey("mandates.id"), primary_key=True),
+    Column("touched_at", DateTime(timezone=True), nullable=False),
 )
 
 evidence = Table(
@@ -223,6 +231,7 @@ CORE_TABLE_NAMES = (
     "authorization_proofs",
     "capture_attempts",
     "idempotency_records",
+    "mandate_locks",
     "evidence",
     "audit_events",
     "agent_profiles",

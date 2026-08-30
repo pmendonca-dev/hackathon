@@ -20,7 +20,7 @@ from collections.abc import Callable, Mapping
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from aval.security.content_digest import content_digest_sha256, verify_content_digest_sha256
-from aval.security.ecdsa import sign_es256_raw, verify_es256_raw
+from aval.security.ecdsa import verify_es256_raw
 from aval.security.key_custody import KeyCustodyService
 
 LABEL = "sig1"
@@ -125,7 +125,7 @@ def sign_request(
     digest = content_digest_sha256(body)
     params = build_params(keyid=kid, created=created, nonce=nonce or secrets.token_hex(8))
     base = signature_base(method=method, path=path, content_digest=digest, raw_params=params)
-    signature = sign_es256_raw(custody.private_key(kid), base)
+    signature = custody.sign_es256(kid, base)
     return {
         "Content-Digest": digest,
         "Signature-Input": f"{LABEL}={params}",

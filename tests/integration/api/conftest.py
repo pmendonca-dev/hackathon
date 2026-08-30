@@ -13,7 +13,6 @@ from fastapi.testclient import TestClient
 from aval.api.app import create_app
 from aval.runtime import build_runtime
 from aval.security.http_signature import build_params, signature_base
-from aval.security.ecdsa import sign_es256_raw
 from aval.security.content_digest import content_digest_sha256
 from aval.security.jws import sign_compact_jws
 from aval.security.key_custody import KeyCustodyService
@@ -163,8 +162,8 @@ class Harness:
         )
         if not cover_body:
             params = params.replace(' "content-digest"', "", 1)
-        signature = sign_es256_raw(
-            self.custody.private_key(signing_kid),
+        signature = self.custody.sign_es256(
+            signing_kid,
             signature_base(method="POST", path=path, content_digest=digest, raw_params=params),
         )
         headers = {

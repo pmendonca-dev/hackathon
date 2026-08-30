@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError
-from aval.api.offer_binding import offer_claims
+from aval.api.offer_binding import offer_claims, unverified_proof_claims
 from aval.merchant.offers import terms_hash_of
 
 router = APIRouter(tags=["merchant"])
@@ -72,12 +72,30 @@ def verify(request: Request, body: VerifyRequest) -> dict[str, Any]:
         )
     )
 
+    # The proof names a reservation; the binding is then checked against what AVAL
+    # recorded for it, so a payload edited in flight cannot pass by simply being
+    # self-consistent. The presenter supplies the token and nothing else.
+    named = unverified_proof_claims(body.authorization_proof)
+    reservation = (
+        None if named is None else runtime.core.reservation_for_proof(str(named.get("reservation_id", "")))
+    )
+    state = (
+        None if reservation is None else runtime.core.reservation_authority_state(reservation.id)
+    )
     proof: dict[str, Any] | None = None
-    try:
-        proof = runtime.proofs.verify_and_consume(body.authorization_proof)
-        checks.append(_check("authorization_proof_valid", True, "ES256 · chave do AVAL"))
-    except ValueError as error:
-        checks.append(_check("authorization_proof_valid", False, str(error)))
+    if reservation is None or state is None:
+        checks.append(_check("authorization_proof_valid", False, "reserva desconhecida"))
+    else:
+        try:
+            proof = runtime.proofs.verify_and_consume(
+                body.authorization_proof,
+                reservation=reservation,
+                policy_version=state["policy_version"],
+                revocation_epoch=state["epoch"],
+            )
+            checks.append(_check("authorization_proof_valid", True, "ES256 · chave do AVAL"))
+        except ValueError as error:
+            checks.append(_check("authorization_proof_valid", False, str(error)))
 
     if proof is None:
         checks.append(_check("terms_hash_matches", False, "sem prova para comparar"))
@@ -101,7 +119,6 @@ def verify(request: Request, body: VerifyRequest) -> dict[str, Any]:
         )
     )
 
-    state = runtime.core.reservation_authority_state(str(proof.get("reservation_id", "")))
     if state is None:
         checks.append(_check("authority_still_valid", False, "reserva desconhecida"))
     else:

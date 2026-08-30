@@ -39,7 +39,7 @@ def bind_offer(
 ) -> BoundOffer:
     try:
         claims = verify_compact_jws(
-            token, runtime.merchant_custody.public_key(MERCHANT_KID)
+            token, runtime.merchant_custody.verifying_key(MERCHANT_KID)
         )
     except ValueError as error:
         raise ApiError(401, "offer_signature_invalid", "Oferta não assinada pelo merchant.") from error
@@ -83,9 +83,17 @@ def bind_offer(
 def offer_claims(token: str, runtime: AvalRuntime) -> dict:
     """Read a merchant offer for verification purposes only."""
     try:
-        return verify_compact_jws(token, runtime.merchant_custody.public_key(MERCHANT_KID))
+        return verify_compact_jws(token, runtime.merchant_custody.verifying_key(MERCHANT_KID))
     except ValueError as error:
         raise ApiError(401, "offer_signature_invalid", "Oferta não assinada pelo merchant.") from error
+
+
+def unverified_proof_claims(token: str) -> dict | None:
+    """Read a proof's claims without trusting them, only to find what it names.
+
+    Everything that matters is verified straight after, against the record AVAL kept.
+    """
+    return unverified_offer_claims(token)
 
 
 def unverified_offer_claims(token: str) -> dict | None:
