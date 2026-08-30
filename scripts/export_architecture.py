@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 
@@ -53,10 +54,67 @@ def find_chrome() -> Path:
     )
 
 
+def print_pdf(chrome: Path, page: Path, target: Path, extra_css: str = "") -> None:
+    source = page
+    if extra_css:
+        # A probe copy, so the real page is never edited to be measured.
+        source = target.with_suffix(".probe.html")
+        source.write_text(
+            page.read_text(encoding="utf-8").replace(
+                "</style>", f"</style>\n<style>{extra_css}</style>", 1
+            ),
+            encoding="utf-8",
+        )
+    result = subprocess.run(
+        [
+            str(chrome), "--headless", "--disable-gpu", "--no-sandbox",
+            "--no-pdf-header-footer",
+            # The page pulls its typefaces from the network. Give them time to arrive:
+            # printing before they land silently falls back and changes every line break.
+            "--virtual-time-budget=8000",
+            f"--print-to-pdf={target}", source.as_uri(),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if extra_css:
+        source.unlink(missing_ok=True)
+    if result.returncode != 0 or not target.is_file():
+        sys.stderr.write(result.stderr)
+        raise SystemExit("Chrome não conseguiu imprimir a página")
+
+
+def page_count(pdf: Path) -> int:
+    """Count pages without a PDF library: `/Type /Page` outside the page tree node."""
+    raw = pdf.read_bytes()
+    return raw.count(b"/Type /Page") - raw.count(b"/Type /Pages")
+
+
+def check_no_overflow(chrome: Path, sections: int) -> None:
+    """Fail loudly when a section is taller than its sheet.
+
+    Every section is a fixed 297mm box, so anything past that is silently *clipped* on
+    print — a paragraph loses its last line and the artifact looks finished. Printing a
+    second time with the height released turns that same overflow into extra pages, and
+    the count is the alarm. This is the check that would have caught two cropped pages.
+    """
+    with tempfile.TemporaryDirectory() as raw:
+        probe = Path(raw) / "probe.pdf"
+        print_pdf(chrome, SOURCE, probe, "\n.page { height: auto !important; min-height: 297mm; }")
+        pages = page_count(probe)
+    if pages > sections:
+        raise SystemExit(
+            f"{pages - sections} seção(ões) passam da folha e seriam cortadas na impressão.\n"
+            f"Reimprima com `.page {{ height: auto }}` e veja onde o conteúdo cai."
+        )
+
+
 def main() -> None:
     if not SOURCE.is_file():
         raise SystemExit(f"{SOURCE} não existe")
     chrome = find_chrome()
+    sections = SOURCE.read_text(encoding="utf-8").count('<section class="page')
+    check_no_overflow(chrome, sections)
     result = subprocess.run(
         [
             str(chrome), "--headless", "--disable-gpu", "--no-sandbox",

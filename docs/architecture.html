@@ -173,6 +173,7 @@ td em { color: var(--ink-3); }
 
 figure { margin: 0; }
 figure svg { display: block; width: 100%; height: auto; }
+figure.fit svg { width: auto; height: 192mm; margin: 0 auto; }
 figcaption { font-size: 18.2px; color: var(--ink-3); margin-top: 11.7px; }
 
 .note {
@@ -719,9 +720,10 @@ figcaption { font-size: 18.2px; color: var(--ink-3); margin-top: 11.7px; }
 
     <!-- operador -> dinheiro : bloqueado -->
     <line x1="874" y1="189" x2="856" y2="189" stroke="#4F46C7" stroke-width="2.6" stroke-dasharray="7 5"/>
-    <circle cx="843" cy="189" r="15" fill="#FFFFFF" stroke="#B4181C" stroke-width="2.6"/>
-    <line x1="833" y1="199" x2="853" y2="179" stroke="#B4181C" stroke-width="2.6"/>
-    <text x="843" y="268" text-anchor="middle" font-family="Inter, sans-serif" font-size="13.5" font-weight="640" fill="#B4181C">nunca move</text>
+    <circle cx="843" cy="189" r="17" fill="#FFFFFF" stroke="#B4181C" stroke-width="2.8"/>
+    <line x1="832" y1="200" x2="854" y2="178" stroke="#B4181C" stroke-width="2.8"/>
+    <text x="843" y="234" text-anchor="middle" font-family="Inter, sans-serif" font-size="13.5" font-weight="640" fill="#B4181C">nunca</text>
+    <text x="843" y="252" text-anchor="middle" font-family="Inter, sans-serif" font-size="13.5" font-weight="640" fill="#B4181C">move</text>
   </svg>
   </figure>
 
@@ -763,7 +765,7 @@ figcaption { font-size: 18.2px; color: var(--ink-3); margin-top: 11.7px; }
       recebendo cada um deles.</div>
   </div>
 
-  <figure style="margin-top:12px">
+  <figure class="fit" style="margin-top:12px">
   <svg viewBox="0 0 1480 856" role="img"
        aria-label="Sequência em quatro fases: o titular cria o mandato pelo navegador que gera o próprio par de chaves; o agente descobre ofertas, autoriza, captura e liquida; o merchant verifica sem receber o mandato nem o comprador; e a revogação assinada faz a tentativa seguinte parar no terceiro degrau.">
     <defs>
@@ -781,7 +783,7 @@ figcaption { font-size: 18.2px; color: var(--ink-3); margin-top: 11.7px; }
       <rect x="14" y="532" width="1452" height="100" rx="9" fill="#F6F8FB"/>
       <rect x="14" y="642" width="1452" height="196" rx="9" fill="#FFFFFF" stroke="#EDF1F5"/>
     </g>
-    <g font-family="JetBrains Mono, monospace" font-size="12" letter-spacing="1.3" fill="#8A94A0">
+    <g font-family="JetBrains Mono, monospace" font-size="13.5" letter-spacing="1.3" fill="#8A94A0">
       <text x="28" y="76">1 · O MANDATO NASCE</text>
       <text x="28" y="232">2 · O AGENTE DESCOBRE, DECIDE E PAGA</text>
       <text x="28" y="552">3 · O MERCHANT VERIFICA</text>
@@ -800,7 +802,7 @@ figcaption { font-size: 18.2px; color: var(--ink-3); margin-top: 11.7px; }
     </g>
 
     <!-- cabeçalhos -->
-    <g font-family="Inter, sans-serif" font-size="14.5" font-weight="600" text-anchor="middle">
+    <g font-family="Inter, sans-serif" font-size="16.5" font-weight="600" text-anchor="middle">
       <rect x="15"   y="0" width="140" height="42" rx="8" fill="#FFFFFF" stroke="#38424E" stroke-width="1.5"/><text x="85"   y="27" fill="#0E1319">Titular</text>
       <rect x="205"  y="0" width="140" height="42" rx="8" fill="#EDF3FF" stroke="#1D4ED8" stroke-width="1.5"/><text x="275"  y="27" fill="#1D4ED8">Navegador</text>
       <rect x="400"  y="0" width="140" height="42" rx="8" fill="#FFFFFF" stroke="#38424E" stroke-width="1.5"/><text x="470"  y="27" fill="#0E1319">Agente</text>
@@ -810,79 +812,79 @@ figcaption { font-size: 18.2px; color: var(--ink-3); margin-top: 11.7px; }
       <rect x="1315" y="0" width="140" height="42" rx="8" fill="#FFFFFF" stroke="#0E1319" stroke-width="1.8"/><text x="1385" y="27" fill="#0E1319">Trilha</text>
     </g>
 
-    <g font-family="Inter, sans-serif" font-size="13.5" text-anchor="middle">
+    <g font-family="Inter, sans-serif" font-size="15.5" text-anchor="middle">
       <!-- ---- fase 1 ---- -->
       <line x1="85" y1="104" x2="268" y2="104" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
-      <text x="176" y="96" fill="#38424E">cria o mandato</text>
+      <text x="176" y="92" fill="#38424E">cria o mandato</text>
 
       <path d="M275,124 C315,124 315,152 275,152" fill="none" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
-      <text x="330" y="142" text-anchor="start" fill="#1D4ED8" font-weight="600">gera o par P-256 — a metade privada nunca sai do navegador</text>
+      <text x="330" y="138" text-anchor="start" fill="#1D4ED8" font-weight="600">gera o par P-256 — a metade privada nunca sai do navegador</text>
 
       <line x1="275" y1="176" x2="723" y2="176" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
-      <text x="499" y="168" fill="#1D4ED8" font-weight="600">POST /mandates + JWK público</text>
+      <text x="499" y="164" fill="#1D4ED8" font-weight="600">POST /mandates + JWK público</text>
 
       <line x1="730" y1="196" x2="1378" y2="196" stroke="#8A94A0" stroke-width="1.6" marker-end="url(#sMute)"/>
-      <text x="1054" y="188" fill="#8A94A0" font-family="JetBrains Mono, monospace" font-size="12.5">mandate.registered</text>
+      <text x="1054" y="184" fill="#8A94A0" font-family="JetBrains Mono, monospace" font-size="14">mandate.registered</text>
 
       <!-- ---- fase 2 ---- -->
       <line x1="85" y1="258" x2="463" y2="258" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
-      <text x="274" y="250" fill="#38424E">“compre um voo para Córdoba abaixo de $150”</text>
+      <text x="274" y="246" fill="#38424E">“compre um voo para Córdoba abaixo de $150”</text>
 
       <line x1="470" y1="286" x2="978" y2="286" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
-      <text x="724" y="278" fill="#38424E" font-family="JetBrains Mono, monospace" font-size="12.5">GET /merchant/offers</text>
+      <text x="724" y="274" fill="#38424E" font-family="JetBrains Mono, monospace" font-size="14">GET /merchant/offers</text>
 
       <line x1="985" y1="312" x2="477" y2="312" stroke="#8A94A0" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#sMute)"/>
-      <text x="731" y="304" fill="#8A94A0">ofertas assinadas pelo vendedor — JWS + nonce próprio</text>
+      <text x="731" y="300" fill="#8A94A0">ofertas assinadas pelo vendedor — JWS + nonce próprio</text>
 
       <line x1="470" y1="342" x2="723" y2="342" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
-      <text x="596" y="334" fill="#1D4ED8" font-weight="600">POST /authorize · assinado RFC 9421</text>
+      <text x="596" y="330" fill="#1D4ED8" font-weight="600">POST /authorize · assinado RFC 9421</text>
 
       <path d="M730,362 C772,362 772,392 730,392" fill="none" stroke="#1D4ED8" stroke-width="2.4" marker-end="url(#sAuth)"/>
-      <text x="788" y="382" text-anchor="start" fill="#1D4ED8" font-weight="600">escada de avaliação — dezesseis degraus, autoridade antes de dinheiro</text>
+      <text x="788" y="378" text-anchor="start" fill="#1D4ED8" font-weight="600">escada de avaliação — dezesseis degraus, autoridade antes de dinheiro</text>
 
       <line x1="730" y1="416" x2="477" y2="416" stroke="#15803D" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#sOk)"/>
-      <text x="603" y="408" fill="#15803D" font-weight="600">authorized + evaluation_trace</text>
+      <text x="603" y="404" fill="#15803D" font-weight="600">authorized + evaluation_trace</text>
 
       <line x1="470" y1="444" x2="723" y2="444" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
-      <text x="596" y="436" fill="#1D4ED8" font-weight="600">POST /capture</text>
+      <text x="596" y="432" fill="#1D4ED8" font-weight="600">POST /capture</text>
 
       <line x1="730" y1="470" x2="1178" y2="470" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
-      <text x="954" y="462" fill="#38424E">autorizar a cobrança</text>
+      <text x="954" y="458" fill="#38424E">autorizar a cobrança</text>
 
       <line x1="1185" y1="494" x2="737" y2="494" stroke="#8A94A0" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#sMute)"/>
-      <text x="961" y="486" fill="#8A94A0">liquidado</text>
+      <text x="961" y="482" fill="#8A94A0">liquidado</text>
 
       <line x1="730" y1="514" x2="1378" y2="514" stroke="#8A94A0" stroke-width="1.6" marker-end="url(#sMute)"/>
-      <text x="1054" y="506" fill="#8A94A0" font-family="JetBrains Mono, monospace" font-size="12.5">capture.committed</text>
+      <text x="1054" y="502" fill="#8A94A0" font-family="JetBrains Mono, monospace" font-size="14">capture.committed</text>
 
       <!-- ---- fase 3 ---- -->
       <line x1="470" y1="578" x2="978" y2="578" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
-      <text x="724" y="570" fill="#38424E">entrega a prova de autorização</text>
+      <text x="724" y="566" fill="#38424E">entrega a prova de autorização</text>
 
       <line x1="985" y1="602" x2="737" y2="602" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
-      <text x="861" y="594" fill="#38424E" font-family="JetBrains Mono, monospace" font-size="12.5">POST /merchant/verify</text>
+      <text x="861" y="590" fill="#38424E" font-family="JetBrains Mono, monospace" font-size="14">POST /merchant/verify</text>
 
       <line x1="730" y1="624" x2="978" y2="624" stroke="#15803D" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#sOk)"/>
-      <text x="854" y="616" fill="#15803D" font-weight="600">accepted — sem mandate_id, sem principal_id</text>
+      <text x="854" y="612" fill="#15803D" font-weight="600">accepted — sem mandate_id, sem principal_id</text>
 
       <!-- ---- fase 4 ---- -->
       <line x1="85" y1="690" x2="268" y2="690" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
-      <text x="176" y="682" fill="#38424E">revogar</text>
+      <text x="176" y="678" fill="#38424E">revogar</text>
 
       <path d="M275,710 C315,710 315,738 275,738" fill="none" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
-      <text x="330" y="728" text-anchor="start" fill="#1D4ED8" font-weight="600">assina o JWS com a chave local — o servidor nunca assina no lugar dela</text>
+      <text x="330" y="724" text-anchor="start" fill="#1D4ED8" font-weight="600">assina o JWS com a chave local — o servidor nunca assina no lugar dela</text>
 
       <line x1="275" y1="762" x2="723" y2="762" stroke="#1D4ED8" stroke-width="1.8" marker-end="url(#sAuth)"/>
-      <text x="499" y="754" fill="#1D4ED8" font-weight="600">POST /mandates/{id}/revocation</text>
+      <text x="499" y="750" fill="#1D4ED8" font-weight="600">POST /mandates/{id}/revocation</text>
 
       <line x1="730" y1="788" x2="1378" y2="788" stroke="#8A94A0" stroke-width="1.6" marker-end="url(#sMute)"/>
-      <text x="1054" y="780" fill="#8A94A0" font-family="JetBrains Mono, monospace" font-size="12.5">revocation.holder</text>
+      <text x="1054" y="776" fill="#8A94A0" font-family="JetBrains Mono, monospace" font-size="14">revocation.holder</text>
 
       <line x1="470" y1="812" x2="723" y2="812" stroke="#38424E" stroke-width="1.8" marker-end="url(#sInk)"/>
-      <text x="596" y="804" fill="#38424E">tenta comprar de novo</text>
+      <text x="596" y="800" fill="#38424E">tenta comprar de novo</text>
 
       <line x1="730" y1="836" x2="477" y2="836" stroke="#B4181C" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#sNo)"/>
-      <text x="603" y="828" fill="#B4181C" font-weight="640">mandate_revoked — parou no 3º degrau</text>
+      <text x="603" y="824" fill="#B4181C" font-weight="640">mandate_revoked — parou no 3º degrau</text>
     </g>
   </svg>
   </figure>
@@ -1123,7 +1125,7 @@ figcaption { font-size: 18.2px; color: var(--ink-3); margin-top: 11.7px; }
       desenhada</b>.</div>
   </div>
 
-  <div class="two" style="margin-top:20px">
+  <div class="three" style="margin-top:20px">
     <div class="card">
       <h3>SQLite, com WAL e <code>BEGIN IMMEDIATE</code></h3>
       <p>Escritor único e transação imediata, porque a corrida que importa — capturar enquanto alguém
