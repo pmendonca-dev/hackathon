@@ -224,6 +224,16 @@ class AuthorizationCore:
         self._settlement_adapter = settlement_adapter
         self._authorization_proof_issuer = authorization_proof_issuer
 
+    def attach_settlement_adapter(self, adapter: SettlementAdapter) -> None:
+        """Wire the processor after construction.
+
+        A real processor has to read the mandate to know which card it is charging, so
+        it needs the core that the core would otherwise need it. This breaks the cycle
+        at wiring time and nowhere else — the core still knows nothing about which
+        processor it got.
+        """
+        self._settlement_adapter = adapter
+
     def register_mandate(self, mandate: Mandate) -> None:
         def operation(connection) -> None:
             policies = SqlitePolicyRepository(connection)
