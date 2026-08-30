@@ -45,6 +45,9 @@ export interface MandateView {
   revocation_epoch: number;
   usage_limit: UsageLimit | null;
   uses_in_window: number;
+  /** The card's last four, never its token: the trail is read by people who may not present it. */
+  instrument_label: string | null;
+  instrument_revoked: boolean;
 }
 
 export interface AgentRun {
@@ -280,6 +283,47 @@ export class AuthorizationGateway {
     return this.#request('/agent/purchase', {
       method: 'POST',
       body: { mandate_id: mandateId, instruction },
+    });
+  }
+
+  // ---- the card ----------------------------------------------------------
+  //
+  // A mandate is born unfunded: it is authority to spend, and the means of paying is
+  // the person's to provide. These three calls are how they provide it, and the number
+  // is typed on the processor's page — never here. All three are holder-signed, because
+  // attaching a card decides whose money the agent will spend.
+
+  openInstrumentSession(
+    mandateId: string,
+    authorizationJws: string,
+  ): Promise<{ session_id: string; url: string }> {
+    return this.#request(`/mandates/${encodeURIComponent(mandateId)}/instrument/session`, {
+      method: 'POST',
+      body: { authorization_jws: authorizationJws },
+    });
+  }
+
+  /** `ready: false` is the normal answer while the person is still on the form. */
+  readInstrumentSession(
+    mandateId: string,
+    sessionId: string,
+    authorizationJws: string,
+  ): Promise<{ ready: boolean; token?: string; label?: string }> {
+    return this.#request(
+      `/mandates/${encodeURIComponent(mandateId)}/instrument/session/` +
+        `${encodeURIComponent(sessionId)}?authorization_jws=${encodeURIComponent(authorizationJws)}`,
+    );
+  }
+
+  bindInstrument(
+    mandateId: string,
+    token: string,
+    label: string,
+    authorizationJws: string,
+  ): Promise<{ instrument_label: string; instrument_revocation_scope: string }> {
+    return this.#request(`/mandates/${encodeURIComponent(mandateId)}/instrument`, {
+      method: 'POST',
+      body: { token, label, authorization_jws: authorizationJws },
     });
   }
 

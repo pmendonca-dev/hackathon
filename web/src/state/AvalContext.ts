@@ -72,6 +72,8 @@ export interface AvalContextValue {
     expiresAt: string;
     usageLimit: { max_uses: number; window_seconds: number } | null;
   }): Promise<void>;
+  /** Open the processor's card form and name what was left on it. Holder-signed. */
+  registerCard(): Promise<void>;
   runAgent(instruction: string): Promise<void>;
   decideEscalation(escalationId: string, decision: 'approve' | 'deny'): Promise<void>;
   changeLimit(minorUnits: number): Promise<void>;

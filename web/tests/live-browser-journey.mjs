@@ -67,7 +67,45 @@ check(
   listed.mandates[0]?.usage_limit?.max_uses === 3,
 );
 
-// 3 — the agent buys, and the ladder comes back.
+// 3 — the card. A mandate is born unfunded, so the core refuses a capture until one is
+// named; the number is typed on the processor's page and this browser only signs the
+// binding. Proving the refusal first is the point — a mandate that authorizes and cannot
+// pay is a different state from one that was never allowed to.
+const unfunded = await gateway.agentPurchase(mandateId, 'compre um voo para Córdoba abaixo de $150');
+check(
+  'um mandato sem cartão não paga',
+  unfunded.reason_code === 'instrument_not_in_mandate',
+  unfunded.reason_code,
+);
+
+const sessionClaim = { mandate_id: mandateId, scope: 'instrument_session' };
+const cardSession = await gateway.openInstrumentSession(
+  mandateId,
+  await signCompactJws(sessionClaim, wallet),
+);
+const registered = await gateway.readInstrumentSession(
+  mandateId,
+  cardSession.session_id,
+  await signCompactJws(sessionClaim, wallet),
+);
+const bound = await gateway.bindInstrument(
+  mandateId,
+  registered.token,
+  registered.label,
+  await signCompactJws(
+    {
+      mandate_id: mandateId,
+      scope: 'instrument',
+      instrument_token: registered.token,
+      instrument_label: registered.label,
+      supersedes: null,
+    },
+    wallet,
+  ),
+);
+check('o cartão é vinculado com assinatura do navegador', Boolean(bound.instrument_label), bound.instrument_label);
+
+// 4 — the agent buys, and the ladder comes back.
 const bought = await gateway.agentPurchase(mandateId, 'compre um voo para Córdoba abaixo de $150');
 check('o agente conclui a compra', bought.outcome === 'settled', bought.reason_code);
 check(

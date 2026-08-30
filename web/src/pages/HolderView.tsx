@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { KeyRound, Send, ShieldOff, Sparkles } from 'lucide-react';
+import { CreditCard, KeyRound, Send, ShieldOff, Sparkles } from 'lucide-react';
 
 import { useAval } from '../state/AvalContext.ts';
 import { EvaluationLadder } from '../components/EvaluationLadder.tsx';
@@ -19,6 +19,7 @@ export function HolderView() {
     holderKid,
     walletReady,
     createMandate,
+    registerCard,
     runAgent,
     decideEscalation,
     revokeSelected,
@@ -116,6 +117,24 @@ export function HolderView() {
         </Panel>
 
         <Panel eyebrow="Agente comprador" title="Diga em texto livre. O núcleo é que decide." action={<Send size={18} className="text-allow" aria-hidden="true" />}>
+          {/* A mandate is authority to spend, never a means of paying. Until a card is
+              named the core refuses the capture, so the state belongs next to the button
+              that triggers it rather than buried in a settings screen. */}
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-ink-800/40 p-3">
+            <span className="flex items-center gap-2 text-[13px]">
+              <CreditCard size={14} className="text-fg-mute" aria-hidden="true" />
+              {selected?.instrument_label
+                ? `Pagando com ${selected.instrument_label}`
+                : 'Sem cartão. O mandato autoriza, mas não tem com o que pagar.'}
+            </span>
+            <Button
+              variant="ghost"
+              disabled={!selected || busy || !walletReady}
+              onClick={() => void guard(() => registerCard())}
+            >
+              {selected?.instrument_label ? 'Trocar cartão' : 'Cadastrar cartão'}
+            </Button>
+          </div>
           <form
             onSubmit={(event: FormEvent) => {
               event.preventDefault();

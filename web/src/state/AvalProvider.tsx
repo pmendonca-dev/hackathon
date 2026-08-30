@@ -198,6 +198,11 @@ export function AvalProvider({
     return () => clearInterval(timer);
   }, [live, reload]);
 
+  // The token of the card each mandate currently names. The runtime deliberately never
+  // serves it back, so the browser that bound it is the only thing that can name it as
+  // the one a replacement supersedes.
+  const boundCards = useRef<Record<string, string>>({});
+
   const requireWallet = useCallback((): HolderWallet => {
     if (!wallet) throw new Error('A carteira do titular ainda não está pronta.');
     return wallet;
@@ -260,6 +265,52 @@ export function AvalProvider({
           });
           setSelectedMandateId(created.mandate_id);
           return `Mandato ${created.mandate_id} criado na versão de política ${created.policy_version}.`;
+        });
+        if (accepted) await reload();
+      },
+
+      async registerCard() {
+        const holder = requireWallet();
+        const mandateId = selectedRef.current;
+        if (!mandateId) return;
+        const accepted = await run('Cadastrar cartão', async () => {
+          // Both calls carry the same scoped claim: opening the processor's form
+          // creates objects over there, and an endpoint anyone who guesses a mandate
+          // id can drive is an abuse surface even when it grants nothing.
+          const sessionClaim = { mandate_id: mandateId, scope: 'instrument_session' };
+          const session = await gateway.openInstrumentSession(
+            mandateId,
+            await signCompactJws(sessionClaim, holder),
+          );
+          const card = await gateway.readInstrumentSession(
+            mandateId,
+            session.session_id,
+            await signCompactJws(sessionClaim, holder),
+          );
+          if (!card.ready || !card.token || !card.label) {
+            return `Formulário aberto em ${session.url}. Ainda não há cartão nele.`;
+          }
+          const answer = await gateway.bindInstrument(
+            mandateId,
+            card.token,
+            card.label,
+            await signCompactJws(
+              {
+                mandate_id: mandateId,
+                scope: 'instrument',
+                instrument_token: card.token,
+                instrument_label: card.label,
+                // Compare-and-swap: names the card bound right now, so a captured
+                // binding is dead the moment any other one lands.
+                supersedes: boundCards.current[mandateId] ?? null,
+              },
+              holder,
+            ),
+          );
+          // The API never serves the token back — it is a credential, not a field —
+          // so the only place that can remember it for the next swap is here.
+          boundCards.current[mandateId] = card.token;
+          return `Cartão ${answer.instrument_label} vinculado ao mandato.`;
         });
         if (accepted) await reload();
       },
