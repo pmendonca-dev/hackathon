@@ -2,14 +2,14 @@
 
 ## Status
 
-**GREEN ON THE REAL SAME-ORIGIN FASTAPI DELIVERY.** Laptop A commit
-`8d342a651875b1f0b4d2065a9222c6a23b6d65fe` serves the production SPA and the
+**GREEN ON THE REAL SAME-ORIGIN FASTAPI DELIVERY.** `origin/main` commit
+`b7e94dddc50f05addd71fafe3ce02a2a3312f44a` after PR #16 serves the production SPA and the
 browser BFF on `http://127.0.0.1:8000`. Laptop B consumes only `/ui-api/v1/`,
 keeps CSRF in transient React memory, and ships no fixture, payment credential,
 proof value, signing implementation, agent route, or persistent-storage API in
 the production artifact.
 
-## Browser-safe BFF final validation on `8d342a65`
+## Browser-safe BFF final validation after PR #16
 
 ### Public HTTP and routing evidence
 
@@ -58,8 +58,8 @@ Local Storage, Session Storage, IndexedDB, or Cache Storage usage.
 
 ### Production artifact evidence
 
-The clean Vite build emitted `assets/index-Do3RvtiX.js`,
-`assets/index-DUElSda1.css`, and `index.html`. A byte-level scan found zero
+The clean Vite build emitted `assets/index-CJqA_K19.js`,
+`assets/index-DxkVL6f_.css`, and `index.html`. A byte-level scan found zero
 `vt_` occurrences. The artifact-level test also found no `mockAvalGateway`,
 synthetic proof value, compact JWS, private-key marker, browser signing code,
 agent endpoint, or persistent browser storage API. The development fixture no
@@ -71,19 +71,18 @@ longer models vault tokens or authorization-proof references.
 |---|---|
 | `uv run alembic upgrade head` | PASS |
 | `uv run pytest tests/integration/e2e -q` | PASS, 15/15 |
-| `uv run python -m pytest -q` | PASS, 328/328 |
+| `uv run python -m pytest -q` | PASS, 539/539 |
 | `uv run python scripts/demo_smoke.py` | PASS, 9/9 |
-| `npm test` | PASS, 25/25 |
+| `npm --prefix web test` | PASS, 27/27 |
 | `npm run build` | PASS |
 | `npm run lint` | PASS, zero warnings and errors |
 
-### Operational limitation
+### Operational status
 
-The prescribed `uv run uvicorn aval.main:app ...` command fails with
-`program not found` because `uvicorn` is not declared in `pyproject.toml` or
-`uv.lock`. Laptop B did not alter backend dependencies. The real-browser gate
-was completed with the non-persistent command
-`uv run --with uvicorn uvicorn aval.main:app --host 127.0.0.1 --port 8000`.
+No ASGI dependency blocker remains. The real-browser gate used the declared
+runtime dependency through
+`uv run python -m uvicorn aval.main:app --host 127.0.0.1 --port 8000`, without
+`uv run --with` or any browser authentication bypass.
 
 ## Historical validation on `3191d3e`
 

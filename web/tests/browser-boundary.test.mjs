@@ -27,6 +27,25 @@ test('browser source contains no client-side policy engine', () => {
   }
 });
 
+test('browser source excludes the legacy agent-signing and persistent-wallet lane', () => {
+  for (const legacyPath of [
+    'src/components/EvaluationLadder.tsx',
+    'src/components/LiveFooter.tsx',
+    'src/gateways/authorizationGateway.ts',
+    'src/pages/AuditorTrailView.tsx',
+    'src/pages/HolderView.tsx',
+    'src/pages/MerchantDeskView.tsx',
+    'src/pages/TrialByFireConsole.tsx',
+    'src/wallet/holderKey.ts',
+    'src/wallet/walletStore.ts',
+    'tests/authorization-gateway.test.mjs',
+    'tests/holder-wallet.test.mjs',
+    'tests/live-browser-journey.mjs',
+  ]) {
+    assert.equal(existsSync(join(root, legacyPath)), false, `legacy browser lane remains at ${legacyPath}`);
+  }
+});
+
 test('provider creates the environment-selected gateway once outside renders', () => {
   const providerSource = readFileSync(join(root, 'src/state/AvalProvider.tsx'), 'utf8');
 

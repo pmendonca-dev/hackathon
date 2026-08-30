@@ -3,8 +3,9 @@
 ## Current gate
 
 The public runtime, browser-BFF HTTP matrix, and real browser flow are green on
-Laptop A commit `8d342a65`: migrations, 15 public E2E scenarios, the 328-test
-Python suite, the nine-scenario demo smoke, and all 25 web tests pass. FastAPI
+`origin/main` commit `b7e94ddd` after PR #16: migrations, 15 public E2E
+scenarios, the 539-test Python suite, the nine-scenario demo smoke, and all 27
+web tests pass. FastAPI
 serves the production SPA and `/ui-api/v1/` from the same origin. The emitted
 artifact contains no fixture module, `vt_` prefix, proof value, signing
 material, agent route, or persistent-storage API.
@@ -19,7 +20,7 @@ From the repository root in PowerShell 5.1:
 ```powershell
 uv run alembic upgrade head
 uv run pytest tests/integration/e2e -q
-uv run pytest -q
+uv run python -m pytest -q
 Set-Location web
 npm test
 npm run build
@@ -70,10 +71,10 @@ keys must not be embedded in Vite variables or shipped to the browser.
 Before a live browser demo, build `web/dist`, set the four role credentials and
 `AVAL_OPERATOR_AUTHORITY_SEED` only in the server environment, set
 `AVAL_UI_LOCAL_HTTP=true`, and serve `aval.main:app` on `127.0.0.1:8000`.
-`uvicorn` is not currently declared as a project dependency, so a clean
-checkout must either install it explicitly as documented in the README or use
-`uv run --with uvicorn uvicorn ...`. Never use a cross-origin cookie flow, an
-unsigned proxy, an embedded operator credential, or a signing bypass.
+`uvicorn` is a declared runtime dependency. On managed Windows hosts, use
+`uv run python -m uvicorn aval.main:app --host 127.0.0.1 --port 8000` to avoid
+launcher-policy differences. Never use `uv run --with`, a cross-origin cookie
+flow, an unsigned proxy, an embedded operator credential, or a signing bypass.
 
 ## Trial-by-fire behavior
 
