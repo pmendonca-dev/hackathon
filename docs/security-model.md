@@ -162,3 +162,85 @@ Três bugs de correção foram encontrados antes disso: a primeira mudança de l
 avançava a versão de política; uma compra recusada pelo processador ficava permanentemente
 bloqueada para nova tentativa; e a aprovação de escalação pedia uma segunda confirmação da
 mesma compra congelada.
+
+---
+
+## Superfícies acrescentadas depois, e o que cada uma custa
+
+### Listagem por titular — divulgação assumida, e a mais cara delas
+
+`GET /mandates?principal_id=` e `GET /escalations?principal_id=` são as rotas que o bot
+e o navegador usam para responder *"o que eu tenho?"* sem conhecer um id de antemão.
+
+**O custo é real e vale ser dito em voz alta.** Até aqui, ler um mandato exigia o
+`mandate_id` — 32 hexadecimais aleatórios, que funcionam como capacidade: quem não o
+recebeu não o adivinha. Um `principal_id` não tem essa propriedade; `usr_marta` é
+adivinhável. Então estas duas rotas transformam "saber um segredo" em "saber um nome",
+e quem souber o nome lê limite, gasto, merchants e as compras pendentes daquela pessoa.
+
+O que **não** mudou: nada aqui autoriza gasto. Listar não move dinheiro, não aprova
+escalação e não revoga; todas essas continuam exigindo assinatura do titular.
+
+O que fizemos para reduzir o dano:
+
+- **Não existe listagem global.** Os repositórios só sabem responder por titular, e a
+  consulta de escalações alcança as linhas por *join* no mandato que as possui. Não há
+  variante sem escopo em lugar nenhum da pilha para alguém encontrar depois.
+- **Titular desconhecido devolve lista vazia**, não 404 — a rota não vira um oráculo de
+  quais ids de titular existem.
+- **A visão do merchant não foi tocada.** Ela continua construída por lista branca e
+  continua sem `mandate_id` e sem `principal_id`, com teste que falha se vazarem.
+
+**Em produção, a resposta é sessão do titular.** A listagem deveria exigir prova de que
+o chamador é aquele titular — um desafio assinado pela mesma chave que já assina
+revogação, ou um cookie de sessão emitido contra ela. A forma da rota não muda; só
+ganha uma dependência de autenticação. Não fizemos isso porque as superfícies humanas
+deste lane são deliberadamente abertas na demo, e adicionar meia autenticação em uma
+rota enquanto as vizinhas seguem abertas daria uma sensação de segurança sem a
+propriedade.
+
+### Relógio de demonstração — monotônico por segurança
+
+`POST /admin/clock` avança e nunca rebobina. Avançar só retira autoridade: mandatos
+expiram, nada é concedido. Rebobinar reviveria um mandato expirado, o que seria um
+token de operador devolvendo autoridade de gasto que a validade do próprio titular já
+tinha encerrado — exatamente o poder que a decisão nº 5 nega ao operador.
+
+### Adulteração da trilha — não montada por padrão
+
+`POST /admin/ledger/{id}/tamper` corrompe um log de auditoria de propósito, para que a
+cadeia possa ser testada por quem duvida dela. Sem `AVAL_DEMO_TAMPER` o router **não é
+registrado**: 404 real, ausente do OpenAPI. Isso é deliberadamente mais forte que uma
+checagem de permissão, que pode ser mal configurada para o lado permissivo; uma rota que
+não foi montada não pode. Com a variável, ainda exige token de operador. Não há
+contrapartida que conserte a cadeia — ela destruiria a propriedade que esta prova.
+
+### Kill switch do titular — assinatura, não identidade
+
+`POST /principals/{id}/revocations` alcança apenas os mandatos em que aquela chave já é
+autoridade registrada, verificados um a um. Nomear um titular no payload não é o mesmo
+que sustentá-lo: um token que reivindica o titular alheio, assinado por chave que não é
+autoridade nos mandatos dele, é recusado e não muda nada. O titular da URL precisa bater
+com o assinado, fechando a mesma brecha de "andar com o token" que a rota de mandato
+único fecha comparando `mandate_id`.
+
+### Chave do titular no navegador — o que sai e o que não sai
+
+O par P-256 é gerado com `extractable: false` e persistido no IndexedDB como
+`CryptoKey`, o que é a única forma de guardar uma chave não-extraível: o navegador
+mantém o material, a página mantém um handle que assina e não consegue ler. Não existe
+função de exportação no módulo, e há teste estrutural que falha se aparecer uma.
+
+Limites honestos: um XSS na origem da página pode **usar** a chave para assinar (não
+para exportá-la), e limpar os dados do site a apaga — os mandatos que ela sustenta
+ficam revogáveis apenas por outra autoridade registrada. Em produção isso pede uma
+segunda autoridade `guardian` no mandato, que o schema já suporta.
+
+### Agente com LLM — o que o modelo nunca vê
+
+O leitor de intenção recebe a instrução e **nada mais**: não existe parâmetro para
+limite, teto ou saldo. Um modelo com prompt injetado não tem número privado para
+repetir, e ler uma frase nunca manda o orçamento da compradora a um terceiro. A saída
+é coagida a um `PurchaseIntent` — categoria de um conjunto fechado, preço inteiro e
+sanidade checada, palavras-chave truncadas — e qualquer falha cai nas regras. O modelo
+propõe; ele não decide, e o núcleo nunca lê o texto dele.
