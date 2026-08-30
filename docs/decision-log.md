@@ -730,6 +730,20 @@ would create a second trust boundary without an approved custody or identity
 model. The public signed E2E client remains the runtime evidence while the
 browser blocker is tracked separately.
 
+## Production browser projection excludes credential-shaped fixture fields
+
+**Decision:** How the development fixture and defensive redaction coexist with a production bundle that must contain no `vt_` literal
+
+**Options considered (one per line):**
+
+Rely only on dead-code elimination to hide credential-shaped fixture fields
+Remove defensive runtime redaction so its pattern does not appear in the bundle
+Remove sensitive fields from browser projection types and encode defensive patterns without embedding credential-shaped literals
+
+**What we chose:** Browser projection types and the development fixture no longer model vault-token or authorization-proof references. Defensive presentation redaction remains, but its prefix match is represented without placing a credential-shaped literal in the emitted artifact. The artifact test scans every emitted file for any `vt_` occurrence.
+
+**Why:** A development fixture should model the same safe projection boundary as the live BFF, and production safety must be proven on emitted bytes rather than inferred from source imports. Keeping the redactor preserves fail-safe presentation while avoiding a forbidden credential-shaped marker in production assets.
+
 ## Browser BFF same-origin delivery gate
 
 **Decision:** Final browser validation after the browser-safe BFF exists

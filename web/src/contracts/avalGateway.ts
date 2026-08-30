@@ -62,7 +62,6 @@ export interface HumanViewProjection {
     liveAllowance: Money;
     allowanceCheckedAt: string;
     scopes: string[];
-    vaultToken: `vt_${string}`;
     revocation: {
       state: 'clear' | 'revoked' | 'unavailable';
       checkedAt: string;
@@ -76,7 +75,6 @@ export interface HumanViewProjection {
     humanSummary: string;
     reservationState: 'pending' | 'committed' | 'settled' | 'released';
     policyVersion: string;
-    evidenceRef: string;
   };
   receipts: ReceiptProjection[];
 }
@@ -88,7 +86,6 @@ export interface MerchantViewProjection {
     transactionRef: string;
     amount: Money;
     status: 'settled';
-    paymentToken: `vt_${string}`;
     itemSummary: string;
     occurredAt: string;
   };
@@ -101,7 +98,6 @@ export interface MerchantViewProjection {
     ap2Version: 'v0.2';
     checkoutReceiptHash: string;
     paymentReceiptHash: string;
-    authorizationProofRef: string;
   };
 }
 
@@ -115,7 +111,6 @@ export interface AuditEventProjection {
   reasonCode: string;
   humanSummary: string;
   reservationState: 'pending' | 'committed' | 'settled' | 'released';
-  evidenceRef: string;
   integrityHash: string;
 }
 
@@ -130,7 +125,6 @@ export interface AuditorViewProjection {
     amount: Money;
     claim: string;
     verdictSummary: string;
-    evidenceRefs: string[];
   };
 }
 

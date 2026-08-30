@@ -45,12 +45,11 @@ test('the emitted production artifact contains no mock, agent endpoint, or signi
       },
     );
 
-    const searchableFiles = walk(outputDirectory)
-      .filter((path) => /\.(?:css|html|js|json)$/.test(path));
+    const searchableFiles = walk(outputDirectory);
     const prohibited = [
       { label: 'mockAvalGateway module', pattern: /mockAvalGateway/ },
       { label: 'development mock workspace', pattern: /DevelopmentMockWorkspace|DADOS DE DEMONSTRAÇÃO \/ MOCK|mock_request_/i },
-      { label: 'synthetic vault token', pattern: /\bvt_[A-Za-z0-9._~-]+\b/ },
+      { label: 'vault-token prefix', pattern: /vt_/ },
       { label: 'synthetic authorization proof', pattern: /\bproof_[A-Za-z0-9._~-]+\b/i },
       { label: 'private key material', pattern: /BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|privateKey/i },
       { label: 'signed revocation field', pattern: /signed_revocation/i },
