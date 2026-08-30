@@ -18,6 +18,11 @@ dependencies = [
 # model proposing — and hallucinating — with the core still refusing it, and a
 # real model conversing in Telegram until the mandate is fully described.
 llm = ["anthropic", "openai"]
+# Computer A of the two-machine split: Telegram, the conversation, and the web
+# search that finds real offers. It is deliberately *not* `llm` — A must never
+# install a reason to reach the authorization core, and it has no use for the
+# agent's Anthropic proposer, which runs on B.
+edge = ["openai"]
 
 [dependency-groups]
 dev = [
