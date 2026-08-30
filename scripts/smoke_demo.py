@@ -304,11 +304,20 @@ class Smoke:
             f"{auditor['chain']['checked']} eventos",
         )
 
+        # Both halves signed: denying a purchase and deciding when the trail answers are
+        # said in the holder's name, so they carry the holder's key.
         dispute = self.client.post(
             "/disputes",
-            json={"reservation_id": bought["reservation_id"], "reason": "Eu nunca autorizei isso"},
+            json={
+                "reservation_id": bought["reservation_id"],
+                "reason": "Eu nunca autorizei isso",
+                "authorization_jws": self.read_token(),
+            },
         ).json()
-        resolution = self.client.post(f"/disputes/{dispute['dispute_id']}/resolution").json()
+        resolution = self.client.post(
+            f"/disputes/{dispute['dispute_id']}/resolution",
+            json={"authorization_jws": self.read_token()},
+        ).json()
         self.check(
             "the trail resolves the dispute",
             resolution["status"] == "MANDATE_HELD",

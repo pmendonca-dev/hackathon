@@ -12,6 +12,7 @@ from fastapi import APIRouter, Query, Request
 
 from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError
+from aval.api.holder_authority import require_holder_authority
 from aval.api.schemas import MandateListView, MandateView, MoneyOut, UsageLimitOut
 from aval.application.authorization_core import MandateSnapshot
 from aval.security.pairwise import pairwise_id
@@ -111,27 +112,13 @@ def require_read_authority(request: Request, mandate_id: str, authorization_jws:
     caller already names one mandate, so "you may not read this" leaks nothing that
     naming it did not.
     """
-    core = runtime_of(request).core
-    snapshot = core.snapshot(mandate_id)
-    if snapshot is None:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
-    if not authorization_jws:
-        raise ApiError(
-            403,
-            "read_authorization_required",
-            "A leitura deste registro exige autorização assinada pelo titular.",
-        )
-    try:
-        readable = set(core.mandates_readable_by(authorization_jws, snapshot.mandate.principal.id))
-    except ValueError as error:
-        raise ApiError(
-            422, "read_authorization_malformed", "Autorização de leitura malformada."
-        ) from error
-    if mandate_id not in readable:
-        raise ApiError(
-            403, "read_forbidden", "Esta chave não é autoridade sobre este mandato."
-        )
-    return snapshot
+    require_holder_authority(
+        request,
+        mandate_id,
+        authorization_jws,
+        unsigned_message="A leitura deste registro exige autorização assinada pelo titular.",
+    )
+    return runtime_of(request).core.snapshot(mandate_id)
 
 
 @router.get("/mandates/{mandate_id}", response_model=MandateView)

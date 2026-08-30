@@ -270,8 +270,12 @@ try {
   const rogue = await gateway.rogueCharge(mandateId, 9000);
   const spentBefore = (await gateway.readMandate(mandateId, readToken)).spent
     .minor_units;
-  const opened = await gateway.openDispute(rogue.reservation_id, 'não reconheço esta compra');
-  const resolved = await gateway.resolveDispute(opened.dispute_id);
+  const opened = await gateway.openDispute(
+    rogue.reservation_id,
+    'não reconheço esta compra',
+    readToken,
+  );
+  const resolved = await gateway.resolveDispute(opened.dispute_id, readToken);
   const spentAfter = (await gateway.readMandate(mandateId, readToken)).spent
     .minor_units;
   reversal = `${resolved.liability.verdict}: ${spentBefore} → ${spentAfter}`;
@@ -291,7 +295,20 @@ try {
   check('o veredito devolve o dinheiro que a trilha não sustenta', false, String(error));
 }
 
-// 12 — closing the session ends the operator's reach in this tab immediately.
+// 12 — the id is not a password. A stranger holding the mandate id, with a key of their
+// own, reads no disputes and opens none: the trail is about to say "the holder denied
+// this", and that sentence has to be true.
+const stranger = await generateHolderKeyPair('usr_stranger_k1');
+const strangerToken = await signCompactJws({ principal_id: principalId }, stranger);
+let strangerRefused = false;
+try {
+  await gateway.listDisputes(mandateId, strangerToken);
+} catch (error) {
+  strangerRefused = error.reasonCode === 'read_forbidden';
+}
+check('uma chave estranha não lê as disputas do mandato', strangerRefused);
+
+// 13 — closing the session ends the operator's reach in this tab immediately.
 await gateway.closeOperatorSession();
 let refusedAfterClose = false;
 try {

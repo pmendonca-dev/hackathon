@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from aval.api.dependencies import runtime_of
 from aval.api.errors import ApiError
+from aval.api.holder_authority import require_holder_authority
 from aval.api.operator_auth import require_operator
 from aval.domain.errors import DomainError
 from aval.infrastructure.psp import MODES
@@ -40,9 +41,20 @@ class RepriceRequest(BaseModel):
     minor_units: int = Field(gt=0)
 
 
+class ResolveDisputeRequest(BaseModel):
+    """The holder's signature over `{principal_id}` — the same read authorization the
+    rest of their own surfaces take."""
+
+    authorization_jws: str | None = None
+
+
 class OpenDisputeRequest(BaseModel):
     reservation_id: str = Field(min_length=1)
     reason: str = Field(min_length=1, max_length=500)
+    # The holder's signature over `{principal_id}`. Optional in the schema and required
+    # by the route, so an unsigned dispute is answered with a reason code instead of a
+    # validation dump — and so the refusal names what is missing.
+    authorization_jws: str | None = None
 
 
 @router.post("/admin/catalog/price", dependencies=[Depends(require_operator)])
@@ -108,9 +120,29 @@ def reconcile(request: Request) -> dict[str, int]:
 
 @router.post("/disputes", status_code=status.HTTP_201_CREATED)
 def open_dispute(request: Request, body: OpenDisputeRequest) -> dict[str, Any]:
+    """Deny a purchase, with the key that holds the mandate it was made under.
+
+    The trail records this as *"compra contestada pelo titular"* and names an actor. That
+    sentence has to be true: an unsigned dispute would put a claim about who acted into
+    the very evidence an arbitration reads months later. So the actor written here is the
+    kid whose signature was verified, and nothing else.
+    """
+    core = runtime_of(request).core
+    mandate_id = core.mandate_of_reservation(body.reservation_id)
+    if mandate_id is None:
+        raise ApiError(404, "reservation_not_found", "Compra não encontrada.")
+    kid = require_holder_authority(
+        request,
+        mandate_id,
+        body.authorization_jws,
+        unsigned_code="dispute_unsigned",
+        unsigned_message="Contestar uma compra exige a assinatura do titular.",
+        forbidden_code="dispute_forbidden",
+        forbidden_message="Esta chave não é autoridade sobre o mandato desta compra.",
+    )
     try:
-        dispute = runtime_of(request).core.open_dispute(
-            reservation_id=body.reservation_id, reason=body.reason
+        dispute = core.open_dispute(
+            reservation_id=body.reservation_id, reason=body.reason, disputant_kid=kid
         )
     except ValueError as error:
         raise ApiError(404, "reservation_not_found", "Compra não encontrada.") from error
@@ -118,10 +150,19 @@ def open_dispute(request: Request, body: OpenDisputeRequest) -> dict[str, Any]:
 
 
 @router.get("/disputes")
-def list_disputes(request: Request, mandate_id: str) -> dict[str, Any]:
+def list_disputes(
+    request: Request,
+    mandate_id: str,
+    authorization_jws: str | None = None,
+) -> dict[str, Any]:
+    """The disputes on one mandate, read by a key that mandate names.
+
+    It carries reservation ids, the sentences a person wrote about their own purchases
+    and the kid of the key that holds the mandate. Sight is authority here for the same
+    reason it is on the trail: the id was never a password.
+    """
     core = runtime_of(request).core
-    if core.mandate(mandate_id) is None:
-        raise ApiError(404, "mandate_not_found", "Mandato não encontrado.")
+    require_holder_authority(request, mandate_id, authorization_jws)
     return {
         "mandate_id": mandate_id,
         "disputes": [
@@ -143,10 +184,31 @@ def list_disputes(request: Request, mandate_id: str) -> dict[str, Any]:
 
 
 @router.post("/disputes/{dispute_id}/resolution")
-def resolve_dispute(request: Request, dispute_id: str) -> dict[str, Any]:
-    """Resolved by reading the trail, not by taking anybody's word for it."""
+def resolve_dispute(
+    request: Request, dispute_id: str, body: ResolveDisputeRequest | None = None
+) -> dict[str, Any]:
+    """Resolved by reading the trail, not by taking anybody's word for it.
+
+    Signed by the holder all the same. Resolution stopped being a harmless read the
+    moment the verdict began moving money: it decides when the value goes back and closes
+    somebody's dispute for them. The operator credential deliberately does not open this
+    door — running the instance is not a way to arbitrate other people's money.
+    """
+    core = runtime_of(request).core
+    mandate_id = core.mandate_of_dispute(dispute_id)
+    if mandate_id is None:
+        raise ApiError(404, "dispute_not_found", "Disputa não encontrada.")
+    require_holder_authority(
+        request,
+        mandate_id,
+        None if body is None else body.authorization_jws,
+        unsigned_code="dispute_unsigned",
+        unsigned_message="Resolver uma disputa exige a assinatura do titular.",
+        forbidden_code="dispute_forbidden",
+        forbidden_message="Esta chave não é autoridade sobre o mandato desta disputa.",
+    )
     try:
-        dispute = runtime_of(request).core.resolve_dispute(dispute_id)
+        dispute = core.resolve_dispute(dispute_id)
     except DomainError as error:
         raise ApiError(409, "dispute_already_resolved", "Disputa já resolvida.") from error
     except ValueError as error:

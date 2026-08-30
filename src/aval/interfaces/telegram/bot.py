@@ -385,7 +385,7 @@ class Bot:
             if argument not in self._own_reservations.get(identity.chat_id, set()):
                 return (views.plain("Essa compra não é sua."),)
             message = self._gateway.open_dispute(
-                argument, "titular não reconhece a compra (aberta pelo Telegram)"
+                identity, argument, "titular não reconhece a compra (aberta pelo Telegram)"
             )
             return (views.plain(f"⚠️ {message} A trilha do mandato é quem responde."),)
 

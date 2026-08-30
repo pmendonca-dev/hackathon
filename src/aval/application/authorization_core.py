@@ -596,6 +596,23 @@ class AuthorizationCore:
         value = json.loads(body or "{}")
         return RevocationResult(value.get("mandate_id"), value.get("reason_code"), replayed)
 
+    @staticmethod
+    def signing_kid(token: str) -> str:
+        """The key id a compact JWS announces.
+
+        Only ever called after the signature has been verified against that key, so it
+        names the author rather than repeating a claim: the trail writes this, and a
+        trail that recorded an unverified name would be inventing its own evidence.
+        """
+        try:
+            encoded_header = token.split(".")[0]
+            header = json.loads(
+                base64.urlsafe_b64decode(encoded_header + "=" * (-len(encoded_header) % 4))
+            )
+            return str(header["kid"])
+        except (IndexError, KeyError, ValueError, json.JSONDecodeError) as error:
+            raise ValueError("malformed authorization") from error
+
     def mandates_readable_by(self, token: str, principal_id: str) -> list[str]:
         """Which of this buyer's mandates the signer of `token` is entitled to see.
 
@@ -734,8 +751,29 @@ class AuthorizationCore:
         run_in_write_transaction(self._engine, operation)
         return revoked
 
-    def open_dispute(self, *, reservation_id: str, reason: str) -> Dispute:
-        """Record a later denial. Opening a dispute decides nothing on its own."""
+    def mandate_of_reservation(self, reservation_id: str) -> str | None:
+        """Which mandate a purchase was made under. Used to decide who may speak for it."""
+        with self._engine.connect() as connection:
+            return connection.execute(
+                select(reservations.c.mandate_id).where(reservations.c.id == reservation_id)
+            ).scalar_one_or_none()
+
+    def mandate_of_dispute(self, dispute_id: str) -> str | None:
+        with self._engine.connect() as connection:
+            return connection.execute(
+                select(disputes.c.mandate_id).where(disputes.c.id == dispute_id)
+            ).scalar_one_or_none()
+
+    def open_dispute(
+        self, *, reservation_id: str, reason: str, disputant_kid: str | None = None
+    ) -> Dispute:
+        """Record a later denial. Opening a dispute decides nothing on its own.
+
+        `disputant_kid` is the key whose signature the edge verified. It is written into
+        the trail as the actor, because the alternative — a fixed string saying "the
+        holder" over an unauthenticated route — is a claim dressed as evidence, sitting
+        in the one record an arbitration reads afterwards.
+        """
 
         def operation(connection) -> Dispute:
             mandate_id = connection.execute(
@@ -756,7 +794,7 @@ class AuthorizationCore:
                 mandate_id=dispute.mandate_id,
                 event_type="dispute_opened",
                 human_summary="Compra contestada pelo titular.",
-                actor="principal:disputant",
+                actor=f"principal:{disputant_kid}" if disputant_kid else "principal:disputant",
                 detail={
                     "dispute_id": dispute.id,
                     "reservation_id": dispute.reservation_id,

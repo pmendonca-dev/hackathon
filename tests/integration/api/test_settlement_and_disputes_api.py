@@ -99,9 +99,16 @@ def test_a_dispute_over_a_settled_purchase_resolves_for_the_mandate(harness):
     reservation_id = buy(harness, mandate_id).json()["reservation_id"]
 
     opened = harness.client.post(
-        "/disputes", json={"reservation_id": reservation_id, "reason": "Eu nunca autorizei isso"}
+        "/disputes",
+        json={
+            "reservation_id": reservation_id,
+            "reason": "Eu nunca autorizei isso",
+            "authorization_jws": harness.read_token(),
+        }
     )
-    resolved = harness.client.post(f"/disputes/{opened.json()['dispute_id']}/resolution")
+    resolved = harness.client.post(
+        f"/disputes/{opened.json()['dispute_id']}/resolution", json={"authorization_jws": harness.read_token()}
+    )
 
     assert opened.status_code == 201, opened.text
     assert resolved.json()["status"] == "MANDATE_HELD"
@@ -110,7 +117,12 @@ def test_a_dispute_over_a_settled_purchase_resolves_for_the_mandate(harness):
 
 def test_a_dispute_over_an_unknown_purchase_is_refused(harness):
     response = harness.client.post(
-        "/disputes", json={"reservation_id": "rsv_nope", "reason": "não reconheço"}
+        "/disputes",
+        json={
+            "reservation_id": "rsv_nope",
+            "reason": "não reconheço",
+            "authorization_jws": harness.read_token(),
+        }
     )
 
     assert response.status_code == 404
@@ -121,11 +133,20 @@ def test_a_dispute_is_resolved_only_once(harness):
     mandate_id = harness.create_mandate()
     reservation_id = buy(harness, mandate_id).json()["reservation_id"]
     dispute_id = harness.client.post(
-        "/disputes", json={"reservation_id": reservation_id, "reason": "não reconheço"}
+        "/disputes",
+        json={
+            "reservation_id": reservation_id,
+            "reason": "não reconheço",
+            "authorization_jws": harness.read_token(),
+        }
     ).json()["dispute_id"]
-    harness.client.post(f"/disputes/{dispute_id}/resolution")
+    harness.client.post(
+        f"/disputes/{dispute_id}/resolution", json={"authorization_jws": harness.read_token()}
+    )
 
-    again = harness.client.post(f"/disputes/{dispute_id}/resolution")
+    again = harness.client.post(
+        f"/disputes/{dispute_id}/resolution", json={"authorization_jws": harness.read_token()}
+    )
 
     assert again.status_code == 409
     assert again.json()["reason_code"] == "dispute_already_resolved"
@@ -135,9 +156,16 @@ def test_the_dispute_and_its_resolution_are_on_the_trail(harness):
     mandate_id = harness.create_mandate()
     reservation_id = buy(harness, mandate_id).json()["reservation_id"]
     dispute_id = harness.client.post(
-        "/disputes", json={"reservation_id": reservation_id, "reason": "não reconheço"}
+        "/disputes",
+        json={
+            "reservation_id": reservation_id,
+            "reason": "não reconheço",
+            "authorization_jws": harness.read_token(),
+        }
     ).json()["dispute_id"]
-    harness.client.post(f"/disputes/{dispute_id}/resolution")
+    harness.client.post(
+        f"/disputes/{dispute_id}/resolution", json={"authorization_jws": harness.read_token()}
+    )
 
     types = [
         entry["event_type"]
@@ -152,9 +180,16 @@ def test_the_trail_still_verifies_after_a_dispute(harness):
     mandate_id = harness.create_mandate()
     reservation_id = buy(harness, mandate_id).json()["reservation_id"]
     dispute_id = harness.client.post(
-        "/disputes", json={"reservation_id": reservation_id, "reason": "não reconheço"}
+        "/disputes",
+        json={
+            "reservation_id": reservation_id,
+            "reason": "não reconheço",
+            "authorization_jws": harness.read_token(),
+        }
     ).json()["dispute_id"]
-    harness.client.post(f"/disputes/{dispute_id}/resolution")
+    harness.client.post(
+        f"/disputes/{dispute_id}/resolution", json={"authorization_jws": harness.read_token()}
+    )
 
     assert harness.client.get("/ledger/verify", params={"mandate_id": mandate_id}).json()["intact"]
 
@@ -163,10 +198,18 @@ def test_disputes_can_be_listed_for_a_mandate(harness):
     mandate_id = harness.create_mandate()
     reservation_id = buy(harness, mandate_id).json()["reservation_id"]
     harness.client.post(
-        "/disputes", json={"reservation_id": reservation_id, "reason": "não reconheço"}
+        "/disputes",
+        json={
+            "reservation_id": reservation_id,
+            "reason": "não reconheço",
+            "authorization_jws": harness.read_token(),
+        }
     )
 
-    listed = harness.client.get("/disputes", params={"mandate_id": mandate_id}).json()
+    listed = harness.client.get(
+        "/disputes",
+        params={"mandate_id": mandate_id, "authorization_jws": harness.read_token()},
+    ).json()
 
     assert len(listed["disputes"]) == 1
     assert listed["disputes"][0]["status"] == "OPEN"

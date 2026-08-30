@@ -337,10 +337,23 @@ class AvalGateway:
         # An approval is not a bypass: the core re-checks everything on resume.
         return f"Aprovação registrada, mas a compra não passou: {capture.get('reason_code', 'desconhecido')}."
 
-    def open_dispute(self, reservation_id: str, reason: str) -> str:
-        """A later denial, answered by the trail rather than by trust."""
+    def open_dispute(self, identity: ChatIdentity, reservation_id: str, reason: str) -> str:
+        """A later denial, answered by the trail rather than by trust — and signed.
+
+        The trail records this as the holder contesting a purchase and names the key that
+        did it. Sending it unsigned would put a claim about who acted into the evidence
+        an arbitration reads afterwards, which is the one place a claim must not go.
+        """
         payload = self._call(
-            "POST", ENDPOINTS["disputes"], body={"reservation_id": reservation_id, "reason": reason}
+            "POST",
+            ENDPOINTS["disputes"],
+            body={
+                "reservation_id": reservation_id,
+                "reason": reason,
+                "authorization_jws": self._identities.sign(
+                    identity, {"principal_id": identity.principal_id}
+                ),
+            },
         )
         return f"Disputa {payload.get('dispute_id', '?')} aberta ({payload.get('status', 'OPEN')})."
 

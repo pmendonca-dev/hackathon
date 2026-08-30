@@ -46,7 +46,8 @@ autenticado ainda recebe exatamente o que o mandato permite. Autenticar não é 
 | `POST /mandates` | **JWS do titular** sobre os termos que o mandato nasce carregando |
 | `GET /mandates/{id}`, `GET /ledger?view=human` | **JWS de leitura** do titular daquele mandato |
 | `GET /ledger?view=auditor` | nada — é a superfície de transparência, e publica a cadeia |
-| `POST /agent/purchase`, `POST /disputes` | conhecimento do `mandate_id` |
+| `GET /disputes`, `POST /disputes`, `POST /disputes/{id}/resolution` | **JWS do titular** daquele mandato |
+| `POST /agent/purchase` | conhecimento do `mandate_id` |
 
 Onde se lê *credencial de operador*: o token permanente, apresentado por um chamador de
 máquina, ou uma sessão curta trocada por ele. A sessão existe para que nenhuma página
@@ -78,10 +79,17 @@ pessoa: `GET /mandates/{id}` e a visão humana da trilha exigem uma assinatura d
 verificada contra a autoridade *daquele* mandato — a mesma regra que a listagem por
 titular já aplicava. Uma chave que não é autoridade recebe `403 read_forbidden`.
 
-O que sobra atrás do id é a lane de agente: instruir o agente e abrir uma disputa. É
-deliberado, e é seguro pela mesma razão de sempre — **convencer o agente a querer algo não
-é o mesmo que poder fazê-lo**, e uma disputa aberta por terceiro não move dinheiro: quem
-decide é a trilha, e o veredito é recalculado da evidência a cada leitura.
+O que sobra atrás do id é a lane de agente: instruir o agente. É deliberado, e é seguro
+pela razão de sempre — **convencer o agente a querer algo não é o mesmo que poder
+fazê-lo**: tudo que ele propõe ainda tem que sobreviver ao mandato.
+
+Contestar saiu de trás do id junto com a leitura. A trilha registra a disputa como *"compra
+contestada pelo titular"* e nomeia o ator; sobre uma rota aberta, essa frase era uma
+afirmação vestida de evidência, no único lugar onde isso não pode acontecer — o registro
+que a arbitragem lê depois. Hoje o ator é o `kid` cuja assinatura foi verificada. E
+resolver deixou de ser leitura inofensiva quando o veredito passou a estornar: quem
+resolve decide o instante em que o dinheiro volta e fecha a disputa da pessoa. A
+credencial de operador continua não abrindo essa porta.
 
 O que o `mandate_id` **não** dá, mesmo para quem o conhece: ler o registro do titular,
 aumentar o limite, revogar, aprovar uma escalação, comprar acima do teto ou fora do

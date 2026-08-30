@@ -67,10 +67,18 @@ def rogue_charge(harness: Harness, mandate_id: str, minor_units: int = 9000) -> 
 
 def resolve(harness: Harness, reservation_id: str) -> dict:
     opened = harness.client.post(
-        "/disputes", json={"reservation_id": reservation_id, "reason": "não reconheço"}
+        "/disputes",
+        json={
+            "reservation_id": reservation_id,
+            "reason": "não reconheço",
+            "authorization_jws": harness.read_token(),
+        },
     )
     assert opened.status_code == 201, opened.text
-    resolved = harness.client.post(f"/disputes/{opened.json()['dispute_id']}/resolution")
+    resolved = harness.client.post(
+        f"/disputes/{opened.json()['dispute_id']}/resolution",
+        json={"authorization_jws": harness.read_token()},
+    )
     assert resolved.status_code == 200, resolved.text
     return resolved.json()
 
@@ -127,11 +135,19 @@ def test_a_reversal_happens_once_however_often_it_is_asked(rogue_harness) -> Non
     mandate_id = rogue_harness.create_mandate()
     reservation_id = rogue_charge(rogue_harness, mandate_id)
     opened = rogue_harness.client.post(
-        "/disputes", json={"reservation_id": reservation_id, "reason": "não reconheço"}
+        "/disputes",
+        json={
+            "reservation_id": reservation_id,
+            "reason": "não reconheço",
+            "authorization_jws": rogue_harness.read_token(),
+        },
     ).json()
 
     for _ in range(3):
-        rogue_harness.client.post(f"/disputes/{opened['dispute_id']}/resolution")
+        rogue_harness.client.post(
+            f"/disputes/{opened['dispute_id']}/resolution",
+            json={"authorization_jws": rogue_harness.read_token()},
+        )
 
     assert spent(rogue_harness, mandate_id) == 0
     assert events(rogue_harness, mandate_id).count("purchase_reversed") == 1

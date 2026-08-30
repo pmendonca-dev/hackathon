@@ -391,8 +391,13 @@ export class AuthorizationGateway {
     });
   }
 
-  listDisputes(mandateId: string): Promise<{ disputes: Dispute[] }> {
-    return this.#request(`/disputes?mandate_id=${encodeURIComponent(mandateId)}`);
+  /** Disputes on one mandate, read by the key that holds it: the listing carries the
+   *  reasons a person wrote about their own purchases. */
+  listDisputes(mandateId: string, authorizationJws: string): Promise<{ disputes: Dispute[] }> {
+    return this.#request(
+      `/disputes?mandate_id=${encodeURIComponent(mandateId)}` +
+        `&authorization_jws=${encodeURIComponent(authorizationJws)}`,
+    );
   }
 
   /** The standing orders this mandate is carrying, open and closed. */
@@ -491,14 +496,30 @@ export class AuthorizationGateway {
     });
   }
 
-  openDispute(reservationId: string, reason: string): Promise<{ dispute_id: string }> {
+  /**
+   * Deny a purchase, signed by the key that holds the mandate it was made under.
+   *
+   * The trail records this as the holder contesting a purchase and names the key that
+   * did it, so an unsigned dispute would write a claim about who acted into the evidence
+   * an arbitration reads later.
+   */
+  openDispute(
+    reservationId: string,
+    reason: string,
+    authorizationJws: string,
+  ): Promise<{ dispute_id: string }> {
     return this.#request('/disputes', {
       method: 'POST',
-      body: { reservation_id: reservationId, reason },
+      body: { reservation_id: reservationId, reason, authorization_jws: authorizationJws },
     });
   }
 
-  resolveDispute(disputeId: string): Promise<{
+  /** Signed too: resolution stopped being a harmless read when the verdict began
+   *  moving money — it decides when the value goes back. */
+  resolveDispute(
+    disputeId: string,
+    authorizationJws: string,
+  ): Promise<{
     dispute_id: string;
     status: string;
     resolution: string | null;
@@ -506,6 +527,7 @@ export class AuthorizationGateway {
   }> {
     return this.#request(`/disputes/${encodeURIComponent(disputeId)}/resolution`, {
       method: 'POST',
+      body: { authorization_jws: authorizationJws },
     });
   }
 

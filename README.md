@@ -337,6 +337,12 @@ A visão do auditor continua aberta, de propósito e declarado: ela é a peça d
 transparência que um jurado abre sem credencial, e o que ela publica é a cadeia — que é
 justamente o que um auditor existe para conferir.
 
+A mesma regra alcançou a disputa, e por um motivo mais forte que privacidade: a trilha
+registra *"compra contestada pelo titular"* e **nomeia o ator**. Sobre uma rota aberta,
+essa frase era uma afirmação vestida de evidência, dentro do registro que a arbitragem lê
+depois. Hoje o ator é o `kid` cuja assinatura foi verificada, e resolver — que passou a
+mover dinheiro — pede a mesma chave. O token de operador não abre nenhuma das duas.
+
 ### 14. Quem opera a instância também deixa rastro
 
 O titular assina para gastar. Ninguém assina para operar, e é por isso que o outro lado

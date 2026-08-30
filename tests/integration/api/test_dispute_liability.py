@@ -30,11 +30,21 @@ def buy(harness, mandate_id: str, key: str = "cap_liab", **overrides):
 
 
 def dispute(harness, reservation_id: str) -> dict:
+    """Both halves signed by the holder: denying a purchase and deciding when the trail
+    answers are things said in the holder's name, so they carry the holder's key."""
     opened = harness.client.post(
-        "/disputes", json={"reservation_id": reservation_id, "reason": "Eu nunca autorizei isso"}
+        "/disputes",
+        json={
+            "reservation_id": reservation_id,
+            "reason": "Eu nunca autorizei isso",
+            "authorization_jws": harness.read_token(),
+        },
     )
     assert opened.status_code == 201, opened.text
-    resolved = harness.client.post(f"/disputes/{opened.json()['dispute_id']}/resolution")
+    resolved = harness.client.post(
+        f"/disputes/{opened.json()['dispute_id']}/resolution",
+        json={"authorization_jws": harness.read_token()},
+    )
     assert resolved.status_code == 200, resolved.text
     return resolved.json()
 
@@ -170,7 +180,10 @@ def test_the_verdict_is_the_same_when_it_is_read_again(harness):
     reservation_id = buy(harness, mandate_id).json()["reservation_id"]
     at_resolution = dispute(harness, reservation_id)["liability"]
 
-    listed = harness.client.get("/disputes", params={"mandate_id": mandate_id}).json()
+    listed = harness.client.get(
+        "/disputes",
+        params={"mandate_id": mandate_id, "authorization_jws": harness.read_token()},
+    ).json()
 
     assert listed["disputes"][0]["liability"] == at_resolution
 

@@ -210,7 +210,7 @@ export function AvalProvider({
         // disputes still shows the mandate and the trail, so their absence must not
         // blank a page that is otherwise answering.
         try {
-          setDisputes((await gateway.listDisputes(current)).disputes);
+          setDisputes((await gateway.listDisputes(current, readToken)).disputes);
         } catch {
           setDisputes([]);
         }
@@ -478,16 +478,27 @@ export function AvalProvider({
       },
 
       async disputePurchase(reservationId: string, reason: string) {
+        const holder = requireWallet();
         const accepted = await run('Não reconheço esta compra', async () => {
-          const opened = await gateway.openDispute(reservationId, reason);
+          // Signed here for the same reason revoking is: the trail is about to record
+          // that *this person* denied the purchase, and it should be true.
+          const opened = await gateway.openDispute(
+            reservationId,
+            reason,
+            await signCompactJws({ principal_id: principalId }, holder),
+          );
           return `Disputa ${opened.dispute_id} aberta sobre ${reservationId}.`;
         });
         if (accepted) await reload();
       },
 
       async resolveDispute(disputeId: string) {
+        const holder = requireWallet();
         const accepted = await run('Resolver pela trilha', async () => {
-          const resolved = await gateway.resolveDispute(disputeId);
+          const resolved = await gateway.resolveDispute(
+            disputeId,
+            await signCompactJws({ principal_id: principalId }, holder),
+          );
           const liability = resolved.liability;
           return `${resolved.status} · ${liability.verdict} — responde: ${liability.liable_party}.`;
         });

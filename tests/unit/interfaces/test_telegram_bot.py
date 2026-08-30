@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+import base64
 import json
 import urllib.error
 
@@ -114,6 +115,23 @@ class FakeAval:
                 ],
             }
         if route == "/disputes" and method == "POST":
+            # The live API refuses an unsigned dispute, because the trail records it as
+            # the holder contesting a purchase and names the key that did it. A bot that
+            # stopped signing would keep passing here and start failing there.
+            token = body.get("authorization_jws")
+            if not token:
+                return 403, {"reason_code": "dispute_unsigned"}
+            owner = next(
+                (
+                    mandate_id
+                    for mandate_id, mandate in self.mandates.items()
+                    if mandate["principal"]["id"] == self._claimed_principal(token)
+                ),
+                None,
+            )
+            if owner is None:
+                return 403, {"reason_code": "dispute_forbidden"}
+            self._verify(owner, token)
             self.disputes.append(body)
             return 201, {"dispute_id": "dsp_1", "status": "OPEN", "reason": body["reason"]}
         if route == "/agent/purchase":
@@ -179,6 +197,14 @@ class FakeAval:
         if claims.get("principal_id") != mandate["principal"]["id"]:
             return 403, {"reason_code": "read_forbidden"}
         return 200, mandate
+
+    @staticmethod
+    def _claimed_principal(token: str) -> str | None:
+        """Read the claim without trusting it — only to find the mandate whose published
+        key the signature is then checked against."""
+        encoded = token.split(".")[1]
+        payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+        return payload.get("principal_id")
 
     def _verify(self, mandate_id: str, token: str) -> dict[str, Any]:
         """Exactly what the core does: the holder's published key, or nothing."""

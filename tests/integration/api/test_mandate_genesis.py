@@ -101,11 +101,16 @@ def test_the_genesis_signature_answers_a_repudiation(harness: Harness) -> None:
     mandate_id = harness.create_mandate()
     reservation_id = buy(harness, mandate_id).json()["reservation_id"]
     opened = harness.client.post(
-        "/disputes", json={"reservation_id": reservation_id, "reason": "não reconheço"}
+        "/disputes",
+        json={
+            "reservation_id": reservation_id,
+            "reason": "não reconheço",
+            "authorization_jws": harness.read_token(),
+        }
     ).json()
 
     verdict = harness.client.post(
-        f"/disputes/{opened['dispute_id']}/resolution"
+        f"/disputes/{opened['dispute_id']}/resolution", json={"authorization_jws": harness.read_token()}
     ).json()["liability"]
 
     assert verdict["mandate_repudiation"] == "refuted"
