@@ -678,3 +678,16 @@ Serve the already-built `web/dist` bytes from FastAPI after all API routers are 
 **What we chose:** FastAPI serves `web/dist` directly. It reserves every documented API root before a final GET/HEAD-only SPA fallback, returns API JSON for unknown API paths, and returns `503 ui_build_unavailable` when the build directory or `index.html` is absent.
 
 **Why:** A direct static response keeps the SPA and BFF on one scheme, host, and port without inventing identity or relying on CORS. Reserving API namespaces prevents an unknown BFF or agent path from receiving `index.html`, while the explicit unavailable response avoids a simulated UI when a production build has not been made.
+
+## ASGI runtime dependency
+
+**Decision:** How the documented FastAPI server command is supplied after a clean project sync
+
+**Options considered (one per line):**
+
+Require operators to add Uvicorn with an ephemeral `uv run --with` flag
+Declare Uvicorn as a runtime dependency and resolve it in the committed lockfile
+
+**What we chose:** Declare Uvicorn as a direct runtime dependency and commit its resolved lockfile entries.
+
+**Why:** The published same-origin launch command is part of the application delivery path. A clean `uv sync` must make that command available without an operator adding an undeclared, unreviewed package at launch time.
