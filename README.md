@@ -12,70 +12,40 @@ falta é o **mandato** — a autorização verificável que uma pessoa dá ao se
 
 ---
 
-## Rodando em 2 minutos
+## Executando o candidato de entrega
 
-Requer Python 3.12 ou 3.13.
+O procedimento completo, incluindo ambiente limpo, migration e inspeção do browser,
+fica em [clean-environment-rehearsal](docs/verification/clean-environment-rehearsal.md).
+Ele é pré-gate: os comandos devem ser executados no commit candidato antes de qualquer
+declaração de entrega concluída.
 
-```bash
-git clone https://github.com/pmendonca-dev/hackathon.git
-cd hackathon
+Requer Python 3.13, `uv` e Node.js com npm.
 
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -e .     # Windows
-# source .venv/bin/activate && pip install -e .  # Linux/macOS
-
-.venv/Scripts/python.exe -m pip install pytest httpx uvicorn
-.venv/Scripts/python.exe -m pytest -q             # 535 testes
-
-AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe -m uvicorn aval.main:app --port 8099
+```powershell
+uv sync
+uv run alembic upgrade head
+npm --prefix web ci
+npm --prefix web run build
+uv run uvicorn aval.main:app --host 127.0.0.1 --port 8000
 ```
 
-**O modelo é opcional.** Sem chave, o agente decide por regras e tudo funciona. Com
-chave, quem escolhe a oferta é um LLM — e nada mais no sistema muda:
+Em diretórios sincronizados por OneDrive, use `uv sync --link-mode=copy` se o modo de
+hardlink falhar. O fallback não muda o ambiente resolvido.
 
-```bash
-export AVAL_LLM_API_KEY=sk-...      # ou OPENAI_API_KEY
-export AVAL_LLM_MODEL=gpt-4.1-mini  # opcional
-export AVAL_LLM_BASE_URL=...        # opcional, qualquer API compatível
-export AVAL_LLM_TIMEOUT=6           # opcional; estourou, as regras assumem
-```
+### Segurança de configuração
 
-`AVAL_OPERATOR_TOKEN` protege as superfícies de operador (`/agents`, `/admin/psp`,
-`/reconcile`). Sem ele um token aleatório é sorteado e impresso na subida — a instância
-nasce fechada, não aberta.
+O Browser BFF exige credenciais locais explícitas para merchant, holder, auditor e
+operator, além de `AVAL_OPERATOR_AUTHORITY_SEED` para a revogação de operador. Forneça
+essas variáveis somente pelo ambiente local ou por um cofre local; não as escreva em
+arquivos, comandos compartilhados, logs, telas ou no bundle web.
 
-Documentação interativa da API em <http://127.0.0.1:8099/docs>.
+O cookie `aval_ui_session` é HttpOnly e `SameSite=Strict`; `Secure` continua ativo
+exceto no ensaio HTTP local explícito com `AVAL_UI_LOCAL_HTTP=true`. As APIs de agente
+continuam exigindo RFC 9421. O browser nunca recebe JWS, AuthorizationProof, PAN, token
+de vault ou chave privada.
 
-Com o servidor de pé, em outro terminal:
-
-```bash
-AVAL_OPERATOR_TOKEN=demo-token .venv/Scripts/python.exe scripts/smoke_demo.py http://127.0.0.1:8099
-```
-
-O smoke percorre o case inteiro — mandato, compra, escalação com aprovação assinada,
-teto, revogação ao vivo, impostor, as três visões e uma disputa — e falha alto no
-primeiro passo que não se comportar. É o ensaio do *trial by fire*.
-
-O banco fica em `var/aval.db`. Para uma instância descartável:
-`AVAL_DATABASE_PATH=:memory:`.
-
-### O navegador
-
-```bash
-cd web && npm install
-VITE_AVAL_API_BASE_URL=http://127.0.0.1:8099 VITE_AVAL_OPERATOR_TOKEN=demo-token npm run dev
-```
-
-Quatro visões — titular, merchant, auditor e o console trial-by-fire — todas contra o
-runtime de verdade. Não existe fixture por trás: se o servidor não responde, a tela diz
-que não respondeu, porque uma página que se preenche com dados inventados quando o
-runtime cai é indistinguível de uma que funciona.
-
-Para conferir a jornada inteira sem clicar, com o servidor de pé:
-
-```bash
-cd web && AVAL_OPERATOR_TOKEN=demo-token   node --experimental-strip-types tests/live-browser-journey.mjs http://127.0.0.1:8099
-```
+`x402` não faz parte desta entrega. Não adicione Web3, cadeia ou facilitator ao caminho
+de demonstração.
 
 ---
 
