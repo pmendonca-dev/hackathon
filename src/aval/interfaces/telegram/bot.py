@@ -130,6 +130,12 @@ class Bot:
         self._identities = identities
         self._api = api
         self._notified: set[tuple[int, str]] = set()
+        # Which reservations each chat actually bought. A dispute carries no
+        # signature, so the core cannot tell a forged reservation id from a real
+        # one — this is the only place that can.
+        # ponytail: in memory, so a restart refuses dispute buttons from older
+        # messages. Fail-closed, which is the right way to lose this state.
+        self._own_reservations: dict[int, set[str]] = {}
 
     # ── updates ────────────────────────────────────────────────────────────
     def handle_update(self, update: Mapping[str, Any]) -> None:
@@ -250,6 +256,10 @@ class Bot:
                 # Already shown here, so the background push must not repeat it.
                 self._notified.add((identity.chat_id, escalation.id))
         elif result.outcome == "settled":
+            if result.reservation_id:
+                self._own_reservations.setdefault(identity.chat_id, set()).add(
+                    result.reservation_id
+                )
             # A4: the person gets the record of what was bought, under which
             # mandate, and what is left — without having to ask for it.
             screens.append(views.receipt(self._gateway.receipt(identity.mandate_id)))
@@ -305,6 +315,8 @@ class Bot:
             return views.signed_note("Aprovado" if approve else "Recusado", message)
 
         if verb == views.CALLBACK_DISPUTE:
+            if argument not in self._own_reservations.get(identity.chat_id, set()):
+                return views.plain("Essa compra não é sua.")
             message = self._gateway.open_dispute(
                 argument, "titular não reconhece a compra (aberta pelo Telegram)"
             )

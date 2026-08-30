@@ -655,3 +655,21 @@ def test_denying_a_purchase_opens_a_dispute_against_the_reservation(world) -> No
 
     assert aval.disputes[0]["reservation_id"] == "rsv_1"
     assert "dsp_1" in api.last_text
+
+
+def test_a_crafted_tap_cannot_dispute_someone_elses_purchase(world) -> None:
+    """Disputes are not signed, so the core cannot catch a forged reservation id.
+
+    The bot is the only gate: a judge who crafts `dsp:<another judge's rsv>` must
+    be refused here, or one person opens a dispute against another's purchase.
+    """
+    bot, api, aval, _ = world
+    bot.handle_update(message("/start", chat_id=MARTA))
+    bot.handle_update(message("/comprar um voo pra Cordoba", chat_id=MARTA))
+    bot.handle_update(message("/start", chat_id=JUDGE))
+    aval.disputes.clear()
+
+    bot.handle_update(tap("dsp:rsv_1", chat_id=JUDGE))
+
+    assert aval.disputes == [], "a stranger must not open a dispute on this purchase"
+    assert "não é sua" in api.last_text
