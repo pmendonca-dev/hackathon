@@ -63,25 +63,39 @@ def create_payment_capture_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    def require_agent(request: Request) -> None:
-        identity = authenticate_rfc9421(request, verifier)
-        if verifier is not None and (identity is None or identity.id != "agent_01"):
-            raise HTTPException(status_code=403, detail={"code": "agent_not_authorized"})
+    def require_agent(request: Request):
+        """Only an agent captures. A reader is authenticated and still refused.
 
-    @router.post("/payment-captures", status_code=201, dependencies=[Depends(require_agent)])
+        Asked as a role rather than by name: pinning this to one identity meant a second
+        agent registered tomorrow was refused by a literal nobody would think to update,
+        and it put a demo fixture in the middle of an authorization decision.
+        """
+        identity = authenticate_rfc9421(request, verifier)
+        if verifier is not None and (identity is None or not service.may_capture(identity_id=identity.id)):
+            raise HTTPException(status_code=403, detail={"code": "agent_not_authorized"})
+        return identity
+
+    @router.post("/payment-captures", status_code=201)
     async def capture(
         response: Response,
         request: CaptureInput,
+        identity=Depends(require_agent),
         idempotency_key: str = Header(alias="Idempotency-Key"),
     ) -> dict[str, object]:
         if not idempotency_key.strip():
             raise HTTPException(400, detail={"code": "idempotency_key_required"})
-        result = service.capture(PaymentCaptureRequest(
-            checkout_id=request.checkout_session_id, token=request.token,
-            audience=request.audience, nonce=request.nonce,
-            checkout_mandate=request.ap2.checkout_mandate,
-            idempotency_key=idempotency_key,
-        ))
+        result = service.capture(
+            PaymentCaptureRequest(
+                checkout_id=request.checkout_session_id, token=request.token,
+                audience=request.audience, nonce=request.nonce,
+                checkout_mandate=request.ap2.checkout_mandate,
+                idempotency_key=idempotency_key,
+            ),
+            # Who acted, carried into the trail. Without it the protocol lane wrote
+            # events with no actor, and "which agent did this" — the question the audit
+            # surface exists to answer — had no answer on this lane at all.
+            agent_id=None if identity is None else identity.id,
+        )
         if result.replayed and response is not None:
             response.headers["Idempotent-Replayed"] = "true"
         if not result.approved or result.reservation is None:

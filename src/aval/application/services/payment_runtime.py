@@ -17,6 +17,7 @@ from aval.application.services.checkout import CheckoutStore
 from aval.adapters.ap2.mandates import ClosedCheckoutMandateVerifier
 from aval.adapters.ap2.merchant_authorization import MerchantAuthorizationVerifier
 from aval.infrastructure.sqlite.mandate_repository import SqliteMandateRepository
+from aval.infrastructure.sqlite.audit_ledger import SqliteAuditLedger
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class PaymentRuntime:
         self, *, core: AuthorizationCore, engine: Engine, clock, receipts: ReceiptService,
         checkouts: CheckoutStore, merchant_authorization_verifier: MerchantAuthorizationVerifier,
         mandate_verifier: ClosedCheckoutMandateVerifier,
+        unrestricted_audit_readers: frozenset[str] = frozenset(),
     ) -> None:
         self._core = core
         self._engine = engine
@@ -46,8 +48,22 @@ class PaymentRuntime:
         self._checkouts = checkouts
         self._merchant_authorization_verifier = merchant_authorization_verifier
         self._mandate_verifier = mandate_verifier
+        # Identities that read a trail by role rather than by participation: the holder
+        # the mandate belongs to, and an auditor engaged to examine it. Injected instead
+        # of named here — *who* holds a role is a deployment fact, and a literal list of
+        # ids inside an authorization decision is a fixture pretending to be a rule.
+        self._unrestricted_audit_readers = unrestricted_audit_readers
 
-    def capture(self, request: PaymentCaptureRequest) -> CaptureResult:
+    def may_capture(self, *, identity_id: str) -> bool:
+        """Whether this identity acts, as opposed to only reading.
+
+        A holder and an auditor authenticate perfectly well and still must not move
+        money on this lane; every other registered identity is an agent, and the
+        verifier has already refused any profile that is not trusted.
+        """
+        return identity_id not in self._unrestricted_audit_readers
+
+    def capture(self, request: PaymentCaptureRequest, *, agent_id: str | None = None) -> CaptureResult:
         checkout = self._checkouts.get(request.checkout_id)
         if checkout is None:
             return CaptureResult(False, "checkout_not_found")
@@ -81,7 +97,7 @@ class PaymentRuntime:
             category=checkout.command.category,
             idempotency_key=request.idempotency_key, instrument_id=request.token,
             idempotency_fingerprint=self._capture_idempotency_fingerprint(request),
-        ))
+        ), agent_id=agent_id)
         if result.approved and result.reservation is not None and result.settlement_reference:
             self._persist_receipts(result, checkout_mandate=request.checkout_mandate)
         return result
@@ -123,24 +139,39 @@ class PaymentRuntime:
             return SqlitePaymentRuntimeRepository(connection).get(capture_id)
 
     def can_read_capture(self, *, identity_id: str, capture_id: str) -> bool:
-        if identity_id in {"holder_01", "auditor_01"}:
-            return self.receipts_for(capture_id) is not None
         capture = self.receipts_for(capture_id)
-        if capture is None or identity_id != "agent_01":
+        if capture is None:
             return False
-        checkout = self._checkouts.get(capture.checkout_id)
-        return checkout is not None and checkout.command.merchant_id == "merchant_01"
+        if identity_id in self._unrestricted_audit_readers:
+            return True
+        return self._took_part_in(identity_id=identity_id, mandate_id=capture.mandate_id)
 
     def can_read_mandate(self, *, identity_id: str, mandate_id: str) -> bool:
-        if identity_id in {"holder_01", "auditor_01"}:
-            return True
-        if identity_id != "agent_01":
-            return False
+        """Authentication said who is asking; this says what they may see.
+
+        An agent reads the trail of a mandate it actually took part in, and no other.
+        That is derived from the trail itself — the events name the agent that produced
+        them — rather than from a list of identities compiled in advance, so a second
+        agent registered tomorrow is answered correctly without anyone editing this file.
+        """
         with self._engine.connect() as connection:
-            mandate = SqliteMandateRepository(connection).get(mandate_id)
-        # The current audit projection has no per-event merchant column; fail closed
-        # instead of exposing a multi-merchant mandate's combined timeline.
-        return mandate is not None and mandate.allowed_merchant_ids == frozenset({"merchant_01"})
+            if SqliteMandateRepository(connection).get(mandate_id) is None:
+                return False
+        if identity_id in self._unrestricted_audit_readers:
+            return True
+        return self._took_part_in(identity_id=identity_id, mandate_id=mandate_id)
+
+    def _took_part_in(self, *, identity_id: str, mandate_id: str) -> bool:
+        """Whether this identity appears as the actor of anything on this mandate.
+
+        Read from the hash-chained trail, which is the same evidence the auditor sees.
+        An agent that never acted on a mandate has nothing recorded under it, so it is
+        answered no — including for a mandate that does not exist, which produces an
+        empty timeline and therefore the same refusal.
+        """
+        with self._engine.connect() as connection:
+            timeline = SqliteAuditLedger(connection).timeline_for(mandate_id)
+        return any(entry.detail.get("agent_id") == identity_id for entry in timeline)
 
     def mandate_exists(self, mandate_id: str) -> bool:
         return self._core.mandate(mandate_id) is not None

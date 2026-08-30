@@ -96,6 +96,15 @@ SEED_IDENTITIES = (
     ("auditor_01", "https://auditor.aval.local/.well-known/ucp", "auditor-key"),
 )
 
+# Who reads a mandate's trail by role rather than by having taken part in it: the holder
+# it belongs to, and the auditor engaged to examine it. Every other identity — every
+# agent — is answered from the trail itself, which names the agent behind each event.
+#
+# This lives in the composition root because it is a fact about *this deployment's*
+# fixtures, not a rule. Naming these ids inside `PaymentRuntime` made a demo fixture into
+# an authorization decision, and refused any agent or merchant the list had not foreseen.
+UNRESTRICTED_AUDIT_READERS = frozenset({"holder_01", "auditor_01"})
+
 SEED_MANDATE_ID = "mandate_01"
 
 
@@ -236,6 +245,7 @@ def _mount_protocol_lane(app: FastAPI, runtime: AvalRuntime, clock: Callable[[],
             holder_jwk=custody.public_jwk("holder-key"),
             clock=clock,
         ),
+        unrestricted_audit_readers=UNRESTRICTED_AUDIT_READERS,
     )
     # One verifier for every protocol door. Payment and audit are agent traffic too, so
     # they answer the same question the checkout does: is the caller who it claims to be.
