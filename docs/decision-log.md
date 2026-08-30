@@ -785,3 +785,16 @@ intent. Restoring direct agent calls would require RFC 9421 material in the
 browser, while deleting the presentation would make the rebased UI incomplete.
 An explicit unavailable state preserves both the capability and the security
 boundary without inventing successful local behavior.
+## Head-stamped SQLite frequency-schema repair
+
+**Decision:** How to recover a legacy SQLite database that is marked at the Alembic head but lacks `mandates.max_uses`
+
+**Options considered (one per line):**
+
+Rewrite the historical frequency migration
+Reset or rebuild the durable database
+Add a forward-only compatibility migration that detects and restores the missing column
+
+**What we chose:** Add a new forward-only migration that inspects `mandates`, adds nullable `max_uses` only when missing, and backfills existing rows with `NULL`; its downgrade leaves the repaired column in place.
+
+**Why:** `NULL` is the current domain representation of `Mandate.usage_limit is None`, so a mandate written before frequency limits has no implicit usage cap. Historical migrations and durable facts remain untouched, while a no-op downgrade avoids recreating a schema that the current demonstration runtime cannot boot.
