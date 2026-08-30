@@ -7,7 +7,9 @@ import {
   type Escalation,
   type LedgerEntry,
   type MandateView,
+  type CatalogOffer,
   type Metrics,
+  type Watch,
 } from '../gateways/authorizationGateway.ts';
 import { signCompactJws, type HolderWallet } from '../wallet/holderKey.ts';
 import { loadOrCreateWallet } from '../wallet/walletStore.ts';
@@ -62,6 +64,9 @@ export function AvalProvider({
   const [chain, setChain] = useState<ChainStatus | null>(null);
   const [receipts, setReceipts] = useState<CommandReceipt[]>([]);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [watches, setWatches] = useState<Watch[]>([]);
+  const [serverNow, setServerNow] = useState<string | null>(null);
+  const [offers, setOffers] = useState<CatalogOffer[]>([]);
 
   // `reload` must not depend on the selection — it would re-create the callback and
   // re-fire the load effect on every mandate click. The ref carries the current choice
@@ -131,6 +136,19 @@ export function AvalProvider({
     } catch {
       setMetrics(null);
     }
+    // Read before the wallet gate for the same reason as the footer: it describes the
+    // instance, not this buyer. Null means the runtime did not say — and the form that
+    // uses it falls back to this browser's clock rather than inventing an instant.
+    try {
+      setServerNow(await gateway.serverNow());
+    } catch {
+      setServerNow(null);
+    }
+    try {
+      setOffers((await gateway.offers()).offers);
+    } catch {
+      setOffers([]);
+    }
     try {
       // Both principal-scoped listings are signed by the wallet: the id in the URL is a
       // guessable name, and the key is what decides which mandates come back. Before the
@@ -168,10 +186,19 @@ export function AvalProvider({
           setMerchantEntries(merchant.entries);
           setMerchantRedactions(merchant.redacted);
         }
+        // Standing orders are a surface, not the record. An instance that does not
+        // serve them still shows the mandate, the trail and every decision — so their
+        // absence must not blank the page the way a missing ledger would.
+        try {
+          setWatches((await gateway.listWatches(current)).watches);
+        } catch {
+          setWatches([]);
+        }
       } else {
         setHumanEntries([]);
         setAuditorEntries([]);
         setMerchantEntries([]);
+        setWatches([]);
         setChain(null);
       }
     } catch (caught) {
@@ -213,6 +240,9 @@ export function AvalProvider({
       chain,
       receipts,
       metrics,
+      watches,
+      serverNow,
+      offers,
 
       setView,
       setPrincipalId: (next: string) => {
@@ -261,6 +291,31 @@ export function AvalProvider({
           return `${result.outcome} · ${result.reason_code}`;
         });
         await reload();
+      },
+
+      async watchInstruction(instruction: string) {
+        const mandateId = selectedRef.current;
+        if (!mandateId) return;
+        const accepted = await run('Deixar o agente vigiando', async () => {
+          const watch = await gateway.registerWatch(mandateId, instruction);
+          return `Vigília ${watch.watch_id} aberta. O agente tenta sozinho até ${watch.expires_at}.`;
+        });
+        if (accepted) await reload();
+      },
+
+      async tickWatches() {
+        const mandateId = selectedRef.current;
+        if (!mandateId) return;
+        const accepted = await run('Tentar as vigílias agora', async () => {
+          const { fired } = await gateway.tickWatches(mandateId);
+          // A tick that fired nothing is not a failure: the standing order is still
+          // standing. Saying "nada aconteceu" is the honest reading of a watch whose
+          // condition the catalogue has not met yet.
+          return fired.length === 0
+            ? 'Nenhuma vigília encontrou oferta. Continuam abertas.'
+            : `${fired.length} vigília(s) dispararam; o registro abaixo mostra o quê.`;
+        });
+        if (accepted) await reload();
       },
 
       async decideEscalation(escalationId, decision) {
@@ -378,6 +433,14 @@ export function AvalProvider({
         await reload();
       },
 
+      async repriceOffer(sku: string, minorUnits: number) {
+        await run('Derrubar preço', async () => {
+          const answer = await gateway.repriceOffer(sku, minorUnits);
+          return `${answer.sku} agora a ${answer.minor_units} centavos. As vigílias abertas passam a poder disparar.`;
+        });
+        await reload();
+      },
+
       async tamperLedger(sequence: number) {
         const mandateId = selectedRef.current;
         if (!mandateId) return;
@@ -406,6 +469,9 @@ export function AvalProvider({
       chain,
       receipts,
       metrics,
+      watches,
+      serverNow,
+      offers,
       reload,
       requireWallet,
       run,

@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react';
-import { KeyRound, Send, ShieldOff, Sparkles } from 'lucide-react';
+import { useMemo, useState, type FormEvent } from 'react';
+import { Clock, Eye, KeyRound, Send, ShieldOff, Sparkles } from 'lucide-react';
 
 import { useAval } from '../state/AvalContext.ts';
 import { EvaluationLadder } from '../components/EvaluationLadder.tsx';
@@ -7,6 +7,20 @@ import { Badge, Button, EmptyNotice, Field, Panel } from '../components/ui.tsx';
 import { formatDateTime, formatMoney } from '../utils/format.ts';
 
 const MONTH_SECONDS = 30 * 24 * 3600;
+
+/**
+ * A default validity dated from the runtime, never from this laptop.
+ *
+ * The demo clock only moves forward, and a judge is invited to move it. A form that
+ * dated itself here would then propose an instant the server has already passed, and
+ * every mandate created after that trial-by-fire step would be refused as expired —
+ * a failure the judge caused without being able to see why.
+ */
+function defaultExpiry(serverNow: string | null): string {
+  const base = serverNow ? new Date(serverNow) : new Date();
+  const valid = new Date(base.getTime() + MONTH_SECONDS * 1000);
+  return `${valid.toISOString().slice(0, 19)}Z`;
+}
 
 export function HolderView() {
   const {
@@ -18,8 +32,12 @@ export function HolderView() {
     humanEntries,
     holderKid,
     walletReady,
+    watches,
+    serverNow,
     createMandate,
     runAgent,
+    watchInstruction,
+    tickWatches,
     decideEscalation,
     revokeSelected,
     revokeEverything,
@@ -29,6 +47,7 @@ export function HolderView() {
   const [busy, setBusy] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const selected = mandates.find((item) => item.mandate_id === selectedMandateId) ?? null;
+  const expiryDefault = useMemo(() => defaultExpiry(serverNow), [serverNow]);
 
   async function guard(action: () => Promise<void>) {
     setBusy(true);
@@ -73,7 +92,13 @@ export function HolderView() {
             </Button>
           }
         >
-          {showCreate && <CreateMandateForm onSubmit={createMandate} onDone={() => setShowCreate(false)} />}
+          {showCreate && (
+            <CreateMandateForm
+              onSubmit={createMandate}
+              onDone={() => setShowCreate(false)}
+              defaultExpiresAt={expiryDefault}
+            />
+          )}
           {mandates.length === 0 ? (
             <EmptyNotice
               title="Nenhum mandato ainda"
@@ -151,6 +176,27 @@ export function HolderView() {
                 <p className="eyebrow mb-2">Como o núcleo chegou nisso</p>
                 <EvaluationLadder trace={lastRun.evaluation_trace} />
               </div>
+
+              {/* Nothing matching is not a dead end — but turning it into a live
+                  standing order is the buyer's call, never the agent's. Opening one
+                  silently would be approving a future purchase nobody asked for. */}
+              {lastRun.outcome === 'no_offer' && (
+                <div className="mt-4 rounded-xl border border-hold/35 bg-hold/6 p-3.5">
+                  <p className="text-[13px] leading-relaxed">
+                    Nada no catálogo atende agora. O agente pode continuar tentando
+                    sozinho — a vigília corre contra este mesmo mandato.
+                  </p>
+                  <Button
+                    variant="ghost"
+                    className="mt-3"
+                    disabled={busy || !selected}
+                    onClick={() => void guard(() => watchInstruction(instruction))}
+                  >
+                    <Eye size={13} aria-hidden="true" />
+                    Deixar o agente vigiando
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </Panel>
@@ -185,6 +231,50 @@ export function HolderView() {
             ))}
           </ul>
         )}
+      </Panel>
+
+      <Panel
+        eyebrow="Ordens permanentes"
+        title={`${watches.length} vigília(s)`}
+        action={
+          <Button
+            variant="ghost"
+            disabled={busy || watches.length === 0}
+            onClick={() => void guard(tickWatches)}
+          >
+            <Clock size={13} aria-hidden="true" />
+            Tentar agora
+          </Button>
+        }
+      >
+        {watches.length === 0 ? (
+          <EmptyNotice
+            title="Nenhuma vigília aberta"
+            body="Quando o agente não encontra oferta, ele oferece ficar olhando. É a única parte do sistema em que o comprador não é uma pessoa apertando pagar."
+          />
+        ) : (
+          <ul className="space-y-2">
+            {watches.map((watch) => (
+              <li key={watch.watch_id} className="rounded-xl border border-line bg-ink-800/40 p-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="mono text-[11px] text-fg-mute">{watch.watch_id}</span>
+                  <Badge tone={watchTone(watch)}>{watch.outcome ?? watch.status}</Badge>
+                </div>
+                <p className="mt-2 text-[13px] leading-relaxed">{watch.instruction}</p>
+                <p className="mono mt-1 text-[11px] text-fg-mute">
+                  até {formatDateTime(watch.expires_at)}
+                  {watch.settlement_reference ? ` · ${watch.settlement_reference}` : ''}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="safe-note mt-4">
+          <Eye size={15} aria-hidden="true" />
+          A autonomia está em <em>quando</em> o agente age, nunca no <em>que</em> ele
+          pode fazer: disparar é chamar o mesmo mandato de sempre, então uma vigília
+          contra um mandato revogado é recusada igualzinho.
+        </p>
       </Panel>
 
       <section className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
@@ -258,6 +348,16 @@ function PaymentState({ entry }: { entry: { [key: string]: unknown } }) {
   );
 }
 
+/**
+ * Open is `hold`, not `allow`: a standing order has decided nothing yet, and painting
+ * it green would read as a purchase that already happened.
+ */
+function watchTone(watch: { status: string; outcome: string | null }) {
+  if (watch.outcome === 'settled') return 'allow' as const;
+  if (watch.status === 'OPEN') return 'hold' as const;
+  return watch.outcome ? ('deny' as const) : ('neutral' as const);
+}
+
 function toMoney(value: { minor_units: number; currency: string; scale: number }) {
   return { minorUnits: value.minor_units, currency: value.currency, scale: value.scale };
 }
@@ -265,16 +365,18 @@ function toMoney(value: { minor_units: number; currency: string; scale: number }
 function CreateMandateForm({
   onSubmit,
   onDone,
+  defaultExpiresAt,
 }: {
   onSubmit: ReturnType<typeof useAval>['createMandate'];
   onDone(): void;
+  defaultExpiresAt: string;
 }) {
   const [limit, setLimit] = useState('200');
   const [ceiling, setCeiling] = useState('500');
   const [merchants, setMerchants] = useState('vuelaya');
   const [categories, setCategories] = useState('travel');
   const [maxUses, setMaxUses] = useState('');
-  const [expiresAt, setExpiresAt] = useState('2026-09-30T23:59:59Z');
+  const [expiresAt, setExpiresAt] = useState(defaultExpiresAt);
   const [busy, setBusy] = useState(false);
 
   return (

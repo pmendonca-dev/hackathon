@@ -127,6 +127,45 @@ check(
   `${merchant.redacted.length} campos retidos`,
 );
 
+// 6b — the standing order: the agent still working after the person stopped typing.
+// This is the only part of the system where the buyer is not a person pressing pay,
+// which is the premise of the case — so it has to be reachable from the browser lane.
+const nothingYet = await gateway.agentPurchase(mandateId, 'compre um voo para Córdoba abaixo de $100');
+check('nada atende ainda, e isso não é uma compra', nothingYet.outcome === 'no_offer', nothingYet.reason_code);
+
+const beforeWatching = await gateway.listWatches(mandateId);
+check(
+  'e o beco não virou ordem permanente sozinho',
+  beforeWatching.watches.length === 0,
+  `${beforeWatching.watches.length} vigília(s)`,
+);
+
+const watch = await gateway.registerWatch(mandateId, 'compre um voo para Córdoba abaixo de $100');
+check('o titular abre a vigília explicitamente', watch.status === 'OPEN', watch.watch_id);
+
+const quiet = await gateway.tickWatches(mandateId);
+check('sem oferta, a vigília continua esperando', quiet.fired.length === 0);
+
+// The one the instruction actually names, at the merchant the mandate actually allows.
+// Dropping the price of anything else proves nothing: the agent would still be right to
+// leave it alone, and a green step there would be measuring the wrong refusal.
+const cheapest = (await gateway.offers()).offers
+  .filter(
+    (offer) =>
+      offer.merchant_id === 'vuelaya'
+      && offer.item.category === 'travel'
+      && offer.item.title.includes('Córdoba'),
+  )
+  .sort((left, right) => left.total.minor_units - right.total.minor_units)[0];
+check('há um voo para Córdoba na VuelaYa para derrubar', Boolean(cheapest), cheapest?.item.sku);
+await gateway.repriceOffer(cheapest.item.sku, 9000);
+const fired = await gateway.tickWatches(mandateId);
+check(
+  'o preço cai e o agente compra sozinho',
+  fired.fired.length === 1 && fired.fired[0].outcome === 'settled',
+  `${fired.fired[0]?.outcome ?? 'nada disparou'}`,
+);
+
 // 7 — the demo clock and the tamper tool, both operator-gated.
 const advanced = await gateway.advanceClock(3600);
 check('o relógio da demonstração avança', advanced.offset_seconds >= 3600);
@@ -163,6 +202,25 @@ check(
   'e a escada para antes de qualquer checagem de dinheiro',
   afterRevocation.evaluation_trace.at(-1)?.check === 'mandate_not_revoked'
     && !afterRevocation.evaluation_trace.some((step) => step.check === 'below_ceiling'),
+);
+
+// 9 — the standing order carries no authority of its own. Firing means calling the very
+// same mandate, so a revoked one refuses it exactly as it refuses a typed instruction.
+// The autonomy is in *when* the agent acts, never in *what* it may do.
+let watchAfterRevocation = 'recusada ao registrar';
+try {
+  await gateway.registerWatch(mandateId, 'compre um voo para Córdoba abaixo de $100');
+  const ticked = await gateway.tickWatches(mandateId);
+  watchAfterRevocation = ticked.fired.some((item) => item.outcome === 'settled')
+    ? 'comprou mesmo revogada'
+    : 'não comprou';
+} catch (error) {
+  watchAfterRevocation = `recusada ao registrar (${error.reasonCode ?? error})`;
+}
+check(
+  'uma vigília contra mandato revogado não compra',
+  watchAfterRevocation !== 'comprou mesmo revogada',
+  watchAfterRevocation,
 );
 
 const failed = steps.filter((step) => !step.ok);

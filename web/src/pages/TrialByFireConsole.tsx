@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Clock, KeyRound, PlugZap, RefreshCcw, ShieldOff, Wallet } from 'lucide-react';
+import { Clock, KeyRound, PlugZap, RefreshCcw, ShieldOff, TrendingDown, Wallet } from 'lucide-react';
 
 import { useAval } from '../state/AvalContext.ts';
 import { Badge, Button, EmptyNotice, Panel } from '../components/ui.tsx';
@@ -27,12 +27,17 @@ export function TrialByFireConsole() {
     setPspMode,
     reconcile,
     advanceClock,
+    offers,
+    repriceOffer,
   } = useAval();
 
   const [newLimit, setNewLimit] = useState('100');
   const [hours, setHours] = useState('24');
+  const [sku, setSku] = useState('');
+  const [newPrice, setNewPrice] = useState('90');
   const [busy, setBusy] = useState(false);
   const selected = mandates.find((item) => item.mandate_id === selectedMandateId) ?? null;
+  const chosenSku = sku || offers[0]?.item.sku || '';
 
   function fire(action: () => Promise<void>) {
     setBusy(true);
@@ -130,6 +135,40 @@ export function TrialByFireConsole() {
                 onClick={() => fire(() => advanceClock(Math.round(Number(hours) * 3600)))}
               >
                 <Clock size={13} aria-hidden="true" />Avançar e ver expirar
+              </Button>
+              {/* The control that ends a standing order's waiting. It sits here, and
+                  not with the holder commands, because moving a price authorizes
+                  nothing: the watch it wakes faces the same mandate as ever. */}
+              <label className="mt-4 block">
+                <span className="eyebrow">Derrubar preço de</span>
+                <select
+                  className="form-control"
+                  value={chosenSku}
+                  onChange={(event) => setSku(event.target.value)}
+                  disabled={offers.length === 0}
+                >
+                  {offers.map((offer) => (
+                    <option key={offer.offer_id} value={offer.item.sku}>
+                      {offer.item.title} · {offer.total.minor_units / 100} {offer.total.currency}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="mt-2 block">
+                <span className="eyebrow">Novo preço (USD)</span>
+                <input
+                  className="form-control"
+                  value={newPrice}
+                  onChange={(event) => setNewPrice(event.target.value)}
+                />
+              </label>
+              <Button
+                variant="ghost"
+                className="mt-2 w-full"
+                disabled={busy || !chosenSku}
+                onClick={() => fire(() => repriceOffer(chosenSku, Math.round(Number(newPrice) * 100)))}
+              >
+                <TrendingDown size={13} aria-hidden="true" />O preço caiu — e agora?
               </Button>
               <p className="safe-note mt-4">
                 <Clock size={15} aria-hidden="true" />
