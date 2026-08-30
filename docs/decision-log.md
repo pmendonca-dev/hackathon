@@ -207,3 +207,44 @@ Load all capture scope from the persisted canonical checkout and validate its AP
 **What we chose:** Capture accepts only a checkout identifier, opaque token, key-binding inputs, and AP2 closed checkout evidence; it derives authoritative scope from the canonical checkout.
 
 **Why:** A caller-controlled total or merchant would create a second authorization representation. Verifying merchant authorization JCS/JWS and closed AP2 evidence against the persisted checkout blocks divergent values before a reservation, PSP call, receipt, or settlement audit event exists.
+## Browser runtime source selection
+
+**Decision:** Default browser data source for the live demo
+
+**Options considered (one per line):**
+
+Keep the fixture gateway as the default until all runtime endpoints are merged
+Fall back silently from HTTP to fixtures when the runtime is unavailable
+Use HTTP by default and permit fixtures only behind an explicit development-only flag
+
+**What we chose:** `HttpAvalGateway` is the default. The fixture gateway is selected only when Vite is in development mode and `VITE_AVAL_USE_MOCK=true`; the UI then renders a persistent mock-data provenance strip.
+
+**Why:** A silent or default fixture can make presentation data look like canonical state and can make a demo appear successful while the runtime is unavailable. An explicit development gate keeps fixtures useful for layout work without weakening live-demo evidence.
+
+## Trial command availability
+
+**Decision:** Administrative commands exposed by the browser
+
+**Options considered (one per line):**
+
+Simulate unsupported limit, scope, and budget commands locally
+Invent HTTP endpoints that are not in the published runtime contract
+Enable only commands backed by authenticated, idempotent, audited runtime endpoints
+
+**What we chose:** The browser will enable signed mandate revocation after the runtime is integrated. Limit reduction, scope change, and budget-zero remain visibly unavailable because the published contract does not define those APIs.
+
+**Why:** Local mutation would create a second authority and speculative endpoints would couple the UI to an imaginary protocol. The signed revocation endpoint is the only published administrative seam that can provide a real authenticated and auditable effect.
+
+## Live workspace composition
+
+**Decision:** Projection strategy for human, merchant, and auditor views
+
+**Options considered (one per line):**
+
+Populate missing live fields with fixture literals or browser-derived policy
+Require an undocumented aggregate workspace endpoint
+Compose only the published capture, receipt, audit, and dispute responses and render unavailable fields as unavailable
+
+**What we chose:** The live UI will compose documented read-only runtime responses identified by configured mandate and capture IDs, without synthesizing mandate limits, private budgets, identity, or authorization state.
+
+**Why:** The payment runtime contract intentionally exposes no aggregate workspace or mandate-detail response. Rendering only returned facts preserves `AuthorizationCore` as the sole source of truth and prevents merchant-visible leakage of private fields.

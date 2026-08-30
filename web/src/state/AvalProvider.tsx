@@ -12,9 +12,13 @@ import type {
   TrialCommand,
   TrialCommandReceipt,
 } from '../contracts/avalGateway.ts';
-import { createMockAvalGateway } from '../fixtures/mockAvalGateway.ts';
+import { createAvalGateway } from '../gateways/createAvalGateway.ts';
 import { AvalContext, type AvalContextValue, type View } from './AvalContext.ts';
-const DEFAULT_AVAL_GATEWAY = createMockAvalGateway();
+const DEFAULT_AVAL_GATEWAY = createAvalGateway(import.meta.env);
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 export function AvalProvider({
   children,
@@ -34,8 +38,8 @@ export function AvalProvider({
     setError(null);
     try {
       setSnapshot(await gateway.loadWorkspace());
-    } catch {
-      setError('Não foi possível carregar o snapshot. Verifique a boundary configurada.');
+    } catch (error) {
+      setError(errorMessage(error, 'Não foi possível carregar o snapshot. Verifique a boundary configurada.'));
     } finally {
       setLoading(false);
     }
@@ -48,8 +52,10 @@ export function AvalProvider({
       try {
         const loadedSnapshot = await gateway.loadWorkspace();
         if (active) setSnapshot(loadedSnapshot);
-      } catch {
-        if (active) setError('Não foi possível carregar o snapshot. Verifique a boundary configurada.');
+      } catch (error) {
+        if (active) {
+          setError(errorMessage(error, 'Não foi possível carregar o snapshot. Verifique a boundary configurada.'));
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -65,9 +71,13 @@ export function AvalProvider({
     async (command: TrialCommand) => {
       setError(null);
       try {
-        setLastCommandReceipt(await gateway.submitTrialCommand(command));
-      } catch {
-        setError('A boundary recusou o comando. Nenhuma alteração foi presumida pelo browser.');
+        const receipt = await gateway.submitTrialCommand(command);
+        setLastCommandReceipt(receipt);
+        if (receipt.dataSource === 'api') {
+          setSnapshot(await gateway.loadWorkspace());
+        }
+      } catch (error) {
+        setError(errorMessage(error, 'A boundary recusou o comando. Nenhuma alteração foi presumida pelo browser.'));
       }
     },
     [gateway],

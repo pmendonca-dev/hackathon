@@ -5,6 +5,9 @@ import { Button } from './components/ui.tsx';
 import { HumanView } from './pages/HumanView.tsx';
 import { MerchantView } from './pages/MerchantView.tsx';
 import { AuditorView } from './pages/AuditorView.tsx';
+import { LiveAuditorView } from './pages/LiveAuditorView.tsx';
+import { LiveHumanView } from './pages/LiveHumanView.tsx';
+import { LiveMerchantView } from './pages/LiveMerchantView.tsx';
 import { TrialConsole } from './pages/TrialConsole.tsx';
 import { useAval } from './state/AvalContext.ts';
 import { AvalProvider } from './state/AvalProvider.tsx';
@@ -17,7 +20,7 @@ function Workspace() {
       <Shell>
         <div className="flex min-h-[70vh] items-center justify-center" role="status">
           <LoaderCircle className="animate-spin text-allow" size={24} aria-hidden="true" />
-          <span className="ml-3 text-sm text-fg-mute">Carregando snapshot mock…</span>
+          <span className="ml-3 text-sm text-fg-mute">Carregando estado da API…</span>
         </div>
       </Shell>
     );
@@ -38,16 +41,43 @@ function Workspace() {
 
   return (
     <Shell>
+      {snapshot.meta.dataSource === 'mock' && (
+        <div
+          className="sticky top-[57px] z-10 border-b border-escalate/40 bg-escalate-dk px-5 py-2 text-center font-mono text-[11px] font-semibold tracking-wide text-escalate"
+          role="status"
+        >
+          DADOS DE DEMONSTRAÇÃO / MOCK — estas projeções não representam estado vivo nem comprovam execução do runtime.
+        </div>
+      )}
       {error && <div className="mx-auto mt-4 max-w-[1180px] px-5 text-[12px] text-deny" role="alert">{error}</div>}
-      {view === 'human' && <HumanView data={snapshot.human} />}
-      {view === 'merchant' && <MerchantView data={snapshot.merchant} />}
-      {view === 'auditor' && <AuditorView data={snapshot.auditor} />}
-      {view === 'trial' && (
-        <TrialConsole
-          mandateId={snapshot.human.mandate.id}
-          receipt={lastCommandReceipt}
-          onSubmit={submitTrialCommand}
-        />
+      {snapshot.meta.dataSource === 'api' ? (
+        <>
+          {view === 'human' && <LiveHumanView data={snapshot.live} />}
+          {view === 'merchant' && <LiveMerchantView capture={snapshot.live.capture} receipts={snapshot.live.receipts} />}
+          {view === 'auditor' && <LiveAuditorView audit={snapshot.live.audit} dispute={snapshot.live.dispute} />}
+          {view === 'trial' && (
+            <TrialConsole
+              mandateId={snapshot.live.mandateId}
+              dataSource="api"
+              receipt={lastCommandReceipt}
+              onSubmit={submitTrialCommand}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          {view === 'human' && <HumanView data={snapshot.human} />}
+          {view === 'merchant' && <MerchantView data={snapshot.merchant} />}
+          {view === 'auditor' && <AuditorView data={snapshot.auditor} />}
+          {view === 'trial' && (
+            <TrialConsole
+              mandateId={snapshot.human.mandate.id}
+              dataSource="mock"
+              receipt={lastCommandReceipt}
+              onSubmit={submitTrialCommand}
+            />
+          )}
+        </>
       )}
     </Shell>
   );
