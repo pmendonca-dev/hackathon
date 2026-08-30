@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -11,6 +13,12 @@ from aval.infrastructure.sqlite.models import metadata
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+runtime_database_path = os.environ.get("AVAL_DATABASE_PATH")
+default_sqlite_url = "sqlite+pysqlite:///./aval.db"
+if runtime_database_path and config.get_main_option("sqlalchemy.url") == default_sqlite_url:
+    database_path = Path(runtime_database_path).expanduser().resolve()
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
 
 target_metadata = metadata
 

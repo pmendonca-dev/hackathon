@@ -67,6 +67,38 @@ def test_alembic_upgrade_creates_the_initial_schema(tmp_path):
     assert {"allowed_categories", "ceiling_minor_units"} <= mandate_columns
 
 
+def test_alembic_uses_the_runtime_database_path_from_environment(tmp_path, monkeypatch):
+    """The documented migration command must upgrade the database FastAPI will open."""
+    project_root = __file__.replace("\\", "/").split("/tests/")[0]
+    config = Config(f"{project_root}/alembic.ini")
+    config.set_main_option("script_location", f"{project_root}/alembic")
+    runtime_database = tmp_path / "runtime.sqlite3"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AVAL_DATABASE_PATH", str(runtime_database))
+
+    command.upgrade(config, "head")
+
+    assert runtime_database.exists()
+    assert not (tmp_path / "aval.db").exists()
+    engine = create_engine(f"sqlite+pysqlite:///{runtime_database.as_posix()}")
+    assert set(CORE_TABLE_NAMES) <= set(inspect(engine).get_table_names())
+
+
+def test_alembic_respects_an_explicit_database_url_over_runtime_environment(tmp_path, monkeypatch):
+    """Fixtures and operators may intentionally direct Alembic to a different database."""
+    project_root = __file__.replace("\\", "/").split("/tests/")[0]
+    config = Config(f"{project_root}/alembic.ini")
+    explicit_database = tmp_path / "explicit.sqlite3"
+    runtime_database = tmp_path / "runtime.sqlite3"
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{explicit_database.as_posix()}")
+    monkeypatch.setenv("AVAL_DATABASE_PATH", str(runtime_database))
+
+    command.upgrade(config, "head")
+
+    assert explicit_database.exists()
+    assert not runtime_database.exists()
+
+
 def test_seed_is_deterministic_and_idempotent(tmp_path):
     engine = create_sqlite_engine(tmp_path / "seed.db")
     metadata.create_all(engine)

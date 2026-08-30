@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -26,6 +27,7 @@ import {
   type AvalErrorPresentation,
 } from '../errors/avalError.ts';
 import { AvalContext, type AvalContextValue, type View } from './AvalContext.ts';
+import { createSessionGeneration } from './sessionGeneration.ts';
 import { sessionRecovery } from './sessionRecovery.ts';
 
 type BrowserGateway = AvalGateway | UiBffGatewayContract;
@@ -68,15 +70,17 @@ export function AvalProvider({
   const [error, setError] = useState<AvalErrorPresentation | null>(null);
   const [view, setView] = useState<View>('human');
   const [lastCommandReceipt, setLastCommandReceipt] = useState<TrialCommandReceipt | null>(null);
+  const sessionGeneration = useRef(createSessionGeneration()).current;
 
   const clearProtectedState = useCallback(() => {
+    sessionGeneration.invalidate();
     setSession(null);
     setWorkspace(null);
     setAudit(null);
     setDispute(null);
     setLastCommandReceipt(null);
     setView('human');
-  }, []);
+  }, [sessionGeneration]);
 
   const handleFailure = useCallback((failure: unknown, fallback: string) => {
     const presentation = safeFailure(failure, fallback);
@@ -86,25 +90,34 @@ export function AvalProvider({
     setError(presentation);
   }, [apiGateway, clearProtectedState]);
 
-  const loadBffWorkspace = useCallback(async (role: UiRole) => {
+  const loadBffWorkspace = useCallback(async (
+    role: UiRole,
+    requestGeneration = sessionGeneration.current(),
+  ) => {
     if (!apiGateway) return;
-    const nextWorkspace = await apiGateway.loadWorkspace();
-    if (nextWorkspace.role !== role) {
-      throw new Error('BFF role projection mismatch.');
+    try {
+      const nextWorkspace = await apiGateway.loadWorkspace();
+      if (nextWorkspace.role !== role) {
+        throw new Error('BFF role projection mismatch.');
+      }
+      const mandateId = nextWorkspace.mandates[0]?.mandate_id;
+      let nextAudit: UiAuditProjection | null = null;
+      let nextDispute: UiDisputeProjection | null = null;
+      if (mandateId && (role === 'holder' || role === 'auditor')) {
+        [nextAudit, nextDispute] = await Promise.all([
+          apiGateway.loadAudit(mandateId),
+          apiGateway.loadDispute(mandateId),
+        ]);
+      }
+      if (!sessionGeneration.isCurrent(requestGeneration)) return;
+      setWorkspace(nextWorkspace);
+      setAudit(nextAudit);
+      setDispute(nextDispute);
+    } catch (loadError) {
+      if (!sessionGeneration.isCurrent(requestGeneration)) return;
+      throw loadError;
     }
-    const mandateId = nextWorkspace.mandates[0]?.mandate_id;
-    let nextAudit: UiAuditProjection | null = null;
-    let nextDispute: UiDisputeProjection | null = null;
-    if (mandateId && (role === 'holder' || role === 'auditor')) {
-      [nextAudit, nextDispute] = await Promise.all([
-        apiGateway.loadAudit(mandateId),
-        apiGateway.loadDispute(mandateId),
-      ]);
-    }
-    setWorkspace(nextWorkspace);
-    setAudit(nextAudit);
-    setDispute(nextDispute);
-  }, [apiGateway]);
+  }, [apiGateway, sessionGeneration]);
 
   const login = useCallback(async (request: UiLoginRequest) => {
     if (!apiGateway) return;
@@ -112,15 +125,16 @@ export function AvalProvider({
     setError(null);
     try {
       const issuedSession = await apiGateway.login(request);
+      const requestGeneration = sessionGeneration.invalidate();
       setSession(issuedSession);
       setView(defaultView(issuedSession.role));
-      await loadBffWorkspace(issuedSession.role);
+      await loadBffWorkspace(issuedSession.role, requestGeneration);
     } catch (loginError) {
       handleFailure(loginError, 'Não foi possível iniciar a sessão local.');
     } finally {
       setLoading(false);
     }
-  }, [apiGateway, handleFailure, loadBffWorkspace]);
+  }, [apiGateway, handleFailure, loadBffWorkspace, sessionGeneration]);
 
   const logout = useCallback(async () => {
     if (!apiGateway || !session) return;
@@ -173,6 +187,7 @@ export function AvalProvider({
   }, [apiGateway, mockGateway]);
 
   const submitTrialCommand = useCallback(async (command: TrialCommand) => {
+    const requestGeneration = sessionGeneration.current();
     setError(null);
     try {
       if (!apiGateway) {
@@ -187,6 +202,7 @@ export function AvalProvider({
         command.idempotencyKey,
         session.csrfToken,
       );
+      if (!sessionGeneration.isCurrent(requestGeneration)) return;
       setLastCommandReceipt({
         requestId: command.idempotencyKey,
         dataSource: 'api',
@@ -195,11 +211,13 @@ export function AvalProvider({
         effectiveAt: null,
         message: `O BFF confirmou o mandato ${result.mandate_id} como revogado.`,
       });
-      await loadBffWorkspace(session.role);
+      await loadBffWorkspace(session.role, requestGeneration);
     } catch (commandError) {
-      handleFailure(commandError, 'O BFF não confirmou a revogação. Nenhuma alteração foi presumida pelo browser.');
+      if (sessionGeneration.isCurrent(requestGeneration)) {
+        handleFailure(commandError, 'O BFF não confirmou a revogação. Nenhuma alteração foi presumida pelo browser.');
+      }
     }
-  }, [apiGateway, handleFailure, loadBffWorkspace, mockGateway, session]);
+  }, [apiGateway, handleFailure, loadBffWorkspace, mockGateway, session, sessionGeneration]);
 
   const sessionSummary = useMemo(
     () => session ? { role: session.role, expiresAt: session.expiresAt } : null,

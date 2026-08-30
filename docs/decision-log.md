@@ -812,3 +812,31 @@ Delete completed records only when an operator invokes maintenance at or after `
 **What we chose:** The explicit maintenance operation deletes only `COMPLETED` records with `retained_until <= now` and returns only the count removed.
 
 **Why:** A completed record must remain available for the full replay window, while an `IN_FLIGHT` record protects an unfinished side effect indefinitely. A caller-supplied UTC cutoff makes the operation deterministic and prevents retention cleanup from becoming an implicit startup side effect.
+
+## Alembic runtime database target
+
+**Decision:** Which SQLite database the documented Alembic upgrade command migrates
+
+**Options considered (one per line):**
+
+Keep Alembic's independent configured database path
+Require operators to override Alembic manually for every runtime database
+Make Alembic honor the same explicit runtime database environment variable
+
+**What we chose:** When `AVAL_DATABASE_PATH` is present, Alembic resolves and migrates that exact SQLite database; otherwise it retains its configured default.
+
+**Why:** A clean rehearsal must migrate the durable database that FastAPI will open. A separate implicit Alembic target can report a green migration while leaving a legacy runtime database structurally stale.
+
+## Browser session generation boundary
+
+**Decision:** How the BFF UI handles responses that complete after a session transition
+
+**Options considered (one per line):**
+
+Accept every completed BFF read into the current React state
+Clear state only when a session error is observed
+Associate reads with an in-memory session generation and ignore stale completions
+
+**What we chose:** The UI increments an in-memory session generation whenever protected state is cleared or a new login succeeds, and applies BFF projections only when the originating generation remains current.
+
+**Why:** A delayed response from an expired or logged-out session must not repopulate the next user's projection. The generation is transient browser control state, not an authority credential, and is never persisted or transmitted.
